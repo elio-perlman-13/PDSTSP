@@ -20,7 +20,13 @@
 
 using namespace std;
 
-struct Point { double x, y; int id; };
+// Data structures and global variables
+struct Point {
+    double x = 0.0, y = 0.0;
+    int id = -1;
+    Point() = default;
+    Point(double x_, double y_, int id_ = -1) : x(x_), y(y_), id(id_) {}
+};
 
 int n, h, d; //number of customers, number of trucks, number of drones
 vector<Point> loc; // loc[i]: location (x, y) of customer i, if i = 0, it is depot
@@ -28,9 +34,10 @@ vd serve_truck, serve_drone; // time taken by truck and drone to serve each cust
 vi served_by_drone; //whether each customer can be served by drone or not, 1 if yes, 0 if no
 vd deadline; //customer deadlines
 vd demand; // demand[i]: demand of customer i
-int Dh = 500, vmax = 15.6464; //truck capacities (for all trucks)
+double Dh = 500.0; // truck capacity (all trucks)
+double vmax = 15.6464; // truck base speed (m/s)
 int L = 24; //number of time segments in a day
-vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6, 0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8, 0.9, 0.8, 0.4, 0.6, 0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
+vd time_segments_sigma = {0.0, 0.9, 0.8, 0.4, 0.6, 0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8, 0.9, 0.8, 0.4, 0.6, 0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
 double Dd = 2.27, E = 7200000.0; //drone's weight and energy capacities (for all drones)
 double v_fly_drone = 31.3, v_take_off = 15.6, v_landing = 7.8, height = 50; // maximum speed of the drone
 double power_beta = 24.2, power_gamma = 1329.0; //coefficients for drone energy consumption per second
@@ -42,11 +49,11 @@ struct Solution {
     double total_cost; //total cost of the solution
 };
 
-void input(){
+void input(string filepath){
         // Open the file 50.10.2.txt
-        ifstream fin("50.10.2.txt");
+        ifstream fin(filepath);
         if (!fin) {
-            cerr << "Error: Cannot open 50.10.2.txt" << endl;
+            cerr << "Error: Cannot open " << filepath << endl;
             exit(1);
         }
         string line;
@@ -99,16 +106,14 @@ void input(){
 }
 
 // Returns pair of distance matrices: {truck (Manhattan), drone (Euclidean)}
-vvd compute_distance_matrices(const vector<Point>& loc) {
+void compute_distance_matrices(const vector<Point>& loc) {
     int n = loc.size() - 1; // assuming loc[0] is depot
-    vector<vector<double>> distance_matrix(n+1, vd(n+1));
     for (int i = 0; i <= n; ++i) {
         for (int j = 0; j <= n; ++j) {
             distance_matrix[i][j] = sqrt((loc[i].x - loc[j].x) * (loc[i].x - loc[j].x)
                                          + (loc[i].y - loc[j].y) * (loc[i].y - loc[j].y)); // Euclidean
         }
     }
-    return {distance_matrix};
 }
 
 // Helper: get time segment index for a given time (assume segments are of equal length in a day)
@@ -123,7 +128,8 @@ int get_time_segment(double t) {
 pair<double, bool> compute_truck_route_time(const vi& route, double start=0) {
     double time = start; // seconds
     bool deadline_feasible = true;
-    vector<double> visit_times(route.size(), 0.0); // visit_times[k]: time (seconds) when node route[k] is visited
+    // Index by customer id (0..n), not by position in route, to avoid out-of-bounds writes
+    vector<double> visit_times(n+1, 0.0); // visit_times[id]: time when node id is last visited
     vector<int> customers_since_last_depot;
     for (int k = 1; k < (int)route.size(); ++k) {
         int from = route[k-1], to = route[k];
@@ -132,7 +138,7 @@ pair<double, bool> compute_truck_route_time(const vi& route, double start=0) {
             // Convert time to hours for segment lookup
             double t_hr = time / 3600.0;
             int seg = get_time_segment(t_hr);
-            double v = vmax * (seg <= (int)time_segments_sigma.size()-1 ? time_segments_sigma[seg] : 1.0); // m/s
+            double v = vmax * (seg <= (int)time_segments_sigma.size() - 1 ? time_segments_sigma[seg] : 1.0); // m/s
             if (v <= 1e-8) v = vmax;
             // Time left in this segment (seconds to next integer hour)
             double t_seg_end = 3600.0 * (floor(t_hr) + 1) - time;
@@ -148,7 +154,7 @@ pair<double, bool> compute_truck_route_time(const vi& route, double start=0) {
             }
         }
         if (to != 0) {
-            time += serve_truck[to] * 60; // serve_truck is in minutes, convert to seconds
+            time += serve_truck[to]; // in seconds
             customers_since_last_depot.push_back(to);
         }
         visit_times[to] = time; // record departure from node 'to'
@@ -156,8 +162,8 @@ pair<double, bool> compute_truck_route_time(const vi& route, double start=0) {
         if (to == 0 && k != 1) {
             for (int cust : customers_since_last_depot) {
                 // Duration from leaving customer to returning to depot
-                double duration_min = (time - visit_times[cust]) / 60.0; // in minutes
-                if (deadline_feasible && (duration_min > deadline[cust] + 1e-8)) {
+                double duration = time - visit_times[cust];
+                if (deadline_feasible && (duration > deadline[cust] + 1e-8)) {
                     deadline_feasible = false;
                 }
             }
@@ -173,23 +179,24 @@ pair<double, bool> compute_truck_route_time(const vi& route, double start=0) {
 
 pair<double, bool> compute_drone_route_energy(const vi& route) {
     double total_energy = 0, current_weight = 0;
+    double energy_used = 0;
     bool feasible = true;
     for (int k = 1; k < (int)route.size(); ++k) {
         int from = route[k-1], to = route[k];
         double dist = distance_matrix[from][to]; // meters
         double v = v_fly_drone; // assume constant speed for simplicity
-        if (v <= 1e-8) v = v_fly_drone;
         double time = dist / v; // seconds
         time += height / v_take_off; // take-off time
         time += height / v_landing; // landing time
         // Energy consumption model: power = beta * weight + gamma
         double power = power_beta * (current_weight) + power_gamma; // watts
-        total_energy += power * time; // energy in joules
-        if (total_energy > E + 1e-8) feasible = false;
+        energy_used += power * time; // energy in joules
+        total_energy += power * time;
+        if (energy_used > E + 1e-8) feasible = false;
         if (to != 0) current_weight += demand[to]; // add payload when delivering
         else {
             current_weight = 0; // reset weight when returning to depot
-            total_energy = 0; // reset energy (charged at depot)
+            energy_used = 0; // reset energy (charged at depot)
         }
     }
     return make_pair(total_energy, feasible);
@@ -198,7 +205,8 @@ pair<double, bool> compute_drone_route_energy(const vi& route) {
 pair<double, bool> compute_drone_route_time(const vi& route) {
     double time = 0; // seconds
     bool deadline_feasible = true;
-    vector<double> visit_times(route.size(), 0.0); // visit_times[k]: time (seconds) when node route[k] is visited
+    // Index by customer id (0..n), not by position in route
+    vector<double> visit_times(n+1, 0.0); // visit_times[id]: time when node id is last visited
     vector<int> customers_since_last_depot;
     for (int k = 1; k < (int)route.size(); ++k) {
         int from = route[k-1], to = route[k];
@@ -210,15 +218,15 @@ pair<double, bool> compute_drone_route_time(const vi& route) {
         t += height / v_landing; // landing time
         time += t;
         if (to != 0) {
-            time += serve_drone[to] * 60; // serve_drone is in minutes, convert to seconds
+            time += serve_drone[to]; // in seconds
             customers_since_last_depot.push_back(to);
         }
         visit_times[to] = time;
         // If we reach depot (except at start), check duration from leaving each customer to depot
         if (to == 0 && k != 1) {
             for (int cust : customers_since_last_depot) {
-                double duration_min = (time - visit_times[cust]) / 60.0; // in minutes
-                if (deadline_feasible && (duration_min > deadline[cust] + 1e-8)) {
+                double duration = time - visit_times[cust];
+                if (deadline_feasible && (duration > deadline[cust] + 1e-8)) {
                     deadline_feasible = false;
                 }
             }
@@ -258,14 +266,18 @@ pair<double, bool> check_truck_route_feasibility(const vi& route, double start=0
     auto [time, deadline_feasible] = compute_truck_route_time(route, start);
     if (!deadline_feasible) return make_pair(time, false);
     // Check capacity (reset at depot)
-    int total_demand = 0;
+    double total_demand = 0.0;
     for (int k = 1; k < (int)route.size(); ++k) {
         int customer = route[k];
         if (customer == 0) {
-            total_demand = 0;
+            total_demand = 0.0;
         } else {
             total_demand += demand[customer];
-            if (total_demand > Dh) return make_pair(time, false); // exceeded capacity
+            if (customer == 0) total_demand = 0.0;
+            if (total_demand > (double)Dh + 1e-9) {
+                cout << "Truck route capacity exceeded: ";
+                return make_pair(time, false); // exceeded capacity
+            }
         }
     }
     return make_pair(time, true);
@@ -276,298 +288,410 @@ pair<double, bool> check_drone_route_feasibility(const vi& route) {
     auto [time, deadline_feasible] = compute_drone_route_time(route);
     if (!deadline_feasible) return make_pair(time, false);
     // Check capacity (reset at depot)
-    int total_demand = 0;
+    double total_demand = 0.0;
     for (int k = 1; k < (int)route.size(); ++k) {
         int customer = route[k];
         if (customer == 0) {
-            total_demand = 0;
+            total_demand = 0.0;
         } else {
             total_demand += demand[customer];
-            if (total_demand > Dd) return make_pair(time, false); // exceeded capacity
+            if (total_demand > Dd + 1e-9){
+                cout << "Drone route capacity exceeded: ";
+                return make_pair(time, false);
+            } // exceeded capacity
         }
     }
     // Check energy
     auto [total_energy, feasible_energy] = compute_drone_route_energy(route);
-    if (!feasible_energy) return make_pair(time, false); // exceeded energy in a segment
+    if (!feasible_energy) {
+        cout << "Drone route energy infeasible: ";
+        return make_pair(time, false); // exceeded energy in a segment
+    }
     return make_pair(time, true);
+}
+
+// K-mean function to generate initial solution
+vvi kmeans_clustering(int k, int max_iters=1000) {
+    if (n <= 0) return {};
+    // Bound k to [1, n]
+    if (k <= 0) k = 1;
+    if (k > n) k = n;
+
+    vvi clusters(k);
+    vector<Point> centroids;
+    centroids.reserve(k);
+
+    // Random engine
+    std::mt19937 gen(std::random_device{}());
+    std::uniform_int_distribution<int> dis(1, n);
+
+    // K-means++-like seeding: first random, next farthest from existing
+    centroids.push_back(loc[dis(gen)]);
+    while ((int)centroids.size() < k) {
+        double max_min_dist = -1.0;
+        Point next_centroid = loc[1];
+        for (int i = 1; i <= n; ++i) {
+            const Point& p = loc[i];
+            double min_dist = 1e18;
+            for (const auto& c : centroids) {
+                double dx = p.x - c.x;
+                double dy = p.y - c.y;
+                double dist = std::sqrt(dx*dx + dy*dy);
+                min_dist = std::min(min_dist, dist);
+            }
+            if (min_dist > max_min_dist) {
+                max_min_dist = min_dist;
+                next_centroid = p;
+            }
+        }
+        centroids.push_back(next_centroid);
+    }
+
+    // Iterations
+    vector<int> assignment(n+1, -1); // assignment for customers 1..n
+    for (int it = 0; it < max_iters; ++it) {
+        bool changed = false;
+        for (auto& cl : clusters) cl.clear();
+
+        // Assign step
+        for (int i = 1; i <= n; ++i) {
+            const Point& p = loc[i];
+            double bestDist2 = 1e300;
+            int bestC = 0;
+            for (int c = 0; c < k; ++c) {
+                double dx = p.x - centroids[c].x;
+                double dy = p.y - centroids[c].y;
+                double d2 = dx*dx + dy*dy;
+                if (d2 < bestDist2) {
+                    bestDist2 = d2;
+                    bestC = c;
+                }
+            }
+            if (assignment[i] != bestC) {
+                assignment[i] = bestC;
+                changed = true;
+            }
+            clusters[bestC].push_back(i);
+        }
+
+        // Update step
+        for (int c = 0; c < k; ++c) {
+            if (clusters[c].empty()) {
+                // Reinitialize empty cluster to a random customer to avoid dead clusters
+                int pick = dis(gen);
+                centroids[c].x = loc[pick].x;
+                centroids[c].y = loc[pick].y;
+                continue;
+            }
+            double sumx = 0.0, sumy = 0.0;
+            for (int idx : clusters[c]) {
+                sumx += loc[idx].x;
+                sumy += loc[idx].y;
+            }
+            centroids[c].x = sumx / clusters[c].size();
+            centroids[c].y = sumy / clusters[c].size();
+        }
+
+        if (!changed) break; // converged
+    }
+
+    return clusters;
 }
 
 Solution generate_initial_solution(){
     Solution sol;
     sol.truck_routes.resize(h);
-    sol.drone_routes.resize(d);
-    // 1. Compute initial savings for all pairs (for both truck and drone eligible)
-    struct Saving {
-        int i, j;
-        double saving;
-        bool for_drone; // true if both i and j are drone-eligible
-        bool operator<(const Saving& other) const {
-            // Sort descending by saving, then by i, j, for_drone for uniqueness
-            if (fabs(saving - other.saving) > 1e-8) return saving > other.saving;
-            if (i != other.i) return i < other.i;
-            if (j != other.j) return j < other.j;
-            return for_drone < other.for_drone;
-        }
-    };
-
-    set<Saving> savings;
-    
-    for (int i = 1; i <= n; ++i) {
-        for (int j = i+1; j <= n; ++j) {
-            // Truck savings (simulate route merge)
-            vi route1 = {0, i, 0};
-            vi route2 = {0, j, 0};
-            // Truck savings: if at least one must be truck-served, compute truck savings
-            if (served_by_drone[i] == 0 || served_by_drone[j] == 0) {
-                double time1, time2;
-                if (served_by_drone[i] == 0) {
-                    tie(time1, ignore) = check_truck_route_feasibility(route1);
-                } else {
-                    tie(time1, ignore) = check_drone_route_feasibility(route1);
-                }
-                if (served_by_drone[j] == 0) {
-                    tie(time2, ignore) = check_truck_route_feasibility(route2);
-                } else {
-                    tie(time2, ignore) = check_drone_route_feasibility(route2);
-                }
-                double time_sep = time1 + time2;
-                vi merged = {0, i, j, 0};
-                auto [time_merged, feasible_merged] = check_truck_route_feasibility(merged);
-                double s_truck = time_sep - time_merged;
-                if (feasible_merged) {
-                    savings.insert({i, j, s_truck, false});
-                }
-            }
-            // Drone savings: only if both are drone-eligible
-            if (served_by_drone[i] == 1 && served_by_drone[j] == 1) {
-                auto [time1_d, feasible1_d] = check_drone_route_feasibility(route1);
-                auto [time2_d, feasible2_d] = check_drone_route_feasibility(route2);
-                double time_sep_d = time1_d + time2_d;
-                vi merged_d = {0, i, j, 0};
-                auto [time_merged_d, feasible_merged_d] = check_drone_route_feasibility(merged_d);
-                if (feasible_merged_d) {
-                    double s_drone = time_sep_d - time_merged_d;
-                    savings.insert({i, j, s_drone, true});
-                }
-            }
+    sol.drone_routes.resize(h); // as many drone routes as truck routes
+    // Cluster customers into up to h groups (if h==0, nothing to do)
+    vector<bool> visited(n+1, false);
+    int num_of_visited_customers = 0;
+    vvi clusters = (h > 0) ? kmeans_clustering(h) : vvi{};
+    // Optional: shuffle each cluster to randomize the intra-cluster selection order
+    {
+        mt19937 rng(std::random_device{}());
+        for (auto& vec : clusters) {
+            shuffle(vec.begin(), vec.end(), rng);
         }
     }
-    // No need to sort, std::set keeps savings sorted descending by saving
-    // 3. Start with each customer in its own route (truck or drone)
-    vector<vi> truck_routes_init, drone_routes_init;
-    vector<int> route_type(n+1, -1); // 0: truck, 1: drone
-    vector<int> route_idx(n+1, -1); // which route this customer is in
-    int truck_count = 0, drone_count = 0;
-    for (int i = 1; i <= n; ++i) {
-        if (served_by_drone[i]) {
-            drone_routes_init.push_back({0, i, 0});
-            route_type[i] = 1;
-            route_idx[i] = drone_count++;
+    vi cluster_assignment(n+1, -1);
+    for (int i = 0; i < (int)clusters.size(); ++i) {
+        for (int cust : clusters[i]) {
+            cluster_assignment[cust] = i;
+        }
+    }
+    vd service_times_truck(h, 0.0); // service times for each truck (and drone)
+    vd service_times_drone(h, 0.0); // service times for each drone
+    vd capacity_used_truck(h, 0); // capacity used by each truck
+    vd capacity_used_drone(h, 0); // capacity used by each drone
+    vd timebomb_truck(h, 1e18); // timebomb for each truck
+    vd timebomb_drone(h, 1e18); // timebomb for each drone
+    vd energy_used_drone(h, 0); // energy used by each drone
+    // Simple initializer: for each index i in [0..h-1], pick first unvisited feasible customer
+    // for truck, then pick first unvisited feasible customer for drone. Routes are {0, cust, 0}.
+    // If none available or infeasible, assign {0}.
+    for (int i = 0; i < h; ++i) {
+        const vector<int>* cluster_ptr = (i < (int)clusters.size()) ? &clusters[i] : nullptr;
+        bool assigned_truck = false;
+        if (cluster_ptr) {
+            for (int cust : *cluster_ptr) {
+                if (visited[cust]) continue;
+                vi r = {0, cust, 0};
+                auto [t, feas] = check_truck_route_feasibility(r, 0.0);
+                if (feas) {
+                    r = {0, cust};
+                    auto [t, feas] = compute_truck_route_time(r, 0.0);
+                    sol.truck_routes[i] = r;
+                    visited[cust] = true;
+                    assigned_truck = true;
+                    service_times_truck[i] += t;
+                    num_of_visited_customers++;
+                    capacity_used_truck[i] += demand[cust];
+                    // Timebomb should be tied to the selected customer's deadline, not the truck index
+                    timebomb_truck[i] = deadline[cust];
+                    break;
+                }
+            }
+        }
+
+        if (!assigned_truck) {
+            sol.truck_routes[i] = {0};
+        }
+        bool assigned_drone = false;
+        if (cluster_ptr) {
+            for (int cust : *cluster_ptr) {
+                if (visited[cust]) continue;
+                if (!served_by_drone[cust]) continue;
+                vi r = {0, cust, 0};
+                auto [t, feas] = check_drone_route_feasibility(r);
+                if (feas) {
+                    r = {0, cust};
+                    auto [t, feas] = compute_drone_route_time(r);
+                    service_times_drone[i] += t;
+                    energy_used_drone[i] += compute_drone_route_energy(r).first;
+                    // Timebomb should be tied to the selected customer's deadline, not the drone index
+                    timebomb_drone[i] = deadline[cust];
+                    capacity_used_drone[i] += demand[cust];
+                    sol.drone_routes[i] = r;
+                    visited[cust] = true;
+                    assigned_drone = true;
+                    num_of_visited_customers++;
+                    break;
+                }
+            }
+        }
+        if (!assigned_drone) {
+            sol.drone_routes[i] = {0};
+        }
+    }
+
+    //loop until all customers are visited:
+    int iter = 10000;
+    while (num_of_visited_customers < n && iter > 0) {
+        iter--;
+        // first, pick a random vehicle (truck or drone)
+        if (h <= 0) break; // no vehicles available
+        int best_vehicle = -1; // 0..h-1 for trucks, h..2h-1 for drones
+        static thread_local mt19937 rng(random_device{}());
+        uniform_int_distribution<int> vehicle_dis(0, 2 * h - 1);
+        best_vehicle = vehicle_dis(rng);
+        bool is_truck = (best_vehicle < h);
+        // if it's a truck:
+        if (is_truck) {
+            int truck_idx = best_vehicle;
+            bool assigned = false;
+            double best_score = 1e18;
+            vi current_route = sol.truck_routes[truck_idx];
+            int current_node = current_route.empty() ? 0 : current_route.back();
+            // Try to assign a new customer to this truck
+            // Loop all customers in cluster[truck_idx] first
+            // Find the best candidate customer based on a scoring function
+            struct Candidate {
+                int cust;
+                double urgency_score;
+                double capacity_ratio;
+                double change_in_return_time;
+                bool same_cluster;
+                Candidate(int c, double u, double cr, double crt, bool sc)
+                    : cust(c), urgency_score(u), capacity_ratio(cr), change_in_return_time(crt), same_cluster(sc) {}
+            };
+            Candidate* best_candidate = nullptr;
+            vector<Candidate> candidates;
+            double max_change_in_return_time = -1e18;
+            double min_change_in_return_time = 1e18;
+            double direct_return_time = compute_truck_route_time({current_node, 0}, service_times_truck[truck_idx]).first;  
+            for (int cust = 1; cust <= n; ++cust) {
+                if (visited[cust]) continue;
+                if (capacity_used_truck[truck_idx] + demand[cust] > (double)Dh + 1e-9) continue; // capacity prune
+                vi r = sol.truck_routes[truck_idx];
+                // calculate a score for inserting cust into r
+                // Note: compute_truck_route_time adds serve_truck[cust] for non-depot arrivals; subtract it to get pure travel
+                double to_with_service = compute_truck_route_time({current_node, cust}, service_times_truck[truck_idx]).first;
+                double travel_to_cust = max(0.0, to_with_service);
+                double depart_time = service_times_truck[truck_idx] + travel_to_cust;
+                double time_back_to_depot = compute_truck_route_time({cust, 0}, depart_time).first;
+                double time_bomb_at_cust = min(timebomb_truck[truck_idx] - to_with_service, deadline[cust]);
+                if (time_bomb_at_cust <= 0) continue; // cannot reach customer before its deadline
+                double urgency_score = time_back_to_depot / time_bomb_at_cust;
+                // Urgency check: must be able to serve customer and come back to depot before their deadline
+                if (urgency_score > 1.0 + 1e-8) continue;
+                if (urgency_score < 0) continue;
+                double change_in_return_time = to_with_service + time_back_to_depot - direct_return_time;
+                double capacity_ratio = (capacity_used_truck[truck_idx] + demand[cust]) / (double)Dh;
+                if (capacity_ratio > 1.0 + 1e-8) continue; // capacity prune
+                max_change_in_return_time = max(max_change_in_return_time, change_in_return_time);
+                min_change_in_return_time = min(min_change_in_return_time, change_in_return_time);
+                // check if same cluster with truck position
+                bool same_cluster = (cluster_assignment[cust] == cluster_assignment[current_node]);
+                candidates.emplace_back(cust, urgency_score, capacity_ratio, change_in_return_time, same_cluster);
+            }
+            // Select the best candidate based on a weighted scoring function
+            for (auto& cand : candidates) {
+                // Normalize change_in_return_time to [0,1]
+                double w1 = 1.0, w2 = 1.0, w3 = 3.0; // weights for urgency, capacity, change in return time, same cluster
+                double norm_change = (max_change_in_return_time - min_change_in_return_time < 1e-8)
+                                     ? 0.0
+                                     : (cand.change_in_return_time - min_change_in_return_time) / (max_change_in_return_time - min_change_in_return_time);
+                double score = w1 * cand.urgency_score * cand.urgency_score + w2 * cand.capacity_ratio * cand.capacity_ratio + w3 * norm_change + (cand.same_cluster ? 0.0 : (w1 + w2 + w3));
+                if (score < best_score) {
+                    best_score = score;
+                    best_candidate = &cand;
+                }
+            }
+            if (best_candidate) {
+                int cust = best_candidate->cust;
+                vi r = sol.truck_routes[truck_idx];
+                r.push_back(cust);
+                double time_to_cust = compute_truck_route_time({current_node, cust}, service_times_truck[truck_idx]).first;
+                service_times_truck[truck_idx] += time_to_cust;
+                capacity_used_truck[truck_idx] += demand[cust];
+                timebomb_truck[truck_idx] = min(timebomb_truck[truck_idx] - time_to_cust, deadline[cust]);
+                sol.truck_routes[truck_idx] = r;
+                visited[cust] = true;
+                assigned = true;
+                num_of_visited_customers++;
+            }
+            if (!assigned) {
+                // No feasible customer found, force return to depot if not already there
+                int current_node = current_route.empty() ? 0 : current_route.back();
+                if (sol.truck_routes[truck_idx].empty() || current_node != 0) {
+                    vi r = sol.truck_routes[truck_idx];
+                    int current_node = r.empty() ? 0 : r.back();
+                    double time_to_depot = compute_truck_route_time({current_node, 0}, service_times_truck[truck_idx]).first;
+                    service_times_truck[truck_idx] += time_to_depot;
+                    r.push_back(0);
+                    sol.truck_routes[truck_idx] = r;
+                    timebomb_truck[truck_idx] = 1e18; // reset timebomb after returning to depot
+                    // Reset capacity after completing a tour at the depot
+                    capacity_used_truck[truck_idx] = 0.0;
+                }
+            }
         } else {
-            truck_routes_init.push_back({0, i, 0});
-            route_type[i] = 0;
-            route_idx[i] = truck_count++;
-        }
-    }
-    // 4. Merge routes by savings, respecting constraints (capacity, energy, etc.)
-    while (!savings.empty()) {
-        bool merged_any = false;
-        for (auto it = savings.begin(); it != savings.end(); ++it) {
-            const auto& s = *it;
-            int i = s.i, j = s.j;
-            if (route_type[i] == -1 || route_type[j] == -1) continue; // Already merged
-            int idx_i = route_idx[i], idx_j = route_idx[j];
-            if (idx_i == idx_j) continue; //already in same route
-            // Only merge same type
-            if (route_type[i] != route_type[j]) continue;
-            auto& routes = (route_type[i] == 0) ? truck_routes_init : drone_routes_init;
-            auto compute_route_feas = (route_type[i] == 0)
-                ? [](const vi& r) { return check_truck_route_feasibility(r); }
-                : [](const vi& r) { return check_drone_route_feasibility(r); };
-            auto& route_i = routes[idx_i];
-            auto& route_j = routes[idx_j];
-            // Only merge if i is at end and j at start (or vice versa)
-            if (route_i[route_i.size()-2] == i && route_j[1] == j) {
-                // Merge route_i and route_j
-                vi merged = route_i;
-                merged.pop_back();
-                for (int k = 1; k < route_j.size(); ++k) merged.push_back(route_j[k]);
-                merged.push_back(0);
+            int drone_idx = best_vehicle - h;
+            bool assigned = false;
+            vi current_route = sol.drone_routes[drone_idx];
+            int current_node = current_route.empty() ? 0 : current_route.back();
+            double best_score = 1e18;
+            // Try to assign a new customer to this drone
+            struct Candidate {
+                int cust;
+                double urgency_score;
+                double capacity_ratio;
+                double energy_ratio;
+                double change_in_return_time;
+                bool same_cluster;
+                Candidate(int c, double u, double cr, double er, double crt, bool sc)
+                    : cust(c), urgency_score(u), capacity_ratio(cr), energy_ratio(er), change_in_return_time(crt), same_cluster(sc) {}
+            };
+            Candidate* best_candidate = nullptr;
+            vector<Candidate> candidates;
+            double max_change_in_return_time = -1e18;
+            double min_change_in_return_time = 1e18;
+            double direct_return_time = compute_drone_route_time({current_node, 0}).first;  
 
-                double time_sep = compute_route_feas(route_i).first + compute_route_feas(route_j).first;
-                // Accept merge if saving is positive and merged route is feasible
-                auto [merged_time, merged_feas] = compute_route_feas(merged);
-                if ((time_sep - merged_time > 1e-8) && merged_feas) {
-                    routes.push_back(merged);
-                    int new_idx = routes.size() - 1;
-                    for (int k = 1; k < route_i.size()-1; ++k) route_type[route_i[k]] = -1;
-                    for (int k = 1; k < route_j.size()-1; ++k) route_type[route_j[k]] = -1;
-                    for (int k = 1; k < merged.size()-1; ++k) {
-                        route_type[merged[k]] = (route_type[i] == 0 ? 0 : 1);
-                        route_idx[merged[k]] = new_idx;
-                    }
-                    // Remove all savings involving merged customers
-                    set<int> merged_customers(merged.begin()+1, merged.end()-1);
-                    for (auto it2 = savings.begin(); it2 != savings.end(); ) {
-                        if (merged_customers.count(it2->i) || merged_customers.count(it2->j)) {
-                            it2 = savings.erase(it2);
-                        } else {
-                            ++it2;
-                        }
-                    }
-                    // Recompute savings for all pairs in merged route
-                    for (int a : merged_customers) {
-                        int idx_a = route_idx[a];
-                        auto& route_a = routes[idx_a];
-                        // Case 1: a at end, b at start (route_a + route_b)
-                        if (route_a.size() > 2 && route_a[route_a.size()-2] == a) {
-                            for (int b = 1; b <= n; ++b) {
-                                if (a == b || route_type[b] != route_type[a] || route_type[b] == -1) continue;
-                                int idx_b = route_idx[b];
-                                if (idx_a == idx_b) continue;
-                                auto& route_b = routes[idx_b];
-                                if (route_b.size() > 2 && route_b[1] == b) {
-                                    vi merged2 = route_a;
-                                    merged2.pop_back();
-                                    for (int k = 1; k < route_b.size(); ++k) merged2.push_back(route_b[k]);
-                                    merged2.push_back(0);
-                                    auto res_a = compute_route_feas(route_a);
-                                    auto res_b = compute_route_feas(route_b);
-                                    auto res_merged = compute_route_feas(merged2);
-                                    double time_sep2 = res_a.first + res_b.first;
-                                    double time_merged2 = res_merged.first;
-                                    double s_new = time_sep2 - time_merged2;
-                                    if (s_new > 1e-8 && res_merged.second) {
-                                        savings.insert({route_a[route_a.size()-2], route_b[1], s_new, (route_type[a] == 1)});
-                                    }
-                                }
-                            }
-                        }
-                        // Case 2: a at start, b at end (route_b + route_a)
-                        if (route_a.size() > 2 && route_a[1] == a) {
-                            for (int b = 1; b <= n; ++b) {
-                                if (a == b || route_type[b] != route_type[a] || route_type[b] == -1) continue;
-                                int idx_b = route_idx[b];
-                                if (idx_a == idx_b) continue;
-                                auto& route_b = routes[idx_b];
-                                if (route_b.size() > 2 && route_b[route_b.size()-2] == b) {
-                                    vi merged2 = route_b;
-                                    merged2.pop_back();
-                                    for (int k = 1; k < route_a.size(); ++k) merged2.push_back(route_a[k]);
-                                    merged2.push_back(0);
-                                    auto res_b = compute_route_feas(route_b);
-                                    auto res_a = compute_route_feas(route_a);
-                                    auto res_merged = compute_route_feas(merged2);
-                                    double time_sep2 = res_b.first + res_a.first;
-                                    double time_merged2 = res_merged.first;
-                                    double s_new = time_sep2 - time_merged2;
-                                    if (s_new > 1e-8 && res_merged.second) {
-                                        savings.insert({route_b[route_b.size()-2], route_a[1], s_new, (route_type[a] == 1)});
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    merged_any = true;
-                    break;
+            for (int cust = 1; cust <= n; ++cust) {
+                if (visited[cust]) continue;
+                if (!served_by_drone[cust]) continue;
+                if (capacity_used_drone[drone_idx] + demand[cust] > Dd + 1e-9) continue; // capacity prune
+                double to_with_service = compute_drone_route_time({current_node, cust}).first;
+                double time_back_to_depot = compute_drone_route_time({cust, 0}).first;
+                double time_bomb_at_cust = min(timebomb_drone[drone_idx] - to_with_service, deadline[cust]);
+                if (time_bomb_at_cust <= 0) continue; // cannot reach customer before its deadline
+                double urgency_score = time_back_to_depot / time_bomb_at_cust;
+                if (urgency_score > 1.0 + 1e-8) continue;
+                if (urgency_score < -1e-12) continue;
+                double change_in_return_time = to_with_service + time_back_to_depot - direct_return_time;
+                double capacity_ratio = (capacity_used_drone[drone_idx] + demand[cust]) / Dd;
+                if (capacity_ratio > 1.0 + 1e-8) continue; // capacity prune
+                // Estimate energy for sortie current_node -> cust -> depot at current payload
+                double total_energy = (to_with_service - serve_drone[cust]) * (power_beta * capacity_used_drone[drone_idx] + power_gamma)
+                                      + (time_back_to_depot) * (power_beta * (capacity_used_drone[drone_idx] + demand[cust]) + power_gamma);
+                double energy_ratio = (energy_used_drone[drone_idx] + total_energy) / E;
+                if (energy_ratio > 1.0 + 1e-8) continue; // energy prune
+                max_change_in_return_time = max(max_change_in_return_time, change_in_return_time);
+                min_change_in_return_time = min(min_change_in_return_time, change_in_return_time);
+                bool same_cluster = (cluster_assignment[cust] == cluster_assignment[current_node]);
+                candidates.emplace_back(cust, urgency_score, capacity_ratio, energy_ratio, change_in_return_time, same_cluster);
+            }
+            for (auto& cand : candidates) {
+                double w1 = 1.0, w2 = 1.0, w3 = 1.0, w4 = 3.0; // weights for urgency, capacity, energy, change in return time, same cluster
+                double norm_change = (max_change_in_return_time - min_change_in_return_time < 1e-8)
+                                     ? 0.0
+                                     : (cand.change_in_return_time - min_change_in_return_time) / (max_change_in_return_time - min_change_in_return_time);
+                double score = w1 * cand.urgency_score * cand.urgency_score + w2 * cand.capacity_ratio * cand.capacity_ratio
+                               + w3 * cand.energy_ratio * cand.energy_ratio + w4 * norm_change + (cand.same_cluster ? 0.0 : (w1 + w2 + w3 + w4));
+                if (score < best_score) {
+                    best_score = score;
+                    best_candidate = &cand;
                 }
-            } else if (route_j[route_j.size()-2] == j && route_i[1] == i) {
-                vi merged = route_j;
-                merged.pop_back();
-                for (int k = 1; k < route_i.size(); ++k) merged.push_back(route_i[k]);
-                merged.push_back(0);
-                auto res_j = compute_route_feas(route_j);
-                auto res_i = compute_route_feas(route_i);
-                auto res_merged = compute_route_feas(merged);
-                double time_sep = res_j.first + res_i.first;
-                double time_merged = res_merged.first;
-                if ((time_sep - time_merged > 1e-8) && res_merged.second) {
-                    routes.push_back(merged);
-                    int new_idx = routes.size() - 1;
-                    for (int k = 1; k < route_j.size()-1; ++k) route_type[route_j[k]] = -1;
-                    for (int k = 1; k < route_i.size()-1; ++k) route_type[route_i[k]] = -1;
-                    for (int k = 1; k < merged.size()-1; ++k) {
-                        route_type[merged[k]] = (route_type[i] == 0 ? 0 : 1);
-                        route_idx[merged[k]] = new_idx;
-                    }
-                    set<int> merged_customers(merged.begin()+1, merged.end()-1);
-                    for (auto it2 = savings.begin(); it2 != savings.end(); ) {
-                        if (merged_customers.count(it2->i) || merged_customers.count(it2->j)) {
-                            it2 = savings.erase(it2);
-                        } else {
-                            ++it2;
-                        }
-                    }
-                    for (int a : merged_customers) {
-                        int idx_a = route_idx[a];
-                        auto& route_a = routes[idx_a];
-                        // Case 1: a at end, b at start (route_a + route_b)
-                        if (route_a.size() > 2 && route_a[route_a.size()-2] == a) {
-                            for (int b = 1; b <= n; ++b) {
-                                if (a == b || route_type[b] != route_type[a] || route_type[b] == -1) continue;
-                                int idx_b = route_idx[b];
-                                if (idx_a == idx_b) continue;
-                                auto& route_b = routes[idx_b];
-                                if (route_b.size() > 2 && route_b[1] == b) {
-                                    vi merged2 = route_a;
-                                    merged2.pop_back();
-                                    for (int k = 1; k < route_b.size(); ++k) merged2.push_back(route_b[k]);
-                                    merged2.push_back(0);
-                                    auto res_a = compute_route_feas(route_a);
-                                    auto res_b = compute_route_feas(route_b);
-                                    auto res_merged2 = compute_route_feas(merged2);
-                                    double time_sep2 = res_a.first + res_b.first;
-                                    double time_merged2 = res_merged2.first;
-                                    double s_new = time_sep2 - time_merged2;
-                                    if (s_new > 1e-8 && res_merged2.second) {
-                                        savings.insert({route_a[route_a.size()-2], route_b[1], s_new, (route_type[a] == 1)});
-                                    }
-                                }
-                            }
-                        }
-                        // Case 2: a at start, b at end (route_b + route_a)
-                        if (route_a.size() > 2 && route_a[1] == a) {
-                            for (int b = 1; b <= n; ++b) {
-                                if (a == b || route_type[b] != route_type[a] || route_type[b] == -1) continue;
-                                int idx_b = route_idx[b];
-                                if (idx_a == idx_b) continue;
-                                auto& route_b = routes[idx_b];
-                                if (route_b.size() > 2 && route_b[route_b.size()-2] == b) {
-                                    vi merged2 = route_b;
-                                    merged2.pop_back();
-                                    for (int k = 1; k < route_a.size(); ++k) merged2.push_back(route_a[k]);
-                                    merged2.push_back(0);
-                                    auto res_b = compute_route_feas(route_b);
-                                    auto res_a = compute_route_feas(route_a);
-                                    auto res_merged2 = compute_route_feas(merged2);
-                                    double time_sep2 = res_b.first + res_a.first;
-                                    double time_merged2 = res_merged2.first;
-                                    double s_new = time_sep2 - time_merged2;
-                                    if (s_new > 1e-8 && res_merged2.second) {
-                                        savings.insert({route_b[route_b.size()-2], route_a[1], s_new, (route_type[a] == 1)});
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    merged_any = true;
-                    break;
+            }
+            if (best_candidate) {
+                int cust = best_candidate->cust;
+                vi r = sol.drone_routes[drone_idx];
+                r.push_back(cust);
+                double time_to_cust = compute_drone_route_time({current_node, cust}).first;
+                service_times_drone[drone_idx] += time_to_cust;
+                // Reserve energy for forward leg and the eventual return to depot
+                double total_energy = (time_to_cust - serve_drone[cust]) * (power_beta * capacity_used_drone[drone_idx] + power_gamma);
+                energy_used_drone[drone_idx] += total_energy;
+                capacity_used_drone[drone_idx] += demand[cust];
+                timebomb_drone[drone_idx] = min(timebomb_drone[drone_idx] - time_to_cust, deadline[cust]);
+                sol.drone_routes[drone_idx] = r;
+                visited[cust] = true;
+                assigned = true;
+                num_of_visited_customers++;
+            }
+            if (!assigned) {
+                int current_node = current_route.empty() ? 0 : current_route.back();
+                if (sol.drone_routes[drone_idx].empty() || current_node != 0) {
+                    vi r = sol.drone_routes[drone_idx];
+                    int current_node = r.empty() ? 0 : r.back();
+                    double time_to_depot = compute_drone_route_time({current_node, 0}).first;
+                    service_times_drone[drone_idx] += time_to_depot;
+                    r.push_back(0);
+                    sol.drone_routes[drone_idx] = r;
+                    timebomb_drone[drone_idx] = 1e18; // reset timebomb after returning to depot
+                    capacity_used_drone[drone_idx] = 0.0;
+                    energy_used_drone[drone_idx] = 0.0;
                 }
             }
         }
-        if (!merged_any) break;
     }
-    // 5. Assign merged routes to solution (limit to h trucks, d drones)
-    int t = 0, dr = 0;
-    for (auto& r : truck_routes_init) {
-        if (r.size() > 2 && t < h) sol.truck_routes[t++] = r;
+    // Finally, ensure all routes end at depot
+    for (int i = 0; i < h; ++i) {
+        if (sol.truck_routes[i].empty() || sol.truck_routes[i].back() != 0) {
+            int current_node = sol.truck_routes[i].empty() ? 0 : sol.truck_routes[i].back();
+            if (current_node != 0) {
+                sol.truck_routes[i].push_back(0);
+            }
+        }
+        if (sol.drone_routes[i].empty() || sol.drone_routes[i].back() != 0) {
+            int current_node = sol.drone_routes[i].empty() ? 0 : sol.drone_routes[i].back();
+            if (current_node != 0) {
+                sol.drone_routes[i].push_back(0);
+            }
+        }
     }
-    for (auto& r : drone_routes_init) {
-        if (r.size() > 2 && dr < d) sol.drone_routes[dr++] = r;
-    }
-    // Fill unused routes with depot only
-    for (; t < h; ++t) sol.truck_routes[t] = {0};
-    for (; dr < d; ++dr) sol.drone_routes[dr] = {0};
+    cout << "Number of visited customers in initial solution: " << num_of_visited_customers << " out of " << n << "\n";
     return sol;
 }
 
@@ -610,7 +734,7 @@ void solve(){
              << served_by_drone[i] << "\t\t" << deadline[i] << "\t\t" << demand[i] << "\n";
     }
     // Compute distance matrices
-    auto distance_matrix = compute_distance_matrices(loc);
+    compute_distance_matrices(loc);
     update_served_by_drone();
     // Debug: print served_by_drone
     cout << "Served by Drone:\n";
@@ -634,20 +758,27 @@ void solve(){
     }
     Solution sol = generate_initial_solution();
     print_solution(sol);
+    // check feasibility of each route
+    for (int i = 0; i < h; ++i) {
+        auto [time_truck, feas_truck] = check_truck_route_feasibility(sol.truck_routes[i], 0.0);
+        auto [time_drone, feas_drone] = check_drone_route_feasibility(sol.drone_routes[i]);
+        cout << "Truck " << i+1 << " route time: " << time_truck << " seconds, feasible: " << (feas_truck ? "Yes" : "No") << "\n";
+        cout << "Drone " << i+1 << " route time: " << time_drone << " seconds, feasible: " << (feas_drone ? "Yes" : "No") << "\n";
+    }
 }
 
 void output(){
-
 }
 
 int main(){
     ios::sync_with_stdio(0);
-    freopen("50.10.2.txt","r",stdin);
+    string instance_file = "500.40.4.txt";
+    freopen(instance_file.c_str(),"r",stdin);
     freopen("output.txt","w",stdout);
     cin.tie(0);
     cout.tie(0);
     auto start = chrono::high_resolution_clock::now();
-    input();
+    input(instance_file);
     solve();
     output();
     auto end = chrono::high_resolution_clock::now();
