@@ -50,7 +50,7 @@ struct Solution {
 };
 
 void input(string filepath){
-        // Open the file 50.10.2.txt
+        // Open the file
         ifstream fin(filepath);
         if (!fin) {
             cerr << "Error: Cannot open " << filepath << endl;
@@ -485,7 +485,7 @@ Solution generate_initial_solution(){
     }
 
     //loop until all customers are visited:
-    int iter = 10000;
+    int iter = 100000; // max iterations
     while (num_of_visited_customers < n && iter > 0) {
         iter--;
         // first, pick a random vehicle (truck or drone)
@@ -545,13 +545,35 @@ Solution generate_initial_solution(){
                 candidates.emplace_back(cust, urgency_score, capacity_ratio, change_in_return_time, same_cluster);
             }
             // Select the best candidate based on a weighted scoring function
+            //First calculate weights based on MAD:
+            double mean_urgency = 0.0, mean_capacity = 0.0;
             for (auto& cand : candidates) {
-                // Normalize change_in_return_time to [0,1]
-                double w1 = 1.0, w2 = 1.0, w3 = 3.0; // weights for urgency, capacity, change in return time, same cluster
+                mean_urgency += cand.urgency_score;
+                mean_capacity += cand.capacity_ratio;
+            }
+            mean_urgency /= candidates.size();
+            mean_capacity /= candidates.size();
+            double mad_urgency = 0.0, mad_capacity = 0.0;
+            for (auto& cand : candidates) {
+                mad_urgency += fabs(cand.urgency_score - mean_urgency);
+                mad_capacity += fabs(cand.capacity_ratio - mean_capacity);
+            }
+            mad_urgency /= candidates.size();
+            mad_capacity /= candidates.size();
+            // Avoid zero MAD
+            if (mad_urgency < 1e-8) mad_urgency = 1.0;
+            if (mad_capacity < 1e-8) mad_capacity = 1.0;
+            // Now score candidates and pick the best
+            for (auto& cand : candidates) {
+                double w1 = 1.0 / mad_urgency, w2 = 1.0 / mad_capacity; // weights for urgency, capacity, change in return time, same cluster
+                // Normalize weights
+                double w_sum = w1 + w2;
+                w1 /= w_sum; w2 /= w_sum;
+                // Normalize change_in_return_time to [0,1] based on min/max in candidates
                 double norm_change = (max_change_in_return_time - min_change_in_return_time < 1e-8)
                                      ? 0.0
                                      : (cand.change_in_return_time - min_change_in_return_time) / (max_change_in_return_time - min_change_in_return_time);
-                double score = w1 * cand.urgency_score * cand.urgency_score + w2 * cand.capacity_ratio * cand.capacity_ratio + w3 * norm_change + (cand.same_cluster ? 0.0 : (w1 + w2 + w3));
+                double score = w1 * cand.urgency_score * cand.urgency_score + w2 * cand.capacity_ratio * cand.capacity_ratio + norm_change + (cand.same_cluster ? 0.0 : 2.0);
                 if (score < best_score) {
                     best_score = score;
                     best_candidate = &cand;
@@ -632,13 +654,44 @@ Solution generate_initial_solution(){
                 bool same_cluster = (cluster_assignment[cust] == cluster_assignment[current_node]);
                 candidates.emplace_back(cust, urgency_score, capacity_ratio, energy_ratio, change_in_return_time, same_cluster);
             }
+            // Select the best candidate based on a weighted scoring function
+            //First calculate weights based on MAD:
+            double mean_urgency = 0.0, mean_capacity = 0.0, mean_energy = 0.0;
             for (auto& cand : candidates) {
-                double w1 = 1.0, w2 = 1.0, w3 = 1.0, w4 = 3.0; // weights for urgency, capacity, energy, change in return time, same cluster
+                mean_urgency += cand.urgency_score;
+                mean_capacity += cand.capacity_ratio;
+                mean_energy += cand.energy_ratio;
+            }
+            mean_urgency /= candidates.size();
+            mean_capacity /= candidates.size();
+            mean_energy /= candidates.size();
+            double mad_urgency = 0.0, mad_capacity = 0.0, mad_energy = 0.0;
+            for (auto& cand : candidates) {
+                mad_urgency += fabs(cand.urgency_score - mean_urgency);
+                mad_capacity += fabs(cand.capacity_ratio - mean_capacity);
+                mad_energy += fabs(cand.energy_ratio - mean_energy);
+            }
+            mad_urgency /= candidates.size();
+            mad_capacity /= candidates.size();
+            mad_energy /= candidates.size();
+            // Avoid zero MAD
+            if (mad_urgency < 1e-8) mad_urgency = 1.0;
+            if (mad_capacity < 1e-8) mad_capacity = 1.0;
+            if (mad_energy < 1e-8) mad_energy = 1.0;
+            // Now score candidates and pick the best   
+
+            for (auto& cand : candidates) {
+                double w1 = 1.0 / mad_urgency, w2 = 1.0 / mad_capacity, w3 = 1.0 / mad_energy; // weights for urgency, capacity, energy, change in return time, same cluster
+                // Normalize weights
+                double w_sum = w1 + w2 + w3;
+                w1 /= w_sum; w2 /= w_sum; w3 /= w_sum;
+                // Normalize change_in_return_time to [0,1] based on min/max in candidates
                 double norm_change = (max_change_in_return_time - min_change_in_return_time < 1e-8)
                                      ? 0.0
                                      : (cand.change_in_return_time - min_change_in_return_time) / (max_change_in_return_time - min_change_in_return_time);
+                // Score: lower is better
                 double score = w1 * cand.urgency_score * cand.urgency_score + w2 * cand.capacity_ratio * cand.capacity_ratio
-                               + w3 * cand.energy_ratio * cand.energy_ratio + w4 * norm_change + (cand.same_cluster ? 0.0 : (w1 + w2 + w3 + w4));
+                               + w3 * cand.energy_ratio * cand.energy_ratio + norm_change + (cand.same_cluster ? 0.0 : (w1 + w2 + w3 + 1.0));
                 if (score < best_score) {
                     best_score = score;
                     best_candidate = &cand;
@@ -676,6 +729,82 @@ Solution generate_initial_solution(){
             }
         }
     }
+    // if there are still unvisited customers, assign them to any vehicle that can take them
+    for (int cust = 1; cust <= n; ++cust) {
+        if (visited[cust]) continue;
+        bool assigned = false;
+        for (int i = 0; i < h && !assigned; ++i) {
+            // Try truck first
+            vi r = sol.truck_routes[i];
+            int current_node = r.empty() ? 0 : r.back();
+            double current_time = service_times_truck[i];
+            double time_to_cust = compute_truck_route_time({current_node, cust}, current_time).first;
+            double time_bomb_at_cust = min(timebomb_truck[i] - time_to_cust, deadline[cust]);
+            double time_back_to_depot = compute_truck_route_time({cust, 0}, current_time + time_to_cust).first;
+            if (time_bomb_at_cust - time_back_to_depot > 1e-8 && capacity_used_truck[i] + demand[cust] <= (double)Dh + 1e-9) {
+                r.push_back(cust);
+                service_times_truck[i] += time_to_cust;
+                capacity_used_truck[i] += demand[cust];
+                timebomb_truck[i] = min(timebomb_truck[i] - time_to_cust, deadline[cust]);
+                sol.truck_routes[i] = r;
+                visited[cust] = true;
+                assigned = true;
+                num_of_visited_customers++;
+                break;
+            }
+            // Then try drone
+            r = sol.drone_routes[i];
+            current_node = r.empty() ? 0 : r.back();
+            current_time = service_times_drone[i];
+            time_to_cust = compute_drone_route_time({current_node, cust}).first;
+            time_bomb_at_cust = min(timebomb_drone[i] - time_to_cust, deadline[cust]);
+            time_back_to_depot = compute_drone_route_time({cust, 0}).first;
+            double total_energy = (time_to_cust - serve_drone[cust]) * (power_beta * capacity_used_drone[i] + power_gamma)
+                                  + (time_back_to_depot) * (power_beta * (capacity_used_drone[i] + demand[cust]) + power_gamma);
+            if (time_bomb_at_cust - time_back_to_depot > 1e-8
+                && capacity_used_drone[i] + demand[cust] <= Dd + 1e-9
+                && energy_used_drone[i] + total_energy <= E + 1e-9) {
+                r.push_back(cust);
+                service_times_drone[i] += time_to_cust;
+                energy_used_drone[i] += total_energy;
+                capacity_used_drone[i] += demand[cust];
+                timebomb_drone[i] = min(timebomb_drone[i] - time_to_cust, deadline[cust]);
+                sol.drone_routes[i] = r;
+                visited[cust] = true;
+                assigned = true;
+                num_of_visited_customers++;
+                break;
+            }
+        }
+    }
+    // Collapse number of drone routes from h to d if d < h
+    if (d < h) {
+        // Simple strategy: keep first d drone routes, merge the rest into these d routes round-robin
+        int j = 0;
+        for (int i = h - 1; i >= d; --i) {
+            vi& r = sol.drone_routes[i];
+            if (r.size() <= 1) continue; // empty or only depot
+            // Try to merge into one of the first d routes
+            vi& target_route = sol.drone_routes[j];
+            if (target_route.empty()) target_route.push_back(0);
+            // Always can merge
+            // if target_route ends with depot, remove it first
+            if (target_route.back() == 0) target_route.pop_back();
+            // insert r[0..end] before the last depot of target_route
+            target_route.insert(target_route.end(), r.begin(), r.end());
+            r.clear();
+            // remove r cause solution only allow d drone routes
+            sol.drone_routes.pop_back();
+            j = (j + 1) % d;
+        }
+    }
+    else if (d > h) {
+        // If more drones than trucks, add empty routes for the extra drones
+        for (int i = h; i < d; ++i) {
+            sol.drone_routes.push_back({0});
+        }
+    }
+
     // Finally, ensure all routes end at depot
     for (int i = 0; i < h; ++i) {
         if (sol.truck_routes[i].empty() || sol.truck_routes[i].back() != 0) {
@@ -697,7 +826,7 @@ Solution generate_initial_solution(){
 
 void print_solution(const Solution& sol) {
     cout << "Truck Routes:\n";
-    for (int i = 0; i < (int)sol.truck_routes.size(); ++i) {
+    for (int i = 0; i < h; ++i) {
         cout << "Truck " << i+1 << ": ";
         for (int node : sol.truck_routes[i]) {
             cout << node << " ";
@@ -705,7 +834,7 @@ void print_solution(const Solution& sol) {
         cout << "\n";
     }
     cout << "Drone Routes:\n";
-    for (int i = 0; i < (int)sol.drone_routes.size(); ++i) {
+    for (int i = 0; i < d; ++i) {
         cout << "Drone " << i+1 << ": ";
         for (int node : sol.drone_routes[i]) {
             cout << node << " ";
@@ -737,34 +866,22 @@ void solve(){
     compute_distance_matrices(loc);
     update_served_by_drone();
     // Debug: print served_by_drone
-    cout << "Served by Drone:\n";
-    for (int i = 1; i <= n; ++i) {
-        cout << "Customer " << i << ": " << (served_by_drone[i]
-                ? "Yes" : "No") << "\n";
-    }
-    cout << "Distance Matrix (Euclidean, meters):\n";
-    // Print column headers
-    cout << std::setw(8) << " ";
-    for (int j = 0; j <= n; ++j) {
-        cout << std::setw(8) << j;
-    }
-    cout << "\n";
-    for (int i = 0; i <= n; ++i) {
-        cout << std::setw(8) << i;
-        for (int j = 0; j <= n; ++j) {
-            cout << std::setw(8) << std::fixed << std::setprecision(1) << distance_matrix[i][j];
-        }
-        cout << "\n";
-    }
     Solution sol = generate_initial_solution();
     print_solution(sol);
     // check feasibility of each route
+    double total_time = 0.0;
+    cout << "Route Feasibility Check:\n";
     for (int i = 0; i < h; ++i) {
         auto [time_truck, feas_truck] = check_truck_route_feasibility(sol.truck_routes[i], 0.0);
-        auto [time_drone, feas_drone] = check_drone_route_feasibility(sol.drone_routes[i]);
+        total_time += time_truck;
         cout << "Truck " << i+1 << " route time: " << time_truck << " seconds, feasible: " << (feas_truck ? "Yes" : "No") << "\n";
+    }
+    for (int i = 0; i < d; ++i) {
+        auto [time_drone, feas_drone] = check_drone_route_feasibility(sol.drone_routes[i]);
+        total_time += time_drone;
         cout << "Drone " << i+1 << " route time: " << time_drone << " seconds, feasible: " << (feas_drone ? "Yes" : "No") << "\n";
     }
+    cout << "Total time (sum of all routes): " << total_time << " seconds\n";
 }
 
 void output(){
@@ -772,7 +889,7 @@ void output(){
 
 int main(){
     ios::sync_with_stdio(0);
-    string instance_file = "500.40.4.txt";
+    string instance_file = "200.10.2.txt";
     freopen(instance_file.c_str(),"r",stdin);
     freopen("output.txt","w",stdout);
     cin.tie(0);
