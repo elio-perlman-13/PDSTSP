@@ -1,0 +1,27 @@
+Attempts: 3
+Selected attempt (0-based): 0
+Truck Routes:
+Truck 1: 0 117 129 149 32 62 13 113 47 0 155 0 
+Truck 2: 0 81 82 72 139 68 128 0 124 112 0 
+Truck 3: 0 26 83 59 9 76 0 30 181 0 
+Truck 4: 0 85 57 107 44 0 28 90 180 166 0 
+Truck 5: 0 134 42 0 174 133 0 188 123 167 0 157 109 0 
+Truck 6: 0 152 11 163 114 0 111 15 164 0 
+Truck 7: 0 119 130 23 67 160 0 143 60 0 
+Truck 8: 0 20 34 186 0 194 187 131 31 0 100 0 
+Truck 9: 0 116 148 40 3 0 88 80 0 
+Truck 10: 0 41 106 161 192 0 38 103 86 56 0 89 0 
+Drone Routes:
+Drone 1: 0 185 102 162 55 33 0 10 16 45 48 0 18 0 64 198 196 0 96 94 95 122 0 71 0 79 0 110 25 92 43 84 0 178 193 98 0 142 0 147 0 136 0 97 0 24 70 0 69 0 
+Drone 2: 0 22 182 0 77 125 4 0 197 66 65 156 0 51 150 0 179 138 0 146 0 195 0 200 7 0 165 0 135 0 151 184 115 0 46 0 93 0 63 39 54 191 0 2 0 
+Drone 3: 0 189 35 0 169 87 0 14 73 158 0 61 0 17 104 0 144 0 52 1 0 74 0 145 120 0 177 0 8 105 0 140 0 12 0 29 0 159 0 
+Drone 4: 0 75 126 170 49 171 0 176 121 0 36 99 6 127 50 118 0 172 58 0 108 37 0 19 21 154 0 199 137 0 53 27 0 91 183 141 0 168 0 190 0 5 153 175 0 78 0 132 0 101 173 0 
+Makespan (objective - latest vehicle finish): 36047.2 seconds
+Total time (sum of all routes - secondary): 312376 seconds
+Truck time sum: 168873 seconds
+Drone time sum: 143504 seconds
+Unserved customers: 0
+Overall feasibility: Yes
+Average customers per drone sortie (depot-to-depot): 2.03333
+Average customers per truck sortie (depot-to-depot): 3.25
+Instance: instance/200.40.2.txt  Time: 77.8135 ms

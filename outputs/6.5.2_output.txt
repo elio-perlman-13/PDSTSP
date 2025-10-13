@@ -1,0 +1,15 @@
+Attempts: 3
+Selected attempt (0-based): 1
+Truck Routes:
+Truck 1: 0 6 1 3 0 
+Drone Routes:
+Drone 1: 0 4 5 2 0 
+Makespan (objective - latest vehicle finish): 891.768 seconds
+Total time (sum of all routes - secondary): 1660.83 seconds
+Truck time sum: 891.768 seconds
+Drone time sum: 769.057 seconds
+Unserved customers: 0
+Overall feasibility: Yes
+Average customers per drone sortie (depot-to-depot): 3
+Average customers per truck sortie (depot-to-depot): 3
+Instance: instance/6.5.2.txt  Time: 0.505333 ms
