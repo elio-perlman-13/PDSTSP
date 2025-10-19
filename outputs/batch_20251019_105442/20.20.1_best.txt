@@ -1,0 +1,9 @@
+Initial solution cost: 4178.791714
+Improved solution cost: 3118.014300
+Elapsed time: 0.282837 seconds
+Truck Routes:
+Truck 1: 0 14 20 13 8 15 0 
+Truck 2: 0 16 19 0 
+Drone Routes:
+Drone 1: 0 1 17 10 2 0 12 18 5 0 
+Drone 2: 0 6 11 4 0 9 7 3 0 

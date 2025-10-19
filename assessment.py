@@ -30,6 +30,10 @@ def parse_args():
                    help="Group statistics by this column as well")
     p.add_argument("--plot-dir", default="plots", help="Directory to save plots")
     p.add_argument("--no-plot", action="store_true", help="Disable plotting and only print text summary")
+    p.add_argument("--formulas", nargs="*", default=None,
+                   help="Limit analysis to these formula column names (exact or with whitespace differences).")
+    p.add_argument("--only-three", action="store_true",
+                   help="Compare only the three formulas: 'only time_norm', 'time_norm + urgency ^ 2', 'urg ^ 2 + cap ^ 2 + time_norm'.")
     return p.parse_args()
 
 
@@ -55,6 +59,17 @@ def detect_formula_columns(header):
         if c not in present and c not in ("instance", "n", "h", "d"):
             present.append(c)
     return present
+
+
+def _header_strip_map(header):
+    """Map stripped header names to their original names for robust matching."""
+    m = {}
+    for h in header:
+        key = h.strip()
+        # Prefer first occurrence; do not overwrite
+        if key not in m:
+            m[key] = h
+    return m
 
 
 def per_instance_best(row, formula_cols):
@@ -127,7 +142,6 @@ def print_summary(overall, grouped, formula_cols, within_pcts, group_key):
     for i, col in enumerate(formula_cols, 1):
         print(f"  {i}. {col}")
     print()
-
     print("Overall performance:")
     header = ["formula", "wins", "avg", "median", "std"] + [f"within_{p}%" for p in within_pcts]
     print(", ".join(header))
@@ -228,6 +242,25 @@ def main():
     header = rows[0].keys()
     # Detect formulas present in the file
     formula_cols = detect_formula_columns(header)
+    # Optional restriction to user-specified subset
+    header_map = _header_strip_map(header)
+    if args.only_three:
+        requested = [
+            "only time_norm",
+            "time_norm + urgency ^ 2",
+            "urg ^ 2 + cap ^ 2 + time_norm",
+        ]
+        formula_cols = [header_map[k] for k in requested if k in header_map]
+        if not formula_cols:
+            print("Warning: None of the requested three formulas were found in the CSV header.")
+            formula_cols = detect_formula_columns(header)
+    elif args.formulas:
+        requested = [s.strip() for s in args.formulas]
+        subset = [header_map[k] for k in requested if k in header_map]
+        if subset:
+            formula_cols = subset
+        else:
+            print("Warning: None of the requested formulas were found in the CSV header; using detected columns.")
     # Normalize group key
     group_key = None if args.group_by == "none" else args.group_by
     overall, grouped = summarize(rows, formula_cols, args.within, group_key)

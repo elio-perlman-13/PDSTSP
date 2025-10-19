@@ -1,27 +1,27 @@
-Attempts: 3
-Selected attempt (0-based): 0
+Attempts: 5
+Selected attempt (0-based): 1
 Truck Routes:
-Truck 1: 0 117 129 149 32 62 13 113 47 0 155 0 
-Truck 2: 0 81 82 72 139 68 128 0 124 112 0 
-Truck 3: 0 26 83 59 9 76 0 30 181 0 
-Truck 4: 0 85 57 107 44 0 28 90 180 166 0 
-Truck 5: 0 134 42 0 174 133 0 188 123 167 0 157 109 0 
-Truck 6: 0 152 11 163 114 0 111 15 164 0 
-Truck 7: 0 119 130 23 67 160 0 143 60 0 
-Truck 8: 0 20 34 186 0 194 187 131 31 0 100 0 
-Truck 9: 0 116 148 40 3 0 88 80 0 
-Truck 10: 0 41 106 161 192 0 38 103 86 56 0 89 0 
+Truck 1: 0 103 106 24 8 200 0 10 60 0 
+Truck 2: 0 111 114 64 147 198 177 15 164 27 190 53 44 0 124 0 
+Truck 3: 0 144 82 72 29 139 128 145 0 89 0 
+Truck 4: 0 149 129 32 62 13 113 31 165 109 189 0 85 0 
+Truck 5: 0 47 183 20 110 34 186 0 3 0 157 0 
+Truck 6: 0 151 93 9 116 78 120 0 30 181 0 
+Truck 7: 0 21 99 11 19 127 163 123 0 136 166 0 
+Truck 8: 0 199 59 46 143 155 135 121 35 137 58 0 180 0 
+Truck 9: 0 42 39 54 0 134 159 192 173 161 0 133 40 0 88 0 112 0 
+Truck 10: 0 160 67 130 23 193 96 17 132 0 22 100 0 
 Drone Routes:
-Drone 1: 0 185 102 162 55 33 0 10 16 45 48 0 18 0 64 198 196 0 96 94 95 122 0 71 0 79 0 110 25 92 43 84 0 178 193 98 0 142 0 147 0 136 0 97 0 24 70 0 69 0 
-Drone 2: 0 22 182 0 77 125 4 0 197 66 65 156 0 51 150 0 179 138 0 146 0 195 0 200 7 0 165 0 135 0 151 184 115 0 46 0 93 0 63 39 54 191 0 2 0 
-Drone 3: 0 189 35 0 169 87 0 14 73 158 0 61 0 17 104 0 144 0 52 1 0 74 0 145 120 0 177 0 8 105 0 140 0 12 0 29 0 159 0 
-Drone 4: 0 75 126 170 49 171 0 176 121 0 36 99 6 127 50 118 0 172 58 0 108 37 0 19 21 154 0 199 137 0 53 27 0 91 183 141 0 168 0 190 0 5 153 175 0 78 0 132 0 101 173 0 
-Makespan (objective - latest vehicle finish): 36047.2 seconds
-Total time (sum of all routes - secondary): 312376 seconds
-Truck time sum: 168873 seconds
-Drone time sum: 143504 seconds
+Drone 1: 0 188 158 75 0 51 117 0 152 36 50 171 49 0 175 153 184 76 191 0 91 25 94 43 95 0 168 0 105 56 0 92 73 156 0 170 68 0 174 5 118 0 108 115 45 0 
+Drone 2: 0 4 90 182 0 176 195 0 61 37 1 0 18 0 148 138 0 86 16 162 0 70 104 102 0 194 187 0 57 77 0 167 0 12 0 
+Drone 3: 0 83 55 26 185 150 48 0 131 196 0 172 71 0 81 0 14 65 141 0 197 0 140 33 0 52 126 0 28 0 101 63 41 0 69 0 
+Drone 4: 0 7 178 98 119 84 0 169 87 0 80 146 0 74 154 122 0 79 0 179 66 0 107 125 0 142 0 97 0 2 6 0 38 0 
+Makespan (objective - latest vehicle finish): 27729.4 seconds
+Total time (sum of all routes - secondary): 269526 seconds
+Truck time sum: 160044 seconds
+Drone time sum: 109482 seconds
 Unserved customers: 0
 Overall feasibility: Yes
-Average customers per drone sortie (depot-to-depot): 2.03333
-Average customers per truck sortie (depot-to-depot): 3.25
-Instance: instance/200.40.2.txt  Time: 77.8135 ms
+Average customers per drone sortie (depot-to-depot): 2.34091
+Average customers per truck sortie (depot-to-depot): 4.04167
+Instance: instance/200.40.2.txt  Time: 141.185 ms
