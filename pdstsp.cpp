@@ -37,8 +37,8 @@ vd demand; // demand[i]: demand of customer i
 double Dh = 500.0; // truck capacity (all trucks)
 double vmax = 15.6464; // truck base speed (m/s)
 int L = 24; //number of time segments in a day
-vd time_segment = {0, 0.2, 0.4, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
-vd time_segments_sigma = {0.9, 0.4, 0.6, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
+vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
+vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
 double Dd = 2.27, E = 7200000.0; //drone's weight and energy capacities (for all drones)
 double v_fly_drone = 31.3, v_take_off = 15.6, v_landing = 7.8, height = 50; // maximum speed of the drone
 double power_beta = 24.2, power_gamma = 1329.0; //coefficients for drone energy consumption per second

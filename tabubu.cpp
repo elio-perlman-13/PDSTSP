@@ -37,16 +37,50 @@ vd demand; // demand[i]: demand of customer i
 double Dh = 500.0; // truck capacity (all trucks)
 double vmax = 15.6464; // truck base speed (m/s)
 int L = 24; //number of time segments in a day
-vd time_segment = {0, 0.2, 0.4, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
-vd time_segments_sigma = {0.9, 0.4, 0.6, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
+//vd time_segment = {0, 0.2, 0.4, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
+//vd time_segments_sigma = {0.9, 0.4, 0.6, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
+vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
+vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
 double Dd = 2.27, E = 7200000.0; //drone's weight and energy capacities (for all drones)
 double v_fly_drone = 31.3, v_take_off = 15.6, v_landing = 7.8, height = 50; // maximum speed of the drone
 double power_beta = 24.2, power_gamma = 1329.0; //coefficients for drone energy consumption per second
 vvd distance_matrix; //distance matrices for truck and drone
 
+// Simple tabu structure for relocate moves: tabu_list_switch[cust][target_vehicle] stores iteration until which move is tabu
+// target_vehicle is 0..h-1 for trucks, h..h+d-1 for drones
+static vector<vector<int>> tabu_list_switch; // sized (n+1) x (h + d), initialized on first use
+static int TABU_TENURE_BASE = 20; // default tenure; actual update done in tabu loop (not here)
+// Separate tabu structure for swap moves: store until-iteration for swapping a pair (min_id,max_id)
+static vector<vector<int>> tabu_list_swap; // sized (n+1) x (n+1)
+static int TABU_TENURE_SWAP = 20; // default tenure for swap moves
+static vector<vector<int>> tabu_list_relocate; // sized (n+1) x (h + d)
+static int TABU_TENURE_RELOCATE = 20; // default tenure for relocate moves
+// Separate tabu list for intra-route reinsert (Or-opt-1) moves
+static vector<vector<int>> tabu_list_reinsert; // sized (n+1) x (h + d)
+static int TABU_TENURE_REINSERT = 20; // default tenure for reinsert moves
+// Separate tabu list for 2-opt moves: keyed by segment endpoints (min_id,max_id)
+static vector<vector<int>> tabu_list_2opt; // sized (n+1) x (n+1)
+static int TABU_TENURE_2OPT = 20; // default tenure for 2-opt moves
+const int NUM_NEIGHBORHOODS = 5;
+const int NUM_OF_INITIAL_SOLUTIONS = 50;
+const int MAX_SEGMENT = 20;
+const int MAX_NO_IMPROVE = 100;
+const int MAX_ITER_PER_SEGMENT = 1000;
+const double gamma1 = 1.0;
+const double gamma2 = 0.3;
+const double gamma3 = 0.0;
+const double gamma4 = 0.5;
+
+
+// Separate tabu list for 2-opt-star (inter-route exchange) moves: keyed by unordered edge endpoints (min(u,v), max(u,v))
+static vector<vector<int>> tabu_list_2opt_star; // sized (n+1) x (n+1)
+static int TABU_TENURE_2OPT_STAR = 25; // default tenure for 2-opt-star moves
+
 struct Solution {
     vvi truck_routes; //truck_routes[i]: sequence of customers served by truck i
     vvi drone_routes; //drone_routes[i]: sequence of customers served by drone i
+    vd truck_route_times; //truck_route_times[i]: total time of truck i
+    vd drone_route_times; //drone_route_times[i]: total time of drone i
     double total_makespan; //total makespan of the solution
 };
 
@@ -332,9 +366,17 @@ pair<double, bool> check_drone_route_feasibility(const vi& route) {
         return make_pair(time, false); // exceeded energy in a segment
     }
     return make_pair(time, true);
+} 
+
+pair<double, bool> check_route_feasibility(const vi& route, double start=0, bool is_truck = true) {
+    if (is_truck) {
+        return check_truck_route_feasibility(route, start);
+    } else {
+        return check_drone_route_feasibility(route);
+    }
 }
 
-// K-mean function to generate initial solution
+
 vvi kmeans_clustering(int k, int max_iters=1000) {
     if (n <= 0) return {};
     // Bound k to [1, n]
@@ -937,20 +979,24 @@ Solution generate_initial_solution(){
             if (current_node != 0) sol.drone_routes[i].push_back(0);
         }
     }
-    // Compute makespan
+    // Compute makespan and per-vehicle times (indexed vectors)
     double makespan = 0.0;
+    sol.truck_route_times.assign(h, 0.0);
     for (int i = 0; i < h; ++i) {
         double t = 0.0;
         if (sol.truck_routes[i].size() > 1) {
             t = compute_truck_route_time(sol.truck_routes[i], 0.0).first;
         }
+        sol.truck_route_times[i] = t;
         makespan = max(makespan, t);
     }
+    sol.drone_route_times.assign((int)sol.drone_routes.size(), 0.0);
     for (int i = 0; i < (int)sol.drone_routes.size(); ++i) {
         double t = 0.0;
         if (sol.drone_routes[i].size() > 1) {
             t = compute_drone_route_time(sol.drone_routes[i]).first;
         }
+        sol.drone_route_times[i] = t;
         makespan = max(makespan, t);
     }
     sol.total_makespan = makespan;
@@ -976,10 +1022,987 @@ void print_solution(const Solution& sol) {
     }
 }
 
+Solution local_search(const Solution& initial_solution, int neighbor_id, int current_iter, double best_cost) {
+    Solution best_neighbor = initial_solution;
+    double best_neighbor_cost = 10e10;
+    // Depending on neighbor_id, implement different neighborhood structures
+    if (neighbor_id == 0) {
+        // Relocate 1 customer from the critical (longest-time) vehicle route to another route of the same mode
+        // 1) Identify critical vehicle (truck or drone) using precomputed times
+        bool crit_is_truck = true;
+        int critical_idx = -1; // index within its mode
+        double max_time = -1.0;
+        for (int i = 0; i < h; ++i) {
+            double t = (i < (int)initial_solution.truck_route_times.size()) ? initial_solution.truck_route_times[i] : 0.0;
+            if (t > max_time) { max_time = t; crit_is_truck = true; critical_idx = i; }
+        }
+        for (int i = 0; i < (int)initial_solution.drone_route_times.size(); ++i) {
+            double t = initial_solution.drone_route_times[i];
+            if (t > max_time) { max_time = t; crit_is_truck = false; critical_idx = i; }
+        }
+        if (critical_idx == -1) return initial_solution; // nothing to do
+
+        // Ensure tabu list is sized to (n+1) x (h+d)
+        int veh_count = h + d;
+        if ((int)tabu_list_switch.size() != n + 1 || (veh_count > 0 && (int)tabu_list_switch[0].size() != veh_count)) {
+            tabu_list_switch.assign(n + 1, vector<int>(max(0, veh_count), 0));
+        }
+
+        // Prepare neighborhood best tracking
+        int best_target = -1; // vehicle index in unified space (0..h-1 trucks, h..h+d-1 drones)
+        int best_pos = -1;    // insertion position within target route
+        int best_cust = -1;   // moved customer id
+        double best_neighbor_cost_local = best_neighbor_cost;
+        Solution best_candidate_neighbor = best_neighbor;
+
+        if (crit_is_truck) {
+            const vi& crit_route = initial_solution.truck_routes[critical_idx];
+            if ((int)crit_route.size() <= 2) return initial_solution; // nothing movable
+            vector<int> crit_pos;
+            for (int p = 0; p < (int)crit_route.size(); ++p) if (crit_route[p] != 0) crit_pos.push_back(p);
+            for (int pos_idx : crit_pos) {
+                int cust = crit_route[pos_idx];
+                // Build critical truck route once with the customer removed
+                vi nr = initial_solution.truck_routes[critical_idx];
+                nr.erase(nr.begin() + pos_idx);
+                if (nr.empty() || nr.front() != 0) nr.insert(nr.begin(), 0);
+                // compress consecutive depots
+                if (!nr.empty() && nr.size() >= 2) {
+                    vi nr2; nr2.reserve(nr.size());
+                    for (int x : nr) { if (!nr2.empty() && nr2.back() == 0 && x == 0) continue; nr2.push_back(x);} nr.swap(nr2);
+                }
+                if (!nr.empty() && nr.back() != 0) nr.push_back(0);
+
+                // Check feasibility and compute time once for the reduced critical route
+                auto [tcrit_base, feas_crit] = check_truck_route_feasibility(nr, 0.0);
+                if (!feas_crit) continue;
+                double crit_time_base = (nr.size() > 1) ? tcrit_base : 0.0;
+
+                for (int target_truck = 0; target_truck < h; ++target_truck) {
+                    if (target_truck == critical_idx) continue;
+                    const vi& tgt_r = initial_solution.truck_routes[target_truck];
+                    int insert_limit = (int)tgt_r.size();
+                    for (int ins_pos = 1; ins_pos <= insert_limit; ++ins_pos) {
+                        // Build target route with insertion
+                        vi tr = tgt_r;
+                        if (tr.empty()) tr.push_back(0);
+                        int ip = min(max(ins_pos, 1), (int)tr.size());
+                        tr.insert(tr.begin() + ip, cust);
+                        if (tr.back() != 0) tr.push_back(0);
+
+                        // Check feasibility for target route only
+                        auto [ttgt, feas_tgt] = check_truck_route_feasibility(tr, 0.0);
+                        if (!feas_tgt) continue;
+
+                        // Construct neighbor incrementally
+                        Solution neighbor = initial_solution;
+                        neighbor.truck_routes[critical_idx] = nr;
+                        neighbor.truck_routes[target_truck] = tr;
+
+                        // Use cached times and recompute only modified routes
+                        neighbor.truck_route_times = initial_solution.truck_route_times;
+                        neighbor.drone_route_times = initial_solution.drone_route_times;
+                        neighbor.truck_route_times[critical_idx] = crit_time_base;
+                        neighbor.truck_route_times[target_truck] = (tr.size() > 1)
+                            ? ttgt : 0.0;
+
+                        double nb_makespan = 0.0;
+                        for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
+                        for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
+                        neighbor.total_makespan = nb_makespan;
+
+                        int target_id = target_truck; // unified vehicle id
+                        bool is_tabu = (tabu_list_switch.size() > (size_t)cust && tabu_list_switch[cust].size() > (size_t)target_id &&
+                                        tabu_list_switch[cust][target_id] >= current_iter);
+                        if (is_tabu && neighbor.total_makespan >= best_cost) continue;
+
+                        if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
+                        if (neighbor.total_makespan < best_neighbor_cost_local) {
+                            best_target = target_id; best_pos = ins_pos; best_cust = cust; best_neighbor_cost_local = neighbor.total_makespan; best_candidate_neighbor = neighbor;
+                        }
+                    }
+                }
+                // Cross-mode: try inserting into drone routes as well
+                for (int target_drone = 0; target_drone < (int)initial_solution.drone_routes.size(); ++target_drone) {
+                    // Early prune: customer must be dronable
+                    if (served_by_drone[cust] == 0) continue;
+                    const vi& tgt_r_d = initial_solution.drone_routes[target_drone];
+                    int insert_limit_d = (int)tgt_r_d.size();
+                    for (int ins_pos = 1; ins_pos <= insert_limit_d; ++ins_pos) {
+                        // Build target drone route with insertion
+                        vi trd = tgt_r_d;
+                        if (trd.empty()) trd.push_back(0);
+                        int ipd = min(max(ins_pos, 1), (int)trd.size());
+                        trd.insert(trd.begin() + ipd, cust);
+                        if (trd.back() != 0) trd.push_back(0);
+
+                        // Check feasibility for target drone route only
+                        auto [ttgt_d, feas_tgt_d] = check_drone_route_feasibility(trd);
+                        if (!feas_tgt_d) continue;
+
+                        // Construct neighbor incrementally (cross-mode)
+                        Solution neighbor = initial_solution;
+                        neighbor.truck_routes[critical_idx] = nr;
+                        neighbor.drone_routes[target_drone] = trd;
+
+                        // Use cached times and recompute only modified routes
+                        neighbor.truck_route_times = initial_solution.truck_route_times;
+                        neighbor.drone_route_times = initial_solution.drone_route_times;
+                        neighbor.truck_route_times[critical_idx] = crit_time_base;
+                        neighbor.drone_route_times[target_drone] = (trd.size() > 1)
+                            ? compute_drone_route_time(trd).first : 0.0;
+
+                        double nb_makespan = 0.0;
+                        for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
+                        for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
+                        neighbor.total_makespan = nb_makespan;
+
+                        int target_id = h + target_drone; // unified vehicle id for drones
+                        bool is_tabu = (tabu_list_switch.size() > (size_t)cust && tabu_list_switch[cust].size() > (size_t)target_id &&
+                                        tabu_list_switch[cust][target_id] >= current_iter);
+                        if (is_tabu && neighbor.total_makespan >= best_cost) continue;
+
+                        if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
+                        if (neighbor.total_makespan < best_neighbor_cost_local) {
+                            best_target = target_id; best_pos = ins_pos; best_cust = cust; best_neighbor_cost_local = neighbor.total_makespan; best_candidate_neighbor = neighbor;
+                        }
+                    }
+                }
+            }
+        } else {
+            // critical is a drone
+            const vi& crit_route = initial_solution.drone_routes[critical_idx];
+            if ((int)crit_route.size() <= 2) return initial_solution; // nothing movable
+            vector<int> crit_pos;
+            for (int p = 0; p < (int)crit_route.size(); ++p) if (crit_route[p] != 0) crit_pos.push_back(p);
+            for (int pos_idx : crit_pos) {
+                int cust = crit_route[pos_idx];
+                // Build critical drone route once with the customer removed
+                vi nr = initial_solution.drone_routes[critical_idx];
+                nr.erase(nr.begin() + pos_idx);
+                if (nr.empty() || nr.front() != 0) nr.insert(nr.begin(), 0);
+                // compress consecutive depots
+                if (!nr.empty() && nr.size() >= 2) {
+                    vi nr2; nr2.reserve(nr.size());
+                    for (int x : nr) { if (!nr2.empty() && nr2.back() == 0 && x == 0) continue; nr2.push_back(x);} nr.swap(nr2);
+                }
+                if (!nr.empty() && nr.back() != 0) nr.push_back(0);
+
+                // Check feasibility and compute time once for the reduced critical route
+                auto [tcrit_base, feas_crit] = check_drone_route_feasibility(nr);
+                if (!feas_crit) continue;
+                double crit_time_base = (nr.size() > 1) ? tcrit_base : 0.0;
+
+                for (int target_drone = 0; target_drone < (int)initial_solution.drone_routes.size(); ++target_drone) {
+                    if (target_drone == critical_idx) continue;
+                    const vi& tgt_r = initial_solution.drone_routes[target_drone];
+                    int insert_limit = (int)tgt_r.size();
+                    for (int ins_pos = 1; ins_pos <= insert_limit; ++ins_pos) {
+                        // Build target drone route with insertion
+                        vi tr = tgt_r;
+                        if (tr.empty()) tr.push_back(0);
+                        int ip = min(max(ins_pos, 1), (int)tr.size());
+                        tr.insert(tr.begin() + ip, cust);
+                        if (tr.back() != 0) tr.push_back(0);
+
+                        // Check feasibility for target route only
+                        auto [ttgt, feas_tgt] = check_drone_route_feasibility(tr);
+                        if (!feas_tgt) continue;
+
+                        // Construct neighbor incrementally
+                        Solution neighbor = initial_solution;
+                        neighbor.drone_routes[critical_idx] = nr;
+                        neighbor.drone_routes[target_drone] = tr;
+
+                        // Use cached times and recompute only modified routes
+                        neighbor.truck_route_times = initial_solution.truck_route_times;
+                        neighbor.drone_route_times = initial_solution.drone_route_times;
+                        neighbor.drone_route_times[critical_idx] = crit_time_base;
+                        neighbor.drone_route_times[target_drone] = (tr.size() > 1)
+                            ? compute_drone_route_time(tr).first : 0.0;
+
+                        double nb_makespan = 0.0;
+                        for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
+                        for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
+                        neighbor.total_makespan = nb_makespan;
+
+                        int target_id = h + target_drone; // unified vehicle id for drones
+                        bool is_tabu = (tabu_list_switch.size() > (size_t)cust && tabu_list_switch[cust].size() > (size_t)target_id &&
+                                        tabu_list_switch[cust][target_id] >= current_iter);
+                        if (is_tabu && neighbor.total_makespan >= best_cost) continue;
+
+                        if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
+                        if (neighbor.total_makespan < best_neighbor_cost_local) {
+                            best_target = target_id; best_pos = ins_pos; best_cust = cust; best_neighbor_cost_local = neighbor.total_makespan; best_candidate_neighbor = neighbor;
+                        }
+                    }
+                }
+                // Cross-mode: try inserting into truck routes as well
+                for (int target_truck = 0; target_truck < h; ++target_truck) {
+                    const vi& tgt_r_t = initial_solution.truck_routes[target_truck];
+                    int insert_limit_t = (int)tgt_r_t.size();
+                    for (int ins_pos = 1; ins_pos <= insert_limit_t; ++ins_pos) {
+                        // Build target truck route with insertion
+                        vi trt = tgt_r_t;
+                        if (trt.empty()) trt.push_back(0);
+                        int ipt = min(max(ins_pos, 1), (int)trt.size());
+                        trt.insert(trt.begin() + ipt, cust);
+                        if (trt.back() != 0) trt.push_back(0);
+
+                        // Check feasibility for target truck route only
+                        auto [ttgt_t, feas_tgt_t] = check_truck_route_feasibility(trt, 0.0);
+                        if (!feas_tgt_t) continue;
+
+                        // Construct neighbor incrementally (cross-mode)
+                        Solution neighbor = initial_solution;
+                        neighbor.drone_routes[critical_idx] = nr;
+                        neighbor.truck_routes[target_truck] = trt;
+
+                        // Use cached times and recompute only modified routes
+                        neighbor.truck_route_times = initial_solution.truck_route_times;
+                        neighbor.drone_route_times = initial_solution.drone_route_times;
+                        neighbor.drone_route_times[critical_idx] = crit_time_base;
+                        neighbor.truck_route_times[target_truck] = (trt.size() > 1)
+                            ? compute_truck_route_time(trt, 0.0).first : 0.0;
+
+                        double nb_makespan = 0.0;
+                        for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
+                        for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
+                        neighbor.total_makespan = nb_makespan;
+
+                        int target_id = target_truck; // unified vehicle id for trucks
+                        bool is_tabu = (tabu_list_switch.size() > (size_t)cust && tabu_list_switch[cust].size() > (size_t)target_id &&
+                                        tabu_list_switch[cust][target_id] >= current_iter);
+                        if (is_tabu && neighbor.total_makespan >= best_cost) continue;
+
+                        if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
+                        if (neighbor.total_makespan < best_neighbor_cost_local) {
+                            best_target = target_id; best_pos = ins_pos; best_cust = cust; best_neighbor_cost_local = neighbor.total_makespan; best_candidate_neighbor = neighbor;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (best_cust != -1) {
+            // Update relocate tabu for the chosen best move (customer -> target vehicle)
+            int veh_count2 = h + d;
+            if ((int)tabu_list_switch.size() != n + 1 || (veh_count2 > 0 && (int)tabu_list_switch[0].size() != veh_count2)) {
+                tabu_list_switch.assign(n + 1, vector<int>(max(0, veh_count2), 0));
+            }
+            if (best_cust >= 0 && best_cust <= n && best_target >= 0 && best_target < veh_count2) {
+                tabu_list_switch[best_cust][best_target] = current_iter + TABU_TENURE_RELOCATE;
+            }
+            // Debug: print chosen relocate move
+            //cout.setf(std::ios::fixed); cout << setprecision(6);
+            /* cout << "[N0] relocate cust " << best_cust
+                 << " -> " << ((best_target < h) ? "truck" : "drone")
+                 << " #" << ((best_target < h) ? (best_target + 1) : (best_target - h + 1))
+                 << " at pos " << best_pos
+                 << ", makespan: " << initial_solution.total_makespan << " -> " << best_candidate_neighbor.total_makespan
+                 << ", iter " << current_iter << "\n"; */
+            return best_candidate_neighbor;
+        }
+    } else if (neighbor_id == 1) {
+        // Neighborhood 1: Intra-route swap on the critical vehicle (truck or drone)
+        // Separate tabu list for swaps: tabu_list_swap[min(a,b)][max(a,b)] stores expiration iteration
+        bool crit_is_truck = true;
+        int critical_idx = -1;
+        double max_time = -1.0;
+        for (int i = 0; i < h; ++i) {
+            double t = (i < (int)initial_solution.truck_route_times.size()) ? initial_solution.truck_route_times[i] : 0.0;
+            if (t > max_time) { max_time = t; crit_is_truck = true; critical_idx = i; }
+        }
+        for (int i = 0; i < (int)initial_solution.drone_route_times.size(); ++i) {
+            double t = initial_solution.drone_route_times[i];
+            if (t > max_time) { max_time = t; crit_is_truck = false; critical_idx = i; }
+        }
+        if (critical_idx == -1) return initial_solution;
+
+        // Size swap tabu list if needed
+        if ((int)tabu_list_swap.size() != n + 1 || ((int)tabu_list_swap.size() > 0 && (int)tabu_list_swap[0].size() != n + 1)) {
+            tabu_list_swap.assign(n + 1, vector<int>(n + 1, 0));
+        }
+
+    Solution best_local = initial_solution;
+        double best_local_cost = 10e10;
+    int best_swap_u = -1, best_swap_v = -1; // record best swap pair (unordered)
+        // Ensure tabu list for reinsert is sized to (n+1) x (h+d)
+        {
+            int veh_count = h + d;
+            if ((int)tabu_list_reinsert.size() != n + 1 || (veh_count > 0 && (int)tabu_list_reinsert[0].size() != veh_count)) {
+                tabu_list_reinsert.assign(n + 1, vector<int>(max(0, veh_count), 0));
+            }
+        }
+
+        auto consider_swap = [&](const vi& base_route, bool is_truck_mode) {
+            // Collect positions of customers (exclude depots)
+            vector<int> pos;
+            for (int i = 0; i < (int)base_route.size(); ++i) if (base_route[i] != 0) pos.push_back(i);
+            if ((int)pos.size() < 2) return; // nothing to swap
+            for (int idx1 = 0; idx1 < (int)pos.size(); ++idx1) {
+                for (int idx2 = idx1 + 1; idx2 < (int)pos.size(); ++idx2) {
+                    int p1 = pos[idx1], p2 = pos[idx2];
+                    int a = base_route[p1], b = base_route[p2];
+                    if (a == b) continue;
+                    // Check swap tabu
+                    int u = min(a,b), v = max(a,b);
+                    bool is_tabu = (tabu_list_swap.size() > (size_t)u && tabu_list_swap[u].size() > (size_t)v &&
+                                    tabu_list_swap[u][v] >= current_iter);
+                    // Build swapped route
+                    vi r = base_route;
+                    swap(r[p1], r[p2]);
+                    // Feasibility and time for the modified critical route
+                    double tcrit = 0.0; bool feas = false;
+                    auto [tt, ok] = check_route_feasibility(r, 0.0, is_truck_mode);
+                    tcrit = (r.size() > 1) ? tt : 0.0; feas = ok;
+                    if (!feas) continue;
+
+                    // Construct neighbor and reuse cached times; only critical route time changes
+                    Solution neighbor = initial_solution;
+                    if (is_truck_mode) neighbor.truck_routes[critical_idx] = r; else neighbor.drone_routes[critical_idx] = r;
+                    neighbor.truck_route_times = initial_solution.truck_route_times;
+                    neighbor.drone_route_times = initial_solution.drone_route_times;
+                    if (is_truck_mode) neighbor.truck_route_times[critical_idx] = tcrit; else neighbor.drone_route_times[critical_idx] = tcrit;
+
+                    double nb_makespan = 0.0;
+                    for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
+                    for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
+                    neighbor.total_makespan = nb_makespan;
+
+                    // Aspiration: allow tabu if it improves global best_cost
+                    if (is_tabu && neighbor.total_makespan >= best_cost) continue;
+
+                    if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
+                    if (neighbor.total_makespan < best_local_cost) {
+                        best_local_cost = neighbor.total_makespan; best_local = neighbor;
+                        best_swap_u = u; best_swap_v = v;
+                    } else if (fabs(neighbor.total_makespan - best_local_cost) <= 1e-12) {
+                        // tie-breaker: choose one with better makespan; also update move if replaced
+                        if (neighbor.total_makespan < best_local.total_makespan) {
+                            best_local = neighbor;
+                            best_swap_u = u; best_swap_v = v;
+                        }
+                    }
+                }
+            }
+        };
+
+        if (crit_is_truck) consider_swap(initial_solution.truck_routes[critical_idx], true);
+        else consider_swap(initial_solution.drone_routes[critical_idx], false);
+
+        // Update swap tabu for the best move if any
+        if (best_swap_u != -1 && best_swap_v != -1) {
+            if ((int)tabu_list_swap.size() != n + 1 || ((int)tabu_list_swap.size() > 0 && (int)tabu_list_swap[0].size() != n + 1)) {
+                tabu_list_swap.assign(n + 1, vector<int>(n + 1, 0));
+            }
+            tabu_list_swap[best_swap_u][best_swap_v] = current_iter + TABU_TENURE_SWAP;
+        }
+
+        // Debug: print chosen swap move when available
+        /* if (best_swap_u != -1 && best_swap_v != -1) {
+            cout.setf(std::ios::fixed); cout << setprecision(6);
+            cout << "[N1] swap customers " << best_swap_u << " <-> " << best_swap_v
+                 << ", makespan: " << initial_solution.total_makespan << " -> " << best_local.total_makespan
+                 << ", iter " << current_iter << "\n";
+        } */
+
+        return best_local;
+    } else if (neighbor_id == 2) {
+        // Neighborhood 2: Intra-route relocate (Or-opt-1) on the critical route (truck or drone)
+        // Remove one customer from the critical route and reinsert at a different position in the SAME route.
+        bool crit_is_truck = true;
+        int critical_idx = -1;
+        double max_time = -1.0;
+        for (int i = 0; i < h; ++i) {
+            double t = (i < (int)initial_solution.truck_route_times.size()) ? initial_solution.truck_route_times[i] : 0.0;
+            if (t > max_time) { max_time = t; crit_is_truck = true; critical_idx = i; }
+        }
+        for (int i = 0; i < (int)initial_solution.drone_route_times.size(); ++i) {
+            double t = initial_solution.drone_route_times[i];
+            if (t > max_time) { max_time = t; crit_is_truck = false; critical_idx = i; }
+        }
+        if (critical_idx == -1) return initial_solution;
+
+    const vi& base_route = crit_is_truck ? initial_solution.truck_routes[critical_idx]
+                                             : initial_solution.drone_routes[critical_idx];
+        // Collect positions of customers (exclude depots)
+        vector<int> pos;
+        for (int i = 0; i < (int)base_route.size(); ++i) if (base_route[i] != 0) pos.push_back(i);
+        if ((int)pos.size() < 2) return initial_solution; // nothing to relocate
+
+    Solution best_local = initial_solution;
+        double best_local_cost = 10e10;
+    int best_reins_cust = -1;
+    // Determine unified vehicle id for tabu encoding
+    int veh_id_unified = crit_is_truck ? critical_idx : (h + critical_idx);
+
+        for (int idx_from = 0; idx_from < (int)pos.size(); ++idx_from) {
+            int p_from = pos[idx_from];
+            int cust = base_route[p_from];
+
+            // Build route with removal
+            vi r = base_route;
+            r.erase(r.begin() + p_from);
+            // Normalize depots (keep start depot; ensure end depot; compress doubles)
+            if (r.empty() || r.front() != 0) r.insert(r.begin(), 0);
+            if (!r.empty() && r.size() >= 2) {
+                vi r2; r2.reserve(r.size());
+                for (int x : r) { if (!r2.empty() && r2.back() == 0 && x == 0) continue; r2.push_back(x);} r.swap(r2);
+            }
+            if (!r.empty() && r.back() != 0) r.push_back(0);
+
+            int insert_limit = (int)r.size();
+            for (int ins_pos = 1; ins_pos <= insert_limit; ++ins_pos) {
+                vi r_ins = r;
+                int ip = min(max(ins_pos, 1), (int)r_ins.size());
+                r_ins.insert(r_ins.begin() + ip, cust);
+                if (r_ins.back() != 0) r_ins.push_back(0);
+
+                // Skip no-op
+                if (r_ins == base_route) continue;
+
+                // Feasibility and time for the modified critical route
+                auto [tcrit, feas] = check_route_feasibility(r_ins, 0.0, crit_is_truck);
+                if (!feas) continue;
+
+                // Tabu check for reinsert of this customer on this vehicle (with aspiration if it improves global best)
+                int veh_id = veh_id_unified;
+                bool is_tabu = false;
+                if ((int)tabu_list_reinsert.size() > cust) {
+                    const auto &row = tabu_list_reinsert[cust];
+                    if ((int)row.size() > veh_id && row[veh_id] >= current_iter) {
+                        is_tabu = true;
+                    }
+                }
+
+                // Construct neighbor and reuse cached times; only critical route time changes
+                Solution neighbor = initial_solution;
+                if (crit_is_truck) neighbor.truck_routes[critical_idx] = r_ins; else neighbor.drone_routes[critical_idx] = r_ins;
+                neighbor.truck_route_times = initial_solution.truck_route_times;
+                neighbor.drone_route_times = initial_solution.drone_route_times;
+                if (crit_is_truck) neighbor.truck_route_times[critical_idx] = (r_ins.size() > 1 ? tcrit : 0.0);
+                else neighbor.drone_route_times[critical_idx] = (r_ins.size() > 1 ? tcrit : 0.0);
+
+                double nb_makespan = 0.0;
+                for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
+                for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
+                neighbor.total_makespan = nb_makespan;
+
+                // Aspiration criterion: allow tabu if it improves the global best_cost
+                if (is_tabu && neighbor.total_makespan >= best_cost) continue;
+
+                if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
+                if (neighbor.total_makespan < best_local_cost) { best_local_cost = neighbor.total_makespan; best_local = neighbor; best_reins_cust = cust; }
+            }
+        }
+
+        // Update reinsert tabu if a move was chosen
+        if (best_reins_cust != -1) {
+            int veh_count2 = h + d;
+            if ((int)tabu_list_reinsert.size() != n + 1 || (veh_count2 > 0 && (int)tabu_list_reinsert[0].size() != veh_count2)) {
+                tabu_list_reinsert.assign(n + 1, vector<int>(max(0, veh_count2), 0));
+            }
+            tabu_list_reinsert[best_reins_cust][veh_id_unified] = current_iter + TABU_TENURE_REINSERT;
+        }
+
+        // Debug: print chosen reinsert move when available
+        /* if (best_reins_cust != -1) {
+            cout.setf(std::ios::fixed); cout << setprecision(6);
+            bool is_truck = veh_id_unified < h;
+            cout << "[N2] reinsert cust " << best_reins_cust << " within "
+                 << (is_truck ? "truck" : "drone") << " #"
+                 << (is_truck ? (veh_id_unified + 1) : (veh_id_unified - h + 1))
+                 << ", makespan: " << initial_solution.total_makespan << " -> " << best_local.total_makespan
+                 << ", iter " << current_iter << "\n";
+        } */
+
+        return best_local;
+    } else if (neighbor_id == 3) {
+        // Neighborhood 3: 2-opt within each subroute (between depot nodes) for trucks or drones
+        // Priority: try critical route first; if no admissible improving move found, allow on other routes.
+        // Tabu: tabu_list_2opt[min(a,b)][max(a,b)] for segment endpoints, with aspiration (can override if improves global best_cost).
+
+        // Ensure tabu list for 2-opt is sized (n+1) x (n+1)
+        if ((int)tabu_list_2opt.size() != n + 1 || ((int)tabu_list_2opt.size() > 0 && (int)tabu_list_2opt[0].size() != n + 1)) {
+            tabu_list_2opt.assign(n + 1, vector<int>(n + 1, 0));
+        }
+
+    auto try_two_opt_on_route = [&](const vi& base_route, bool is_truck_mode, int route_idx,
+                    Solution &best_local_out, double &best_local_drop,
+                    double base_route_time, double current_best_cost,
+                    int &best_u, int &best_v, int &best_route_idx, bool &best_is_truck) {
+            // Enumerate subroutes separated by depot (0)
+            int m = (int)base_route.size();
+            if (m <= 3) return; // nothing to reverse (at most one customer)
+            int start = 0;
+            while (start < m) {
+                // find next subroute [l..r] inclusive, where l is first non-depot, r is last before next depot
+                while (start < m && base_route[start] == 0) start++;
+                if (start >= m) break;
+                int l = start;
+                int r = l;
+                while (r + 1 < m && base_route[r + 1] != 0) r++;
+                // subroute is indices [l..r] with all non-zero customers
+                int len = r - l + 1;
+                if (len >= 2) {
+                    for (int i = l; i < r; ++i) {
+                        for (int j = i + 1; j <= r; ++j) {
+                            int a = base_route[i];
+                            int b = base_route[j];
+                            if (a == 0 || b == 0) continue; // by construction shouldn't happen
+                            int u = min(a, b), v = max(a, b);
+                            bool is_tabu = (tabu_list_2opt.size() > (size_t)u && tabu_list_2opt[u].size() > (size_t)v &&
+                                            tabu_list_2opt[u][v] >= current_iter);
+
+                            vi r2 = base_route;
+                            reverse(r2.begin() + i, r2.begin() + j + 1);
+                            if (r2 == base_route) continue; // no-op
+
+                            auto [t2, feas] = check_route_feasibility(r2, 0.0, is_truck_mode);
+                            if (!feas) continue;
+
+                            // Build neighbor with cached times; only this route's time changes
+                            Solution neighbor = initial_solution;
+                            if (is_truck_mode) neighbor.truck_routes[route_idx] = r2; else neighbor.drone_routes[route_idx] = r2;
+                            neighbor.truck_route_times = initial_solution.truck_route_times;
+                            neighbor.drone_route_times = initial_solution.drone_route_times;
+                            if (is_truck_mode) neighbor.truck_route_times[route_idx] = (r2.size() > 1 ? t2 : 0.0);
+                            else neighbor.drone_route_times[route_idx] = (r2.size() > 1 ? t2 : 0.0);
+
+                            double nb_makespan = 0.0;
+                            for (double t : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t);
+                            for (double t : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t);
+                            neighbor.total_makespan = nb_makespan;
+
+                            // Aspiration: allow tabu if it improves global best_cost
+                            if (is_tabu && neighbor.total_makespan >= current_best_cost) continue;
+
+                            double drop = base_route_time - (is_truck_mode ? neighbor.truck_route_times[route_idx]
+                                                                            : neighbor.drone_route_times[route_idx]);
+                            if (drop > best_local_drop + 1e-12) {
+                                best_local_drop = drop;
+                                best_local_out = neighbor;
+                                best_u = u; best_v = v; best_route_idx = route_idx; best_is_truck = is_truck_mode;
+                            } else if (fabs(drop - best_local_drop) <= 1e-12) {
+                                // tie-breaker: choose better makespan
+                                if (neighbor.total_makespan < best_local_out.total_makespan) {
+                                    best_local_out = neighbor;
+                                    best_u = u; best_v = v; best_route_idx = route_idx; best_is_truck = is_truck_mode;
+                                }
+                            }
+                        }
+                    }
+                }
+                start = r + 1;
+            }
+        };
+
+        // Identify critical route (max time)
+        bool crit_is_truck = true; int critical_idx = -1; double max_time = -1.0;
+        for (int i = 0; i < h; ++i) {
+            double t = (i < (int)initial_solution.truck_route_times.size()) ? initial_solution.truck_route_times[i] : 0.0;
+            if (t > max_time) { max_time = t; crit_is_truck = true; critical_idx = i; }
+        }
+        for (int i = 0; i < (int)initial_solution.drone_route_times.size(); ++i) {
+            double t = initial_solution.drone_route_times[i];
+            if (t > max_time) { max_time = t; crit_is_truck = false; critical_idx = i; }
+        }
+        if (critical_idx == -1) return initial_solution;
+
+    Solution best_local = initial_solution; // will hold best 2-opt neighbor according to drop
+        double best_local_drop = 0.0; // positive only means improvement
+    int best2_u = -1, best2_v = -1, best2_route_idx = -1; bool best2_is_truck = true;
+
+        // Try critical route first
+        if (crit_is_truck) {
+            double base_t = initial_solution.truck_route_times[critical_idx];
+            try_two_opt_on_route(initial_solution.truck_routes[critical_idx], true, critical_idx,
+                                 best_local, best_local_drop, base_t, best_cost,
+                                 best2_u, best2_v, best2_route_idx, best2_is_truck);
+        } else {
+            double base_t = initial_solution.drone_route_times[critical_idx];
+            try_two_opt_on_route(initial_solution.drone_routes[critical_idx], false, critical_idx,
+                                 best_local, best_local_drop, base_t, best_cost,
+                                 best2_u, best2_v, best2_route_idx, best2_is_truck);
+        }
+
+        if (best_local_drop > 1e-12) {
+            // Also update running best if makespan improved
+            if (best_local.total_makespan < best_cost) {
+                best_neighbor = best_local;
+                best_cost = best_local.total_makespan;
+            }
+            // Update 2-opt tabu for the chosen segment endpoints
+            if (best2_u != -1 && best2_v != -1) {
+                if ((int)tabu_list_2opt.size() != n + 1 || ((int)tabu_list_2opt.size() > 0 && (int)tabu_list_2opt[0].size() != n + 1)) {
+                    tabu_list_2opt.assign(n + 1, vector<int>(n + 1, 0));
+                }
+                tabu_list_2opt[best2_u][best2_v] = current_iter + TABU_TENURE_2OPT;
+            }
+            // Debug
+            /* cout.setf(std::ios::fixed); cout << setprecision(6);
+            cout << "[N3] 2-opt on " << (best2_is_truck ? "truck" : "drone")
+                 << " #" << (best2_is_truck ? (best2_route_idx + 1) : (best2_route_idx + 1))
+                 << " cut (" << best2_u << "," << best2_v << ")"
+                 << ", makespan: " << initial_solution.total_makespan << " -> " << best_local.total_makespan
+                 << ", iter " << current_iter << "\n"; */
+            return best_local;
+        }
+
+        // If no improving move on critical route, allow other routes and pick the largest drop
+        for (int i = 0; i < h; ++i) {
+            if (crit_is_truck && i == critical_idx) continue;
+            double base_t = initial_solution.truck_route_times[i];
+            try_two_opt_on_route(initial_solution.truck_routes[i], true, i,
+                                 best_local, best_local_drop, base_t, best_cost,
+                                 best2_u, best2_v, best2_route_idx, best2_is_truck);
+        }
+        for (int i = 0; i < (int)initial_solution.drone_route_times.size(); ++i) {
+            if (!crit_is_truck && i == critical_idx) continue;
+            double base_t = initial_solution.drone_route_times[i];
+            try_two_opt_on_route(initial_solution.drone_routes[i], false, i,
+                                 best_local, best_local_drop, base_t, best_cost,
+                                 best2_u, best2_v, best2_route_idx, best2_is_truck);
+        }
+
+        if (best_local_drop > 1e-12) {
+            if (best_local.total_makespan < best_cost) {
+                best_neighbor = best_local;
+                best_cost = best_local.total_makespan;
+            }
+            // Update 2-opt tabu for the chosen segment endpoints
+            if (best2_u != -1 && best2_v != -1) {
+                if ((int)tabu_list_2opt.size() != n + 1 || ((int)tabu_list_2opt.size() > 0 && (int)tabu_list_2opt[0].size() != n + 1)) {
+                    tabu_list_2opt.assign(n + 1, vector<int>(n + 1, 0));
+                }
+                tabu_list_2opt[best2_u][best2_v] = current_iter + TABU_TENURE_2OPT;
+            }
+            // Debug
+            /* cout.setf(std::ios::fixed); cout << setprecision(6);
+            cout << "[N3] 2-opt on " << (best2_is_truck ? "truck" : "drone")
+                 << " #" << (best2_is_truck ? (best2_route_idx + 1) : (best2_route_idx + 1))
+                 << " cut (" << best2_u << "," << best2_v << ")"
+                 << ", makespan: " << initial_solution.total_makespan << " -> " << best_local.total_makespan
+                 << ", iter " << current_iter << "\n"; */
+            return best_local;
+        }
+
+        return initial_solution; // no improving move found
+
+    } else if (neighbor_id == 4) {
+        // Neighborhood 4: 2-opt-star (inter-route exchange) within depot-delimited subroutes.
+        // Tabu key: unordered pair(s) of edges cut (encoded as (min(u,v), max(u,v)) for each cut edge), with aspiration.
+
+        auto ensure_tabu_star_sized = [&]() {
+            if ((int)tabu_list_2opt_star.size() != n + 1 || ((int)tabu_list_2opt_star.size() > 0 && (int)tabu_list_2opt_star[0].size() != n + 1)) {
+                tabu_list_2opt_star.assign(n + 1, vector<int>(n + 1, 0));
+            }
+        };
+        ensure_tabu_star_sized();
+
+        // Helper: perform 2-opt* between two routes within chosen subroutes.
+    int best_idxA = -1, best_idxB = -1;
+    auto try_two_opt_star_pair = [&](const vi &routeA, bool a_is_truck, int idxA,
+                     const vi &routeB, bool b_is_truck, int idxB,
+                     Solution &best_out, double &best_makespan, double global_best_cost,
+                     int &best_ua, int &best_va, int &best_ub, int &best_vb) {
+            int mA = (int)routeA.size();
+            int mB = (int)routeB.size();
+            if (mA <= 3 || mB <= 3) return; // need at least two customers per route to cut within a subroute
+
+            // Enumerate subroutes for A
+            int startA = 0;
+            while (startA < mA) {
+                while (startA < mA && routeA[startA] == 0) startA++;
+                if (startA >= mA) break;
+                int lA = startA, rA = lA;
+                while (rA + 1 < mA && routeA[rA + 1] != 0) rA++;
+                // A-subroute is [lA..rA]
+                if (rA - lA + 1 >= 2) {
+                    // Enumerate subroutes for B
+                    int startB = 0;
+                    while (startB < mB) {
+                        while (startB < mB && routeB[startB] == 0) startB++;
+                        if (startB >= mB) break;
+                        int lB = startB, rB = lB;
+                        while (rB + 1 < mB && routeB[rB + 1] != 0) rB++;
+                        if (rB - lB + 1 >= 2) {
+                            // Cut inside subroutes: choose i in [lA..rA-1] and j in [lB..rB-1]
+                            for (int i = lA; i < rA; ++i) {
+                                int a1 = routeA[i], a2 = routeA[i + 1];
+                                if (a1 == 0 || a2 == 0) continue; // safety
+                                // Edge cut in A: (a1,a2)
+                                int ua = min(a1, a2), va = max(a1, a2);
+                                for (int j = lB; j < rB; ++j) {
+                                    int b1 = routeB[j], b2 = routeB[j + 1];
+                                    if (b1 == 0 || b2 == 0) continue; // safety
+                                    // Edge cut in B: (b1,b2)
+                                    int ub = min(b1, b2), vb = max(b1, b2);
+
+                                    // Tabu check on cut edges (unordered). Aspiration allows override if improving global best.
+                                    bool is_tabu = false;
+                                    if ((int)tabu_list_2opt_star.size() > ua && (int)tabu_list_2opt_star[ua].size() > va && tabu_list_2opt_star[ua][va] >= current_iter)
+                                        is_tabu = true;
+                                    if ((int)tabu_list_2opt_star.size() > ub && (int)tabu_list_2opt_star[ub].size() > vb && tabu_list_2opt_star[ub][vb] >= current_iter)
+                                        is_tabu = true;
+
+                                    // Build exchanged routes within subroutes: swap tails after i and j up to rA and rB respectively
+                                    // Construct new subroutes and rebuild whole routes via concatenation to avoid out-of-bounds writes
+                                    vi new_subA; new_subA.reserve((i - lA + 1) + max(0, rB - j));
+                                    // A head: [lA..i]
+                                    for (int p = lA; p <= i; ++p) new_subA.push_back(routeA[p]);
+                                    // append B tail: [j+1..rB]
+                                    for (int p = j + 1; p <= rB; ++p) new_subA.push_back(routeB[p]);
+
+                                    vi new_subB; new_subB.reserve((j - lB + 1) + max(0, rA - i));
+                                    // B head: [lB..j]
+                                    for (int p = lB; p <= j; ++p) new_subB.push_back(routeB[p]);
+                                    // append A tail: [i+1..rA]
+                                    for (int p = i + 1; p <= rA; ++p) new_subB.push_back(routeA[p]);
+
+                                    // Rebuild rA2 = routeA[0..lA-1] + new_subA + routeA[rA+1..end]
+                                    vi rA2; rA2.reserve(lA + (int)new_subA.size() + (mA - (rA + 1)));
+                                    rA2.insert(rA2.end(), routeA.begin(), routeA.begin() + lA);
+                                    rA2.insert(rA2.end(), new_subA.begin(), new_subA.end());
+                                    rA2.insert(rA2.end(), routeA.begin() + rA + 1, routeA.end());
+
+                                    // Rebuild rB2 = routeB[0..lB-1] + new_subB + routeB[rB+1..end]
+                                    vi rB2; rB2.reserve(lB + (int)new_subB.size() + (mB - (rB + 1)));
+                                    rB2.insert(rB2.end(), routeB.begin(), routeB.begin() + lB);
+                                    rB2.insert(rB2.end(), new_subB.begin(), new_subB.end());
+                                    rB2.insert(rB2.end(), routeB.begin() + rB + 1, routeB.end());
+
+                                    // Ensure depots exist at ends and no duplicate consecutive depots
+                                    auto normalize = [&](vi &r) {
+                                        if (r.empty() || r.front() != 0) r.insert(r.begin(), 0);
+                                        if (!r.empty() && r.back() != 0) r.push_back(0);
+                                        if (!r.empty() && r.size() >= 2) {
+                                            vi r2; r2.reserve(r.size());
+                                            for (int x : r) { if (!r2.empty() && r2.back() == 0 && x == 0) continue; r2.push_back(x);} r.swap(r2);
+                                        }
+                                    };
+                                    normalize(rA2);
+                                    normalize(rB2);
+
+                                    // No-op guard
+                                    if (rA2 == routeA && rB2 == routeB) continue;
+
+                                    // Feasibility and times for the two modified routes only
+                                    auto [tA2, feasA] = check_route_feasibility(rA2, 0.0, a_is_truck);
+                                    if (!feasA) continue;
+                                    auto [tB2, feasB] = check_route_feasibility(rB2, 0.0, b_is_truck);
+                                    if (!feasB) continue;
+
+                                    Solution neighbor = initial_solution;
+                                    if (a_is_truck) neighbor.truck_routes[idxA] = rA2; else neighbor.drone_routes[idxA] = rA2;
+                                    if (b_is_truck) neighbor.truck_routes[idxB] = rB2; else neighbor.drone_routes[idxB] = rB2;
+                                    neighbor.truck_route_times = initial_solution.truck_route_times;
+                                    neighbor.drone_route_times = initial_solution.drone_route_times;
+                                    if (a_is_truck) neighbor.truck_route_times[idxA] = (rA2.size() > 1 ? tA2 : 0.0);
+                                    else neighbor.drone_route_times[idxA] = (rA2.size() > 1 ? tA2 : 0.0);
+                                    if (b_is_truck) neighbor.truck_route_times[idxB] = (rB2.size() > 1 ? tB2 : 0.0);
+                                    else neighbor.drone_route_times[idxB] = (rB2.size() > 1 ? tB2 : 0.0);
+
+                                    double nb_makespan = 0.0;
+                                    for (double t : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t);
+                                    for (double t : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t);
+                                    neighbor.total_makespan = nb_makespan;
+
+                                    if (is_tabu && neighbor.total_makespan >= global_best_cost) continue; // aspiration
+
+                                    if (neighbor.total_makespan + 1e-12 < best_makespan) {
+                                        best_makespan = neighbor.total_makespan;
+                                        best_out = neighbor;
+                                        best_ua = ua; best_va = va; best_ub = ub; best_vb = vb;
+                                        best_idxA = idxA; best_idxB = idxB;
+                                    }
+                                }
+                            }
+                        }
+                        startB = rB + 1;
+                    }
+                }
+                startA = rA + 1;
+            }
+        };
+
+        // Identify the critical route (max time)
+        bool crit_is_truck = true; int critical_idx = -1; double max_time = -1.0;
+        for (int i = 0; i < h; ++i) {
+            double t = (i < (int)initial_solution.truck_route_times.size()) ? initial_solution.truck_route_times[i] : 0.0;
+            if (t > max_time) { max_time = t; crit_is_truck = true; critical_idx = i; }
+        }
+        for (int i = 0; i < (int)initial_solution.drone_route_times.size(); ++i) {
+            double t = initial_solution.drone_route_times[i];
+            if (t > max_time) { max_time = t; crit_is_truck = false; critical_idx = i; }
+        }
+        if (critical_idx == -1) return initial_solution;
+
+    Solution best_local = initial_solution;
+    double best_makespan = 1e100;
+    int best_ua = -1, best_va = -1, best_ub = -1, best_vb = -1;
+
+        if (crit_is_truck) {
+            const vi &critR = initial_solution.truck_routes[critical_idx];
+            for (int j = 0; j < h; ++j) {
+                if (j == critical_idx) continue;
+                try_two_opt_star_pair(critR, true, critical_idx,
+                                      initial_solution.truck_routes[j], true, j,
+                                      best_local, best_makespan, best_cost,
+                                      best_ua, best_va, best_ub, best_vb);
+            }
+        } else {
+            const vi &critR = initial_solution.drone_routes[critical_idx];
+            for (int j = 0; j < (int)initial_solution.drone_routes.size(); ++j) {
+                if (j == critical_idx) continue;
+                try_two_opt_star_pair(critR, false, critical_idx,
+                                      initial_solution.drone_routes[j], false, j,
+                                      best_local, best_makespan, best_cost,
+                                      best_ua, best_va, best_ub, best_vb);
+            }
+        }
+
+        // If any admissible move was found, return it even if worse than current; also update tabu for cut edges
+        if (best_makespan < 1e100) {
+            // Update global best tracker if improved
+            if (best_local.total_makespan < best_cost) {
+                best_neighbor = best_local;
+            }
+            // Update 2-opt-star tabu (both cut edges) for the chosen move
+            ensure_tabu_star_sized();
+            if (best_ua != -1 && best_va != -1) tabu_list_2opt_star[best_ua][best_va] = current_iter + TABU_TENURE_2OPT_STAR;
+            if (best_ub != -1 && best_vb != -1) tabu_list_2opt_star[best_ub][best_vb] = current_iter + TABU_TENURE_2OPT_STAR;
+            // Debug
+            /* cout.setf(std::ios::fixed); cout << setprecision(6);
+            cout << "[N4] 2-opt* cutA (" << best_ua << "," << best_va << ")"
+                 << " cutB (" << best_ub << "," << best_vb << ")"
+                 << " on routes " << (best_idxA + 1) << " and " << (best_idxB + 1)
+                 << ", makespan: " << initial_solution.total_makespan << " -> " << best_local.total_makespan
+                 << ", iter " << current_iter << "\n"; */
+            return best_local;
+        }
+
+        return initial_solution; // no admissible inter-route exchange found
+    }
+    return initial_solution; // should not reach here
+}
+
 Solution tabu_search(const Solution& initial_solution) {
-    // Placeholder for tabu search implementation
-    // For now, just return the initial solution
-    return initial_solution;
+    Solution best_solution = initial_solution;
+    double best_cost = initial_solution.total_makespan;
+    double score[NUM_NEIGHBORHOODS] = {0.0};
+    double weight[NUM_NEIGHBORHOODS];
+    for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) weight[i] = 1.0/NUM_NEIGHBORHOODS;
+    int count[NUM_NEIGHBORHOODS] = {0};
+    
+    Solution current_sol = initial_solution;
+    double current_cost = initial_solution.total_makespan;
+
+    for (int segment = 0; segment < MAX_SEGMENT; ++segment) {
+        Solution best_segment_sol = current_sol;
+        double best_segment_cost = current_cost;
+        int iter = 1;
+        int no_improve_iters = 0;
+        double T0 = 100.0; // initial temperature for simulated annealing acceptance
+        double alpha = 0.995; // cooling rate
+    // Reset tabu lists at the start of each segment (iteration counter restarts per segment)
+        tabu_list_switch.clear();
+        tabu_list_swap.clear();
+        tabu_list_reinsert.clear();
+        tabu_list_2opt.clear();
+        tabu_list_2opt_star.clear();
+        tabu_list_relocate.clear();
+        while (iter < MAX_ITER_PER_SEGMENT && no_improve_iters < MAX_NO_IMPROVE) {
+            double total_weight = 0.0;
+            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+                total_weight += weight[i];
+            }
+            double r = ((double) rand() / (RAND_MAX)) * total_weight;
+            int selected_neighbor = 0;
+            double acc = weight[0];
+            while (selected_neighbor < NUM_NEIGHBORHOODS - 1 && r > acc) {
+                selected_neighbor++;
+                acc += weight[selected_neighbor];
+            }
+            count[selected_neighbor]++;
+            // Use the monotonically increasing iteration counter 'iter' as the tabu iteration for local_search
+            Solution neighbor = local_search(current_sol, selected_neighbor, iter, best_cost);
+            // Update global best immediately so aspiration in subsequent iterations uses latest best_cost
+            if (neighbor.total_makespan + 1e-12 < best_solution.total_makespan) {
+                best_solution = neighbor;
+                best_cost = neighbor.total_makespan;
+            }
+            // Update score
+            if (neighbor.total_makespan + 1e-12 < best_segment_cost) {
+                best_segment_cost = neighbor.total_makespan;
+                best_segment_sol = neighbor;
+                no_improve_iters = 0;
+            }
+            if (neighbor.total_makespan + 1e-12 < current_cost) {
+                current_sol = neighbor;
+                current_cost = neighbor.total_makespan;
+                score[selected_neighbor] += gamma1;
+                no_improve_iters = 0;
+            } else if (neighbor.total_makespan < current_cost + 1e-12) {
+                current_sol = neighbor;
+                current_cost = neighbor.total_makespan;
+                score[selected_neighbor] += gamma2;
+                no_improve_iters = 0;
+            } else {
+                // Simulated annealing acceptance
+                double T = T0 * pow(alpha, iter);
+                double ap = exp((current_cost - neighbor.total_makespan) / T);
+                double rand_val = ((double) rand() / (RAND_MAX));
+                if (rand_val < ap) {
+                    current_sol = neighbor;
+                    current_cost = neighbor.total_makespan;
+                }
+                score[selected_neighbor] += gamma3;
+                no_improve_iters++;
+            }
+            iter++;
+        }
+        // Update weights based on scores
+        for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+            if (count[i] != 0) {
+                weight[i] = (1.0 - gamma4) * weight[i] + gamma4 * (score[i] / count[i]);
+            }
+        }
+        double segment_best_cost = best_segment_sol.total_makespan;
+        if (segment_best_cost + 1e-12 < best_solution.total_makespan) {
+            best_solution = best_segment_sol;
+            best_cost = best_solution.total_makespan; // keep aspiration threshold in sync with best-so-far
+        }
+        double sum_weights = 0.0;
+        for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+            sum_weights += weight[i];
+        }
+        if (sum_weights > 0.0) {
+            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+                weight[i] /= sum_weights;
+            }
+        } else {
+            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+                weight[i] = 1.0 / NUM_NEIGHBORHOODS;
+            }
+        }
+        for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+            score[i] = 0.0;
+            count[i] = 0;
+        }
+        current_sol = best_segment_sol;
+        current_cost = best_segment_cost;
+
+        // Debug: print neighborhood weights after each segment
+        //cout.setf(std::ios::fixed); cout << setprecision(6);
+        //cout << "[Segment " << (segment + 1) << "] weights:";
+        //for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+        //    cout << " w" << i << "=" << weight[i];
+        //}
+        //cout << "\n";
+    }
+    return best_solution;
 }
 
 // Print the (n+1)x(n+1) distance matrix (Euclidean) with depot = 0.
@@ -1026,6 +2049,7 @@ static bool write_output_file(const std::string& out_path, const Solution& sol, 
     if (!ofs) return false;
     ofs.setf(std::ios::fixed); ofs << setprecision(6);
     ofs << "Initial solution cost: " << cost << "\n";
+    ofs << "Improved solution cost: " << sol.total_makespan << "\n";
     ofs << "Elapsed time: " << elapsed_sec << " seconds\n";
     print_solution_stream(sol, ofs);
     return true;
@@ -1050,23 +2074,48 @@ int main(int argc, char* argv[]) {
         print_distance_matrix();
         return 0; // only print distance matrix and exit
     }
-
-    auto start_time = std::chrono::high_resolution_clock::now();
     // Pre-filter dronable customers by capacity/energy
     update_served_by_drone();
-    Solution initial_solution = generate_initial_solution();
+    
+    // Track best across attempts
+    bool have_best = false;
+    Solution best_overall_sol;
+    double best_overall_initial_cost = 0.0;
+    auto start_time = std::chrono::high_resolution_clock::now();
 
+    for (int solution_attempt = 0; solution_attempt < NUM_OF_INITIAL_SOLUTIONS; ++solution_attempt) {
+        Solution initial_solution = generate_initial_solution();
+        Solution improved_sol = tabu_search(initial_solution);
+        // Output both to stdout and to file
+/*         cout.setf(std::ios::fixed); cout << setprecision(6);
+        cout << "Attempt " << (solution_attempt + 1) << "/" << NUM_OF_INITIAL_SOLUTIONS << "\n";
+        cout << "Initial Solution Cost: " << initial_solution.total_makespan << "\n";
+        cout << "Improved Solution Cost: " << improved_sol.total_makespan << "\n";
+        cout << "Elapsed Time: " << elapsed.count() << " seconds\n"; 
+        print_solution_stream(improved_sol, cout);*/
+        // Update best across attempts
+        if (!have_best || improved_sol.total_makespan + 1e-12 < best_overall_sol.total_makespan) {
+            have_best = true;
+            best_overall_sol = improved_sol;
+            best_overall_initial_cost = initial_solution.total_makespan;
+        }
+    }
+    // Emit best across all attempts
     auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsed = end_time - start_time;
-
-    // Write detailed output to file
-    const std::string out_path = "output.txt";
-    bool ok = write_output_file(out_path, initial_solution, initial_solution.total_makespan, elapsed.count());
-    // Also print a brief summary to stdout
-    cout.setf(std::ios::fixed); cout << setprecision(6);
-    cout << "Initial solution makespan: " << initial_solution.total_makespan << "\n";
-    cout << "Elapsed time: " << elapsed.count() << " seconds\n";
-    cout << (ok ? "Output written to output.txt\n" : "Failed to write output.txt\n");
+    double elapsed_seconds = std::chrono::duration<double>(end_time - start_time).count();
+    if (have_best) {
+        cout << "\n=== Best Across Attempts ===\n";
+        cout << "Initial Solution Cost: " << best_overall_initial_cost << "\n";
+        cout << "Improved Solution Cost: " << best_overall_sol.total_makespan << "\n";
+        cout << "Elapsed Time: " << elapsed_seconds << " seconds\n";
+        print_solution_stream(best_overall_sol, cout);
+        string out_best = "output_solution_best.txt";
+        if (write_output_file(out_best, best_overall_sol, best_overall_initial_cost, elapsed_seconds)) {
+            cout << "Best solution written to " << out_best << "\n";
+        } else {
+            cout << "Failed to write best solution to " << out_best << "\n";
+        }
+    }
 
     return 0;
 }

@@ -1,0 +1,512 @@
+Attempt 1/50
+Initial Solution Cost: 1259.013503
+Improved Solution Cost: 1104.843964
+Elapsed Time: 0.205432 seconds
+Truck Routes:
+Truck 1: 0 1 17 20 4 5 0 
+Truck 2: 0 7 12 3 18 0 
+Drone Routes:
+Drone 1: 0 15 16 14 10 0 19 11 0 
+Drone 2: 0 13 9 8 0 6 2 0 
+Attempt 2/50
+Initial Solution Cost: 1305.299321
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.304193 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 0 
+Truck 2: 0 5 4 20 17 1 0 
+Drone Routes:
+Drone 1: 0 6 2 0 14 3 16 0 
+Drone 2: 0 8 9 13 0 19 10 11 0 
+Attempt 3/50
+Initial Solution Cost: 1834.973896
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.243564 seconds
+Truck Routes:
+Truck 1: 0 1 17 20 4 5 0 
+Truck 2: 0 18 15 12 7 0 
+Drone Routes:
+Drone 1: 0 11 10 19 0 9 8 13 0 
+Drone 2: 0 2 6 0 16 3 14 0 
+Attempt 4/50
+Initial Solution Cost: 1369.838901
+Improved Solution Cost: 1104.843964
+Elapsed Time: 0.182164 seconds
+Truck Routes:
+Truck 1: 0 7 12 3 18 0 
+Truck 2: 0 1 17 6 20 0 
+Drone Routes:
+Drone 1: 0 15 16 2 0 8 9 13 0 
+Drone 2: 0 5 4 11 0 19 14 10 0 
+Attempt 5/50
+Initial Solution Cost: 2000.106180
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.245287 seconds
+Truck Routes:
+Truck 1: 0 18 15 12 7 0 
+Truck 2: 0 5 4 20 17 1 0 
+Drone Routes:
+Drone 1: 0 19 10 11 0 8 9 13 0 
+Drone 2: 0 6 2 0 16 3 14 0 
+Attempt 6/50
+Initial Solution Cost: 1964.637805
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.255471 seconds
+Truck Routes:
+Truck 1: 0 18 15 12 7 0 
+Truck 2: 0 1 17 20 4 5 0 
+Drone Routes:
+Drone 1: 0 8 9 13 0 11 10 19 0 
+Drone 2: 0 2 6 0 16 3 14 0 
+Attempt 7/50
+Initial Solution Cost: 1886.936886
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.242807 seconds
+Truck Routes:
+Truck 1: 0 18 15 12 7 0 
+Truck 2: 0 1 17 20 4 5 0 
+Drone Routes:
+Drone 1: 0 19 10 11 0 9 8 13 0 
+Drone 2: 0 2 6 0 14 3 16 0 
+Attempt 8/50
+Initial Solution Cost: 1502.489377
+Improved Solution Cost: 1095.006351
+Elapsed Time: 0.251025 seconds
+Truck Routes:
+Truck 1: 0 6 20 17 1 0 
+Truck 2: 0 7 12 15 18 14 0 
+Drone Routes:
+Drone 1: 0 3 16 0 5 11 10 19 0 
+Drone 2: 0 2 0 13 9 8 0 4 0 
+Attempt 9/50
+Initial Solution Cost: 1451.863628
+Improved Solution Cost: 1104.843964
+Elapsed Time: 0.167921 seconds
+Truck Routes:
+Truck 1: 0 1 17 6 20 0 
+Truck 2: 0 18 3 12 7 0 
+Drone Routes:
+Drone 1: 0 13 2 0 10 14 16 15 0 
+Drone 2: 0 5 4 11 0 19 8 9 0 
+Attempt 10/50
+Initial Solution Cost: 1883.960003
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.242101 seconds
+Truck Routes:
+Truck 1: 0 5 4 20 17 1 0 
+Truck 2: 0 18 15 12 7 0 
+Drone Routes:
+Drone 1: 0 6 2 0 14 3 16 0 
+Drone 2: 0 9 8 13 0 19 10 11 0 
+Attempt 11/50
+Initial Solution Cost: 1639.324624
+Improved Solution Cost: 1095.006351
+Elapsed Time: 0.243835 seconds
+Truck Routes:
+Truck 1: 0 17 20 6 1 0 
+Truck 2: 0 14 18 15 12 7 0 
+Drone Routes:
+Drone 1: 0 2 9 8 0 13 3 0 
+Drone 2: 0 16 19 10 11 0 5 4 0 
+Attempt 12/50
+Initial Solution Cost: 1978.401357
+Improved Solution Cost: 1059.511436
+Elapsed Time: 0.270781 seconds
+Truck Routes:
+Truck 1: 0 18 15 12 7 0 
+Truck 2: 0 5 4 20 17 1 0 
+Drone Routes:
+Drone 1: 0 8 9 13 0 16 3 14 0 
+Drone 2: 0 2 6 11 0 19 10 0 
+Attempt 13/50
+Initial Solution Cost: 1375.681189
+Improved Solution Cost: 1111.892275
+Elapsed Time: 0.151154 seconds
+Truck Routes:
+Truck 1: 0 18 3 12 7 0 
+Truck 2: 0 1 2 20 17 0 
+Drone Routes:
+Drone 1: 0 9 8 13 0 15 16 11 0 
+Drone 2: 0 5 4 6 0 10 14 19 0 
+Attempt 14/50
+Initial Solution Cost: 1890.731677
+Improved Solution Cost: 1104.843964
+Elapsed Time: 0.183181 seconds
+Truck Routes:
+Truck 1: 0 5 4 20 17 1 0 
+Truck 2: 0 7 12 3 18 0 
+Drone Routes:
+Drone 1: 0 15 16 14 0 6 13 0 
+Drone 2: 0 8 9 2 0 11 10 19 0 
+Attempt 15/50
+Initial Solution Cost: 1977.958795
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.227529 seconds
+Truck Routes:
+Truck 1: 0 5 4 20 17 1 0 
+Truck 2: 0 7 12 15 18 0 
+Drone Routes:
+Drone 1: 0 6 2 0 16 3 14 0 
+Drone 2: 0 8 9 13 0 11 10 19 0 
+Attempt 16/50
+Initial Solution Cost: 1902.711979
+Improved Solution Cost: 1104.843964
+Elapsed Time: 0.178912 seconds
+Truck Routes:
+Truck 1: 0 7 12 3 18 0 
+Truck 2: 0 1 6 20 17 0 
+Drone Routes:
+Drone 1: 0 13 19 0 5 4 11 10 0 
+Drone 2: 0 8 9 2 0 15 16 14 0 
+Attempt 17/50
+Initial Solution Cost: 1366.232737
+Improved Solution Cost: 1083.343288
+Elapsed Time: 0.267357 seconds
+Truck Routes:
+Truck 1: 0 5 4 20 17 1 0 
+Truck 2: 0 18 15 12 7 0 
+Drone Routes:
+Drone 1: 0 9 2 6 0 11 19 0 
+Drone 2: 0 16 3 14 10 0 13 8 0 
+Attempt 18/50
+Initial Solution Cost: 1355.917716
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.239706 seconds
+Truck Routes:
+Truck 1: 0 5 4 20 17 1 0 
+Truck 2: 0 7 12 15 18 0 
+Drone Routes:
+Drone 1: 0 13 8 9 0 19 10 11 0 
+Drone 2: 0 6 2 0 14 3 16 0 
+Attempt 19/50
+Initial Solution Cost: 1544.797906
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.345748 seconds
+Truck Routes:
+Truck 1: 0 1 17 20 4 5 0 
+Truck 2: 0 7 12 15 18 0 
+Drone Routes:
+Drone 1: 0 16 3 14 0 6 2 0 
+Drone 2: 0 8 9 13 0 19 10 11 0 
+Attempt 20/50
+Initial Solution Cost: 1387.815353
+Improved Solution Cost: 1059.511436
+Elapsed Time: 0.304477 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 0 
+Truck 2: 0 5 4 20 17 1 0 
+Drone Routes:
+Drone 1: 0 11 10 19 0 6 2 0 
+Drone 2: 0 14 3 16 0 13 9 8 0 
+Attempt 21/50
+Initial Solution Cost: 1323.788195
+Improved Solution Cost: 1095.006351
+Elapsed Time: 0.234835 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 14 0 
+Truck 2: 0 17 20 6 1 0 
+Drone Routes:
+Drone 1: 0 8 9 2 0 3 16 0 
+Drone 2: 0 5 4 11 10 0 13 19 0 
+Attempt 22/50
+Initial Solution Cost: 1422.010612
+Improved Solution Cost: 1095.006351
+Elapsed Time: 0.252486 seconds
+Truck Routes:
+Truck 1: 0 20 6 17 1 0 
+Truck 2: 0 7 12 15 18 14 0 
+Drone Routes:
+Drone 1: 0 19 10 0 16 13 9 8 0 
+Drone 2: 0 11 4 5 0 3 2 0 
+Attempt 23/50
+Initial Solution Cost: 1321.118136
+Improved Solution Cost: 1095.006351
+Elapsed Time: 0.230440 seconds
+Truck Routes:
+Truck 1: 0 14 18 15 12 7 0 
+Truck 2: 0 20 6 17 1 0 
+Drone Routes:
+Drone 1: 0 10 3 16 2 0 19 0 
+Drone 2: 0 5 4 11 0 9 8 13 0 
+Attempt 24/50
+Initial Solution Cost: 1494.104674
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.225931 seconds
+Truck Routes:
+Truck 1: 0 1 17 20 4 5 0 
+Truck 2: 0 7 12 15 18 0 
+Drone Routes:
+Drone 1: 0 6 2 0 16 3 14 0 
+Drone 2: 0 13 9 8 0 19 10 11 0 
+Attempt 25/50
+Initial Solution Cost: 1639.324624
+Improved Solution Cost: 1104.843964
+Elapsed Time: 0.209574 seconds
+Truck Routes:
+Truck 1: 0 7 12 3 18 0 
+Truck 2: 0 5 4 20 17 1 0 
+Drone Routes:
+Drone 1: 0 2 6 11 0 19 10 0 
+Drone 2: 0 8 9 13 0 16 14 15 0 
+Attempt 26/50
+Initial Solution Cost: 2108.779246
+Improved Solution Cost: 1104.843964
+Elapsed Time: 0.184446 seconds
+Truck Routes:
+Truck 1: 0 1 6 20 17 0 
+Truck 2: 0 18 3 12 7 0 
+Drone Routes:
+Drone 1: 0 13 8 2 0 15 16 9 0 
+Drone 2: 0 5 10 14 19 0 4 11 0 
+Attempt 27/50
+Initial Solution Cost: 1873.467613
+Improved Solution Cost: 1104.843964
+Elapsed Time: 0.178052 seconds
+Truck Routes:
+Truck 1: 0 4 20 17 1 0 
+Truck 2: 0 18 3 12 7 0 
+Drone Routes:
+Drone 1: 0 15 16 14 0 11 10 19 0 
+Drone 2: 0 5 2 6 0 13 9 8 0 
+Attempt 28/50
+Initial Solution Cost: 1816.749145
+Improved Solution Cost: 1111.892275
+Elapsed Time: 0.190550 seconds
+Truck Routes:
+Truck 1: 0 17 20 2 1 0 
+Truck 2: 0 7 12 3 18 0 
+Drone Routes:
+Drone 1: 0 11 19 0 10 14 16 15 0 
+Drone 2: 0 9 8 13 0 6 4 5 0 
+Attempt 29/50
+Initial Solution Cost: 1407.835963
+Improved Solution Cost: 1118.014767
+Elapsed Time: 0.214481 seconds
+Truck Routes:
+Truck 1: 0 4 20 6 17 1 0 
+Truck 2: 0 7 12 3 18 0 
+Drone Routes:
+Drone 1: 0 10 0 5 2 0 16 15 0 
+Drone 2: 0 11 19 14 0 13 9 8 0 
+Attempt 30/50
+Initial Solution Cost: 1639.324624
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.297554 seconds
+Truck Routes:
+Truck 1: 0 5 4 20 17 1 0 
+Truck 2: 0 7 12 15 18 0 
+Drone Routes:
+Drone 1: 0 2 6 0 16 3 14 0 
+Drone 2: 0 8 9 13 0 19 10 11 0 
+Attempt 31/50
+Initial Solution Cost: 1422.010612
+Improved Solution Cost: 1118.014767
+Elapsed Time: 0.184997 seconds
+Truck Routes:
+Truck 1: 0 7 12 3 18 0 
+Truck 2: 0 4 20 6 17 1 0 
+Drone Routes:
+Drone 1: 0 11 5 9 0 13 2 0 
+Drone 2: 0 19 14 10 0 15 16 8 0 
+Attempt 32/50
+Initial Solution Cost: 1288.319820
+Improved Solution Cost: 1104.843964
+Elapsed Time: 0.175751 seconds
+Truck Routes:
+Truck 1: 0 5 4 20 17 1 0 
+Truck 2: 0 7 12 3 18 0 
+Drone Routes:
+Drone 1: 0 11 10 19 0 2 9 8 0 
+Drone 2: 0 14 16 15 0 6 13 0 
+Attempt 33/50
+Initial Solution Cost: 1659.759610
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.233930 seconds
+Truck Routes:
+Truck 1: 0 1 17 20 4 5 0 
+Truck 2: 0 18 15 12 7 0 
+Drone Routes:
+Drone 1: 0 14 3 16 0 2 6 0 
+Drone 2: 0 11 10 19 0 13 8 9 0 
+Attempt 34/50
+Initial Solution Cost: 1417.838349
+Improved Solution Cost: 1104.843964
+Elapsed Time: 0.263872 seconds
+Truck Routes:
+Truck 1: 0 7 12 3 18 0 
+Truck 2: 0 1 17 20 4 5 0 
+Drone Routes:
+Drone 1: 0 8 9 16 19 0 15 13 0 
+Drone 2: 0 14 10 11 0 6 2 0 
+Attempt 35/50
+Initial Solution Cost: 1881.958323
+Improved Solution Cost: 1059.511436
+Elapsed Time: 0.246793 seconds
+Truck Routes:
+Truck 1: 0 5 4 20 17 1 0 
+Truck 2: 0 18 15 12 7 0 
+Drone Routes:
+Drone 1: 0 16 3 14 0 13 9 8 0 
+Drone 2: 0 2 6 11 0 19 10 0 
+Attempt 36/50
+Initial Solution Cost: 1744.699603
+Improved Solution Cost: 1095.006351
+Elapsed Time: 0.219546 seconds
+Truck Routes:
+Truck 1: 0 1 6 20 17 0 
+Truck 2: 0 7 12 15 18 14 0 
+Drone Routes:
+Drone 1: 0 8 9 2 0 11 4 5 0 
+Drone 2: 0 13 19 0 16 3 10 0 
+Attempt 37/50
+Initial Solution Cost: 1812.260678
+Improved Solution Cost: 1059.511436
+Elapsed Time: 0.240802 seconds
+Truck Routes:
+Truck 1: 0 18 15 12 7 0 
+Truck 2: 0 1 17 20 4 5 0 
+Drone Routes:
+Drone 1: 0 16 3 14 0 8 9 13 0 
+Drone 2: 0 2 6 11 0 10 19 0 
+Attempt 38/50
+Initial Solution Cost: 1353.273819
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.242965 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 0 
+Truck 2: 0 5 4 20 17 1 0 
+Drone Routes:
+Drone 1: 0 2 6 0 16 3 14 0 
+Drone 2: 0 9 8 13 0 11 10 19 0 
+Attempt 39/50
+Initial Solution Cost: 1743.460643
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.268943 seconds
+Truck Routes:
+Truck 1: 0 5 4 20 17 1 0 
+Truck 2: 0 18 15 12 7 0 
+Drone Routes:
+Drone 1: 0 16 3 14 0 2 6 0 
+Drone 2: 0 9 8 13 0 19 10 11 0 
+Attempt 40/50
+Initial Solution Cost: 1352.004170
+Improved Solution Cost: 1095.006351
+Elapsed Time: 0.251085 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 14 0 
+Truck 2: 0 1 17 20 4 5 0 
+Drone Routes:
+Drone 1: 0 2 6 11 0 8 9 0 
+Drone 2: 0 16 3 10 0 19 13 0 
+Attempt 41/50
+Initial Solution Cost: 2078.077401
+Improved Solution Cost: 1059.511436
+Elapsed Time: 0.247187 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 0 
+Truck 2: 0 5 4 20 17 1 0 
+Drone Routes:
+Drone 1: 0 16 3 14 0 13 9 8 0 
+Drone 2: 0 6 2 0 11 10 19 0 
+Attempt 42/50
+Initial Solution Cost: 1391.996720
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.266215 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 0 
+Truck 2: 0 1 17 20 4 5 0 
+Drone Routes:
+Drone 1: 0 19 10 11 0 9 8 13 0 
+Drone 2: 0 16 3 14 0 2 6 0 
+Attempt 43/50
+Initial Solution Cost: 1524.551952
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.279031 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 0 
+Truck 2: 0 5 4 20 17 1 0 
+Drone Routes:
+Drone 1: 0 14 3 16 0 6 2 0 
+Drone 2: 0 8 9 13 0 11 10 19 0 
+Attempt 44/50
+Initial Solution Cost: 1283.249172
+Improved Solution Cost: 1095.006351
+Elapsed Time: 0.241278 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 14 0 
+Truck 2: 0 20 6 17 1 0 
+Drone Routes:
+Drone 1: 0 9 13 0 10 3 16 0 
+Drone 2: 0 8 2 4 5 0 11 19 0 
+Attempt 45/50
+Initial Solution Cost: 1533.216300
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.240144 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 0 
+Truck 2: 0 1 17 20 4 5 0 
+Drone Routes:
+Drone 1: 0 9 8 13 0 11 10 19 0 
+Drone 2: 0 6 2 0 16 3 14 0 
+Attempt 46/50
+Initial Solution Cost: 1744.699603
+Improved Solution Cost: 1095.006351
+Elapsed Time: 0.231686 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 14 0 
+Truck 2: 0 1 6 20 17 0 
+Drone Routes:
+Drone 1: 0 16 3 10 0 13 19 0 
+Drone 2: 0 2 9 8 0 5 11 4 0 
+Attempt 47/50
+Initial Solution Cost: 1416.393650
+Improved Solution Cost: 1059.511436
+Elapsed Time: 0.295738 seconds
+Truck Routes:
+Truck 1: 0 18 15 12 7 0 
+Truck 2: 0 1 17 20 4 5 0 
+Drone Routes:
+Drone 1: 0 11 6 2 0 10 19 0 
+Drone 2: 0 13 9 8 0 16 3 14 0 
+Attempt 48/50
+Initial Solution Cost: 1799.877978
+Improved Solution Cost: 1095.006351
+Elapsed Time: 0.220565 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 14 0 
+Truck 2: 0 1 17 6 20 0 
+Drone Routes:
+Drone 1: 0 19 9 8 0 5 4 11 0 
+Drone 2: 0 16 3 10 0 2 13 0 
+Attempt 49/50
+Initial Solution Cost: 1323.788195
+Improved Solution Cost: 1095.006351
+Elapsed Time: 0.223281 seconds
+Truck Routes:
+Truck 1: 0 1 17 6 20 0 
+Truck 2: 0 14 18 15 12 7 0 
+Drone Routes:
+Drone 1: 0 5 4 11 0 8 9 13 0 
+Drone 2: 0 2 3 16 0 10 19 0 
+Attempt 50/50
+Initial Solution Cost: 1407.835963
+Improved Solution Cost: 1111.892275
+Elapsed Time: 0.166892 seconds
+Truck Routes:
+Truck 1: 0 1 2 20 17 0 
+Truck 2: 0 7 12 16 18 14 0 
+Drone Routes:
+Drone 1: 0 8 9 13 0 6 5 19 0 
+Drone 2: 0 4 11 10 0 3 15 0 
+
+=== Best Across Attempts ===
+Initial Solution Cost: 1305.299321
+Improved Solution Cost: 1036.826549
+Elapsed Time: 0.304193 seconds
+Truck Routes:
+Truck 1: 0 7 12 15 18 0 
+Truck 2: 0 5 4 20 17 1 0 
+Drone Routes:
+Drone 1: 0 6 2 0 14 3 16 0 
+Drone 2: 0 8 9 13 0 19 10 11 0 
+Best solution written to output_solution_best.txt
