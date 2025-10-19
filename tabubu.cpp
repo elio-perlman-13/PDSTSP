@@ -71,6 +71,19 @@ const double gamma2 = 0.3;
 const double gamma3 = 0.0;
 const double gamma4 = 0.5;
 
+// Runtime-configurable search knobs (initialized from compile-time defaults)
+static int CFG_NUM_INITIAL = NUM_OF_INITIAL_SOLUTIONS;
+static int CFG_MAX_SEGMENT = MAX_SEGMENT;
+static int CFG_MAX_NO_IMPROVE = MAX_NO_IMPROVE;
+static int CFG_MAX_ITER_PER_SEGMENT = MAX_ITER_PER_SEGMENT;
+static double CFG_TIME_LIMIT_SEC = 0.0; // 0 = unlimited
+
+// Helper to parse key=value flags from argv
+static bool parse_kv_flag(const std::string& s, const std::string& key, std::string& out) {
+    if (s.rfind(key + "=", 0) == 0) { out = s.substr(key.size() + 1); return true; }
+    return false;
+}
+
 
 // Separate tabu list for 2-opt-star (inter-route exchange) moves: keyed by unordered edge endpoints (min(u,v), max(u,v))
 static vector<vector<int>> tabu_list_2opt_star; // sized (n+1) x (n+1)
@@ -1889,6 +1902,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
 }
 
 Solution tabu_search(const Solution& initial_solution) {
+    auto ts_start = std::chrono::high_resolution_clock::now();
     Solution best_solution = initial_solution;
     double best_cost = initial_solution.total_makespan;
     double score[NUM_NEIGHBORHOODS] = {0.0};
@@ -1899,7 +1913,7 @@ Solution tabu_search(const Solution& initial_solution) {
     Solution current_sol = initial_solution;
     double current_cost = initial_solution.total_makespan;
 
-    for (int segment = 0; segment < MAX_SEGMENT; ++segment) {
+    for (int segment = 0; segment < CFG_MAX_SEGMENT; ++segment) {
         Solution best_segment_sol = current_sol;
         double best_segment_cost = current_cost;
         int iter = 1;
@@ -1913,7 +1927,11 @@ Solution tabu_search(const Solution& initial_solution) {
         tabu_list_2opt.clear();
         tabu_list_2opt_star.clear();
         tabu_list_relocate.clear();
-        while (iter < MAX_ITER_PER_SEGMENT && no_improve_iters < MAX_NO_IMPROVE) {
+        while (iter < CFG_MAX_ITER_PER_SEGMENT && no_improve_iters < CFG_MAX_NO_IMPROVE) {
+            if (CFG_TIME_LIMIT_SEC > 0.0) {
+                double elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - ts_start).count();
+                if (elapsed >= CFG_TIME_LIMIT_SEC) break;
+            }
             double total_weight = 0.0;
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
                 total_weight += weight[i];
@@ -1962,6 +1980,10 @@ Solution tabu_search(const Solution& initial_solution) {
                 no_improve_iters++;
             }
             iter++;
+        }
+        if (CFG_TIME_LIMIT_SEC > 0.0) {
+            double elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - ts_start).count();
+            if (elapsed >= CFG_TIME_LIMIT_SEC) break;
         }
         // Update weights based on scores
         for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
@@ -2044,26 +2066,41 @@ static void print_solution_stream(const Solution& sol, std::ostream& os) {
     }
 }
 
-static bool write_output_file(const std::string& out_path, const Solution& sol, double cost, double elapsed_sec) {
+static bool write_output_file(const std::string& out_path, const Solution& sol, double cost, double elapsed_sec, bool final_feasibility) {
     std::ofstream ofs(out_path);
     if (!ofs) return false;
     ofs.setf(std::ios::fixed); ofs << setprecision(6);
     ofs << "Initial solution cost: " << cost << "\n";
     ofs << "Improved solution cost: " << sol.total_makespan << "\n";
     ofs << "Elapsed time: " << elapsed_sec << " seconds\n";
+    ofs << "Final solution feasibility: " << (final_feasibility ? "FEASIBLE" : "INFEASIBLE") << "\n";
+    ofs << "Solution Details:\n";
     print_solution_stream(sol, ofs);
     return true;
 }
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        cerr << "Usage: " << argv[0] << " input_file [--print-distance-matrix]\n";
+        cerr << "Usage: " << argv[0]
+             << " input_file [--print-distance-matrix]"
+             << " [--attempts=N] [--segments=N] [--iters=N] [--no-improve=N] [--time-limit=SEC] [--auto-tune]"
+             << "\n";
         return 1;
     }
     string input_file = argv[1];
     bool print_dist_matrix = false;
-    if (argc >= 3 && string(argv[2]) == "--print-distance-matrix") {
-        print_dist_matrix = true;
+    bool auto_tune = false;
+    // Parse optional flags
+    for (int ai = 2; ai < argc; ++ai) {
+        string arg = argv[ai];
+        if (arg == "--print-distance-matrix") { print_dist_matrix = true; continue; }
+        string v;
+        if (parse_kv_flag(arg, "--attempts", v)) { CFG_NUM_INITIAL = max(1, stoi(v)); continue; }
+        if (parse_kv_flag(arg, "--segments", v)) { CFG_MAX_SEGMENT = max(1, stoi(v)); continue; }
+        if (parse_kv_flag(arg, "--iters", v)) { CFG_MAX_ITER_PER_SEGMENT = max(1, stoi(v)); continue; }
+        if (parse_kv_flag(arg, "--no-improve", v)) { CFG_MAX_NO_IMPROVE = max(1, stoi(v)); continue; }
+        if (parse_kv_flag(arg, "--time-limit", v)) { CFG_TIME_LIMIT_SEC = max(0.0, stod(v)); continue; }
+        if (arg == "--auto-tune") { auto_tune = true; continue; }
     }
 
     // Read input instance
@@ -2074,6 +2111,29 @@ int main(int argc, char* argv[]) {
         print_distance_matrix();
         return 0; // only print distance matrix and exit
     }
+    // Optional auto-tuning based on instance size if requested
+    // For now, set auto-tune to always true
+    auto_tune = true;
+    if (auto_tune) {
+        if (n <= 50) {
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 20);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 12);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 400);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 60);
+        } else if (n <= 200) {
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 8);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 250);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);
+        } else {
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 6);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 150);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 40);
+            if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 180.0; // default wall-clock budget
+        }
+    }
+
     // Pre-filter dronable customers by capacity/energy
     update_served_by_drone();
     
@@ -2083,16 +2143,15 @@ int main(int argc, char* argv[]) {
     double best_overall_initial_cost = 0.0;
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    for (int solution_attempt = 0; solution_attempt < NUM_OF_INITIAL_SOLUTIONS; ++solution_attempt) {
+    for (int solution_attempt = 0; solution_attempt < CFG_NUM_INITIAL; ++solution_attempt) {
         Solution initial_solution = generate_initial_solution();
         Solution improved_sol = tabu_search(initial_solution);
         // Output both to stdout and to file
-/*         cout.setf(std::ios::fixed); cout << setprecision(6);
-        cout << "Attempt " << (solution_attempt + 1) << "/" << NUM_OF_INITIAL_SOLUTIONS << "\n";
+         cout.setf(std::ios::fixed); cout << setprecision(6);
+        cout << "Attempt " << (solution_attempt + 1) << "/" << CFG_NUM_INITIAL << "\n";
         cout << "Initial Solution Cost: " << initial_solution.total_makespan << "\n";
         cout << "Improved Solution Cost: " << improved_sol.total_makespan << "\n";
-        cout << "Elapsed Time: " << elapsed.count() << " seconds\n"; 
-        print_solution_stream(improved_sol, cout);*/
+        print_solution_stream(improved_sol, cout);
         // Update best across attempts
         if (!have_best || improved_sol.total_makespan + 1e-12 < best_overall_sol.total_makespan) {
             have_best = true;
@@ -2109,8 +2168,23 @@ int main(int argc, char* argv[]) {
         cout << "Improved Solution Cost: " << best_overall_sol.total_makespan << "\n";
         cout << "Elapsed Time: " << elapsed_seconds << " seconds\n";
         print_solution_stream(best_overall_sol, cout);
+        // check final feasibility
+        bool final_feas = true;
+        for (const vi &r : best_overall_sol.truck_routes) {
+            auto [t, feas] = check_route_feasibility(r, 0.0, true);
+            if (!feas) { final_feas = false; break; }
+        }
+        for (const vi &r : best_overall_sol.drone_routes) {
+            auto [t, feas] = check_route_feasibility(r, 0.0, false);
+            if (!feas) { final_feas = false; break; }
+        }
+        if (final_feas) {
+            cout << "Final solution feasibility: FEASIBLE\n";
+        } else {
+            cout << "Final solution feasibility: INFEASIBLE\n";
+        }
         string out_best = "output_solution_best.txt";
-        if (write_output_file(out_best, best_overall_sol, best_overall_initial_cost, elapsed_seconds)) {
+        if (write_output_file(out_best, best_overall_sol, best_overall_initial_cost, elapsed_seconds, final_feas)) {
             cout << "Best solution written to " << out_best << "\n";
         } else {
             cout << "Failed to write best solution to " << out_best << "\n";
