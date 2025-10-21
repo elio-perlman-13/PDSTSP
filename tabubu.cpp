@@ -49,6 +49,12 @@ double power_beta = 0, power_gamma = 1.0; //coefficients for drone energy consum
 //double power_beta = 24.2, power_gamma = 1329.0; //coefficients for drone energy consumption per second
 vvd distance_matrix; //distance matrices for truck and drone
 
+// Candidate lists (k-nearest neighbors) to filter neighborhood evaluations
+static int CFG_KNN_K = 30;           // number of nearest neighbors per customer
+static int CFG_KNN_WINDOW = 2;       // insertion window around candidate anchors
+static vvi KNN_LIST;                 // KNN_LIST[i] = up to K nearest neighbor customer ids for i (exclude depot 0)
+static vector<vector<char>> KNN_ADJ; // KNN_ADJ[i][j] = 1 if j in KNN_LIST[i]
+
 // Simple tabu structure for relocate moves: tabu_list_switch[cust][target_vehicle] stores iteration until which move is tabu
 // target_vehicle is 0..h-1 for trucks, h..h+d-1 for drones
 static vector<vector<int>> tabu_list_switch; // sized (n+1) x (h + d), initialized on first use
@@ -85,6 +91,41 @@ static double CFG_TIME_LIMIT_SEC = 0.0; // 0 = unlimited
 static bool parse_kv_flag(const std::string& s, const std::string& key, std::string& out) {
     if (s.rfind(key + "=", 0) == 0) { out = s.substr(key.size() + 1); return true; }
     return false;
+}
+
+// Build k-nearest neighbor lists based on Euclidean distance_matrix.
+// Excludes depot (0) and self; sizes to n+1. Also builds adjacency for O(1) membership checks.
+static void compute_knn_lists(int k) {
+    int N = n;
+    if (N <= 1) {
+        KNN_LIST.assign(N + 1, {});
+        KNN_ADJ.assign(N + 1, vector<char>(N + 1, 0));
+        return;
+    }
+    KNN_LIST.assign(N + 1, {});
+    KNN_ADJ.assign(N + 1, vector<char>(N + 1, 0));
+    vector<pair<double,int>> cand;
+    cand.reserve(max(0, N - 1));
+    for (int i = 1; i <= N; ++i) {
+        cand.clear();
+        for (int j = 1; j <= N; ++j) {
+            if (j == i) continue;
+            cand.emplace_back(distance_matrix[i][j], j);
+        }
+        int kk = min(k, (int)cand.size());
+        if ((int)cand.size() > kk) {
+            nth_element(cand.begin(), cand.begin() + kk, cand.end(), [](const auto& a, const auto& b){ return a.first < b.first; });
+            cand.resize(kk);
+        } else {
+            sort(cand.begin(), cand.end(), [](const auto& a, const auto& b){ return a.first < b.first; });
+        }
+        KNN_LIST[i].reserve(kk);
+        for (int t = 0; t < kk; ++t) {
+            int j = cand[t].second;
+            KNN_LIST[i].push_back(j);
+            KNN_ADJ[i][j] = 1;
+        }
+    }
 }
 
 
@@ -1361,6 +1402,13 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                     int p1 = pos[idx1], p2 = pos[idx2];
                     int a = base_route[p1], b = base_route[p2];
                     if (a == b) continue;
+                    // Candidate-list filter: only consider if a and b are near in KNN
+                    if (!KNN_ADJ.empty()) {
+                        if (!(KNN_ADJ.size() > (size_t)a && KNN_ADJ[a].size() > (size_t)b && KNN_ADJ[a][b]) &&
+                            !(KNN_ADJ.size() > (size_t)b && KNN_ADJ[b].size() > (size_t)a && KNN_ADJ[b][a])) {
+                            continue;
+                        }
+                    }
                     // Check swap tabu
                     int u = min(a,b), v = max(a,b);
                     bool is_tabu = (tabu_list_swap.size() > (size_t)u && tabu_list_swap[u].size() > (size_t)v &&
@@ -1469,7 +1517,37 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
             if (!r.empty() && r.back() != 0) r.push_back(0);
 
             int insert_limit = (int)r.size();
+            // Candidate-list guided insertion positions
+            vector<char> consider(max(0, insert_limit + 2), 0);
+            if (!KNN_ADJ.empty()) {
+                // Mark positions adjacent to KNN anchors
+                for (int q = 0; q < (int)r.size(); ++q) {
+                    int node = r[q];
+                    if (node == 0) continue;
+                    bool near = false;
+                    if (KNN_ADJ.size() > (size_t)cust && KNN_ADJ[cust].size() > (size_t)node && KNN_ADJ[cust][node]) near = true;
+                    if (!near && KNN_ADJ.size() > (size_t)node && KNN_ADJ[node].size() > (size_t)cust && KNN_ADJ[node][cust]) near = true;
+                    if (!near) continue;
+                    for (int delta = -CFG_KNN_WINDOW; delta <= CFG_KNN_WINDOW; ++delta) {
+                        int ip1 = q + delta; // before node at q
+                        int ip2 = q + 1 + delta; // after node at q
+                        if (ip1 >= 1 && ip1 <= insert_limit) consider[ip1] = 1;
+                        if (ip2 >= 1 && ip2 <= insert_limit) consider[ip2] = 1;
+                    }
+                }
+            }
+            // Always include a small window around original position to avoid missing obvious moves
+            {
+                int ip0 = min(max(1, p_from), insert_limit);
+                for (int delta = -CFG_KNN_WINDOW; delta <= CFG_KNN_WINDOW; ++delta) {
+                    int ip = ip0 + delta;
+                    if (ip >= 1 && ip <= insert_limit) consider[ip] = 1;
+                }
+            }
+            // If nothing marked (e.g., KNN disabled), consider all
+            bool any_marked = false; for (int t = 1; t <= insert_limit; ++t) if (consider[t]) { any_marked = true; break; }
             for (int ins_pos = 1; ins_pos <= insert_limit; ++ins_pos) {
+                if (!any_marked || consider[ins_pos]) {
                 vi r_ins = r;
                 int ip = min(max(ins_pos, 1), (int)r_ins.size());
                 r_ins.insert(r_ins.begin() + ip, cust);
@@ -1510,6 +1588,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
 
                 if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
                 if (neighbor.total_makespan < best_local_cost) { best_local_cost = neighbor.total_makespan; best_local = neighbor; best_reins_cust = cust; }
+                }
             }
         }
 
@@ -1567,6 +1646,13 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             int a = base_route[i];
                             int b = base_route[j];
                             if (a == 0 || b == 0) continue; // by construction shouldn't happen
+                            // Candidate-list filter: only consider reversing if endpoints are near
+                            if (!KNN_ADJ.empty()) {
+                                if (!(KNN_ADJ.size() > (size_t)a && KNN_ADJ[a].size() > (size_t)b && KNN_ADJ[a][b]) &&
+                                    !(KNN_ADJ.size() > (size_t)b && KNN_ADJ[b].size() > (size_t)a && KNN_ADJ[b][a])) {
+                                    continue;
+                                }
+                            }
                             int u = min(a, b), v = max(a, b);
                             bool is_tabu = (tabu_list_2opt.size() > (size_t)u && tabu_list_2opt[u].size() > (size_t)v &&
                                             tabu_list_2opt[u][v] >= current_iter);
@@ -1755,6 +1841,14 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                                     if (b1 == 0 || b2 == 0) continue; // safety
                                     // Edge cut in B: (b1,b2)
                                     int ub = min(b1, b2), vb = max(b1, b2);
+
+                                    // Candidate-list filter: consider only if cross endpoints look promising
+                                    if (!KNN_ADJ.empty()) {
+                                        bool ok = false;
+                                        auto near = [&](int x, int y){ return KNN_ADJ.size() > (size_t)x && KNN_ADJ[x].size() > (size_t)y && KNN_ADJ[x][y]; };
+                                        if (near(a1, b2) || near(b2, a1) || near(b1, a2) || near(a2, b1)) ok = true;
+                                        if (!ok) continue;
+                                    }
 
                                     // Tabu check on cut edges (unordered). Aspiration allows override if improving global best.
                                     bool is_tabu = false;
@@ -1949,23 +2043,18 @@ Solution tabu_search(const Solution& initial_solution) {
             count[selected_neighbor]++;
             // Use the monotonically increasing iteration counter 'iter' as the tabu iteration for local_search
             Solution neighbor = local_search(current_sol, selected_neighbor, iter, best_cost);
-            // Update global best immediately so aspiration in subsequent iterations uses latest best_cost
-            if (neighbor.total_makespan + 1e-12 < best_solution.total_makespan) {
-                best_solution = neighbor;
-                best_cost = neighbor.total_makespan;
-            }
             // Update score
             if (neighbor.total_makespan + 1e-12 < best_segment_cost) {
                 best_segment_cost = neighbor.total_makespan;
                 best_segment_sol = neighbor;
                 no_improve_iters = 0;
             }
-            if (neighbor.total_makespan + 1e-12 < current_cost) {
+            if (neighbor.total_makespan + 1e-12 < best_cost) {
                 current_sol = neighbor;
                 current_cost = neighbor.total_makespan;
                 score[selected_neighbor] += gamma1;
                 no_improve_iters = 0;
-            } else if (neighbor.total_makespan < current_cost + 1e-12) {
+            } else if (neighbor.total_makespan < current_cost) {
                 current_sol = neighbor;
                 current_cost = neighbor.total_makespan;
                 score[selected_neighbor] += gamma2;
@@ -1981,6 +2070,11 @@ Solution tabu_search(const Solution& initial_solution) {
                 }
                 score[selected_neighbor] += gamma3;
                 no_improve_iters++;
+            }
+            // Update global best so aspiration in subsequent iterations uses latest best_cost
+            if (neighbor.total_makespan + 1e-12 < best_solution.total_makespan) {
+                best_solution = neighbor;
+                best_cost = neighbor.total_makespan;
             }
             iter++;
         }
@@ -2087,6 +2181,7 @@ int main(int argc, char* argv[]) {
         cerr << "Usage: " << argv[0]
              << " input_file [--print-distance-matrix]"
              << " [--attempts=N] [--segments=N] [--iters=N] [--no-improve=N] [--time-limit=SEC] [--auto-tune]"
+             << " [--knn-k=K] [--knn-window=W]"
              << "\n";
         return 1;
     }
@@ -2103,6 +2198,8 @@ int main(int argc, char* argv[]) {
         if (parse_kv_flag(arg, "--iters", v)) { CFG_MAX_ITER_PER_SEGMENT = max(1, stoi(v)); continue; }
         if (parse_kv_flag(arg, "--no-improve", v)) { CFG_MAX_NO_IMPROVE = max(1, stoi(v)); continue; }
         if (parse_kv_flag(arg, "--time-limit", v)) { CFG_TIME_LIMIT_SEC = max(0.0, stod(v)); continue; }
+        if (parse_kv_flag(arg, "--knn-k", v)) { CFG_KNN_K = max(0, stoi(v)); continue; }
+        if (parse_kv_flag(arg, "--knn-window", v)) { CFG_KNN_WINDOW = max(0, stoi(v)); continue; }
         if (arg == "--auto-tune") { auto_tune = true; continue; }
     }
 
@@ -2129,21 +2226,27 @@ int main(int argc, char* argv[]) {
         if (n <= 50) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 20);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 20);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 2000);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
+            CFG_KNN_K = min(CFG_KNN_K, max(5, min(n - 1, 30))); // modest k for small n
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 15);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 8);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 10);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 250);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 2000);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
+            CFG_KNN_K = min(CFG_KNN_K, max(10, min(n - 1, 25)));
         } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 6);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 150);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 40);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 3);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 10);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 350);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 60);
             if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 180.0; // default wall-clock budget
+            CFG_KNN_K = min(CFG_KNN_K, max(10, min(n - 1, 20))); // slightly smaller k for very large n
         }
     }
+
+    // Precompute KNN lists (if K is zero, disable by building empty adjacency)
+    if (CFG_KNN_K > 0) compute_knn_lists(CFG_KNN_K); else { KNN_LIST.assign(n + 1, {}); KNN_ADJ.assign(n + 1, vector<char>(n + 1, 0)); }
 
     // Pre-filter dronable customers by capacity/energy
     update_served_by_drone();
