@@ -30,20 +30,23 @@ struct Point {
 
 int n, h, d; //number of customers, number of trucks, number of drones
 vector<Point> loc; // loc[i]: location (x, y) of customer i, if i = 0, it is depot
-vd serve_truck, serve_drone; // time taken by truck and drone to serve each customer (hours)
+vd serve_truck, serve_drone; // time taken by truck and drone to serve each customer (seconds)
 vi served_by_drone; //whether each customer can be served by drone or not, 1 if yes, 0 if no
 vd deadline; //customer deadlines
 vd demand; // demand[i]: demand of customer i
-double Dh = 500.0; // truck capacity (all trucks)
+double Dh = 1400.0; // truck capacity (all trucks) (kg)
 double vmax = 15.6464; // truck base speed (m/s)
 int L = 24; //number of time segments in a day
-//vd time_segment = {0, 0.2, 0.4, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
-//vd time_segments_sigma = {0.9, 0.4, 0.6, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
 vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
-vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
-double Dd = 2.27, E = 7200000.0; //drone's weight and energy capacities (for all drones)
-double v_fly_drone = 31.3, v_take_off = 15.6, v_landing = 7.8, height = 50; // maximum speed of the drone
-double power_beta = 24.2, power_gamma = 1329.0; //coefficients for drone energy consumption per second
+vd time_segments_sigma = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}; //sigma (truck velocity coefficient) for each time segments
+//vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
+//vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
+double Dd = 2.27, E = 700.0; //drone's weight and energy capacities (for all drones)
+double v_fly_drone = 31.2928, v_take_off = 15.6464, v_landing = 7.8232; // speed of the drone
+//double height = 50; // height of the drone
+double height = 0; // height of the drone
+double power_beta = 0, power_gamma = 1.0; //coefficients for drone energy consumption per second
+//double power_beta = 24.2, power_gamma = 1329.0; //coefficients for drone energy consumption per second
 vvd distance_matrix; //distance matrices for truck and drone
 
 // Simple tabu structure for relocate moves: tabu_list_switch[cust][target_vehicle] stores iteration until which move is tabu
@@ -2111,18 +2114,26 @@ int main(int argc, char* argv[]) {
         print_distance_matrix();
         return 0; // only print distance matrix and exit
     }
+
+    //For another data-testing: change all deadline to a constant 3600 and all serving time to 0
+    for (int i = 1; i <= n; ++i) {
+        deadline[i] = 3600.0;
+        serve_truck[i] = 0.0;
+        serve_drone[i] = 0.0;
+    }
+
     // Optional auto-tuning based on instance size if requested
     // For now, set auto-tune to always true
     auto_tune = true;
     if (auto_tune) {
         if (n <= 50) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 20);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 12);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 400);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 60);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 20);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 8);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 15);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 10);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 250);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);
         } else {
