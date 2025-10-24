@@ -1,0 +1,54 @@
+{
+    // Launch configurations for PDSTSP
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run PDSTSP (MSVC — all instances)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${fileDirname}\\${fileBasenameNoExtension}.exe",
+            "args": [
+                "${workspaceFolder}\\instance"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "preLaunchTask": "C/C++: cl.exe build active file"
+        },
+        {
+            "name": "Run PDSTSP (MSVC — pick path)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${fileDirname}\\${fileBasenameNoExtension}.exe",
+            "args": [
+                "${input:instancePath}"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "preLaunchTask": "C/C++: cl.exe build active file"
+        },
+        {
+            "name": "Run PDSTSP (MSVC — pick path + outputs)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${fileDirname}\\${fileBasenameNoExtension}.exe",
+            "args": [
+                "${input:instancePath}",
+                "${workspaceFolder}\\outputs"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "preLaunchTask": "C/C++: cl.exe build active file"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "instancePath",
+            "type": "promptString",
+            "description": "Path to instance file or folder (relative or absolute)",
+            "default": "${workspaceFolder}\\instance"
+        }
+    ]
+}
