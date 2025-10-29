@@ -50,28 +50,28 @@ double power_beta = 0, power_gamma = 1.0; //coefficients for drone energy consum
 vvd distance_matrix; //distance matrices for truck and drone
 
 // Candidate lists (k-nearest neighbors) to filter neighborhood evaluations
-static int CFG_KNN_K = 30;           // number of nearest neighbors per customer
-static int CFG_KNN_WINDOW = 2;       // insertion window around candidate anchors
+static int CFG_KNN_K = 1000;           // number of nearest neighbors per customer
+static int CFG_KNN_WINDOW = 1;       // insertion window around candidate anchors
 static vvi KNN_LIST;                 // KNN_LIST[i] = up to K nearest neighbor customer ids for i (exclude depot 0)
 static vector<vector<char>> KNN_ADJ; // KNN_ADJ[i][j] = 1 if j in KNN_LIST[i]
 
 // Simple tabu structure for relocate moves: tabu_list_switch[cust][target_vehicle] stores iteration until which move is tabu
 // target_vehicle is 0..h-1 for trucks, h..h+d-1 for drones
 static vector<vector<int>> tabu_list_switch; // sized (n+1) x (h + d), initialized on first use
-static int TABU_TENURE_BASE = 20; // default tenure; actual update done in tabu loop (not here)
+static int TABU_TENURE_BASE = 5; // default tenure; actual update done in tabu loop (not here)
 // Separate tabu structure for swap moves: store until-iteration for swapping a pair (min_id,max_id)
 static vector<vector<int>> tabu_list_swap; // sized (n+1) x (n+1)
-static int TABU_TENURE_SWAP = 20; // default tenure for swap moves
+static int TABU_TENURE_SWAP = 5; // default tenure for swap moves
 static vector<vector<int>> tabu_list_relocate; // sized (n+1) x (h + d)
-static int TABU_TENURE_RELOCATE = 20; // default tenure for relocate moves
+static int TABU_TENURE_RELOCATE = 5; // default tenure for relocate moves
 // Separate tabu list for intra-route reinsert (Or-opt-1) moves
 static vector<vector<int>> tabu_list_reinsert; // sized (n+1) x (h + d)
-static int TABU_TENURE_REINSERT = 20; // default tenure for reinsert moves
+static int TABU_TENURE_REINSERT = 5; // default tenure for reinsert moves
 // Separate tabu list for 2-opt moves: keyed by segment endpoints (min_id,max_id)
 static vector<vector<int>> tabu_list_2opt; // sized (n+1) x (n+1)
-static int TABU_TENURE_2OPT = 20; // default tenure for 2-opt moves
+static int TABU_TENURE_2OPT = 5; // default tenure for 2-opt moves
 const int NUM_NEIGHBORHOODS = 5;
-const int NUM_OF_INITIAL_SOLUTIONS = 50;
+const int NUM_OF_INITIAL_SOLUTIONS = 200;
 const int MAX_SEGMENT = 20;
 const int MAX_NO_IMPROVE = 100;
 const int MAX_ITER_PER_SEGMENT = 1000;
@@ -357,101 +357,6 @@ pair<double, bool> compute_drone_route_time(const vi& route) {
 }
 
 
-
-// Find depot-delimited subroute [L..R] (inclusive) that contains anchor_idx.
-// If anchor_idx points to a depot, shift to nearest non-depot to select the containing segment.
-static pair<int,int> find_depot_subroute_bounds(const vi& r, int anchor_idx) {
-    int m = (int)r.size();
-    if (m == 0) return {0, -1};
-    anchor_idx = max(0, min(anchor_idx, m - 1));
-    if (r[anchor_idx] == 0) {
-        int L = anchor_idx - 1, R = anchor_idx + 1;
-        while (L >= 0 || R < m) {
-            if (L >= 0 && r[L] != 0) { anchor_idx = L; break; }
-            if (R < m && r[R] != 0) { anchor_idx = R; break; }
-            --L; ++R;
-        }
-    }
-    int Ld = anchor_idx;
-    while (Ld > 0 && r[Ld] != 0) --Ld;
-    int Rd = anchor_idx;
-    while (Rd < m - 1 && r[Rd] != 0) ++Rd;
-    return {Ld, Rd};
-}
-
-// Arrival time at each depot index along a truck route using the same
-// time-dependent speed model as compute_truck_route_time.
-// pref[i] = absolute time upon reaching route[i] when route[i] == 0; else -1.
-static vector<double> compute_truck_depot_prefix_times(const vi& route) {
-    vector<double> pref(route.size(), -1.0);
-    if (route.empty()) return pref;
-
-    double time = 0.0; // seconds
-    if (!route.empty() && route[0] == 0) pref[0] = 0.0;
-
-    for (int k = 1; k < (int)route.size(); ++k) {
-        int from = route[k - 1], to = route[k];
-        double dist_left = distance_matrix[from][to]; // meters
-
-        int guard_steps = 0;
-        while (dist_left > 1e-8) {
-            if (++guard_steps > 1000000) {
-                double v_safe = vmax > 1e-6 ? vmax : 1.0;
-                time += dist_left / v_safe;
-                dist_left = 0.0;
-                break;
-            }
-            double t_hr = time / 3600.0;
-            int seg = get_time_segment(t_hr);
-            double v = vmax * (seg < (int)time_segments_sigma.size() ? time_segments_sigma[seg] : 1.0);
-            if (v <= 1e-8) v = vmax;
-
-            double next_boundary_hr = (seg + 1 < (int)time_segment.size()) ? time_segment[seg + 1]
-                                                                           : std::numeric_limits<double>::infinity();
-            double segment_end_time_sec = std::isinf(next_boundary_hr) ? (time + 1e18) : (next_boundary_hr * 3600.0);
-            double t_seg_end = segment_end_time_sec - time;
-            if (t_seg_end < 1e-8) t_seg_end = 1e-6;
-
-            double max_dist_this_seg = v * t_seg_end;
-            if (max_dist_this_seg <= 1e-12) max_dist_this_seg = std::max(1e-6, v * 1e-6);
-
-            if (dist_left <= max_dist_this_seg) {
-                time += dist_left / v;
-                dist_left = 0.0;
-            } else {
-                time += t_seg_end;
-                dist_left -= max_dist_this_seg;
-            }
-        }
-
-        if (to != 0) {
-            time += serve_truck[to];
-        } else {
-            pref[k] = time;
-        }
-    }
-
-    return pref;
-}
-
-// Exact truck time via single suffix recompute from the left depot of the affected subroute.
-// Uses one call: check_route_feasibility(suffix[L..end], start=prefix_time_at_L).
-static pair<double,bool> eval_truck_time_suffix_concat(const vi& old_route,
-                                                       const vector<double>& depot_pref_old,
-                                                       const vi& cand, int ins_pos_new) {
-    if (cand.empty()) return {0.0, true};
-    auto [L, R] = find_depot_subroute_bounds(cand, ins_pos_new);
-    if (L < 0 || L >= (int)cand.size()) return {0.0, false};
-
-    double prefix_time = 0.0;
-    if (L < (int)depot_pref_old.size() && depot_pref_old[L] >= 0.0) prefix_time = depot_pref_old[L];
-    else if (L == 0 && cand[L] == 0) prefix_time = 0.0;
-
-    vi suffix(cand.begin() + L, cand.end());
-    auto [dt_suffix, ok] = check_route_feasibility(suffix, prefix_time, true);
-    if (!ok) return {0.0, false};
-    return {prefix_time + dt_suffix, true};
-}
 
 void update_served_by_drone() {
     int depot = 0;
@@ -1176,7 +1081,7 @@ void print_solution(const Solution& sol) {
 
 Solution local_search(const Solution& initial_solution, int neighbor_id, int current_iter, double best_cost) {
     Solution best_neighbor = initial_solution;
-    double best_neighbor_cost = 10e10;
+    double best_neighbor_cost = 1e10;
     // Depending on neighbor_id, implement different neighborhood structures
     if (neighbor_id == 0) {
         // Relocate 1 customer from the critical (longest-time) vehicle route to another route of the same mode
@@ -1204,8 +1109,9 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
         int best_target = -1; // vehicle index in unified space (0..h-1 trucks, h..h+d-1 drones)
         int best_pos = -1;    // insertion position within target route
         int best_cust = -1;   // moved customer id
-        double best_neighbor_cost_local = best_neighbor_cost;
         Solution best_candidate_neighbor = best_neighbor;
+        double best_neighbor_cost_local = 1e10;
+        double best_target_time = 1e10;
 
         if (crit_is_truck) {
             const vi& crit_route = initial_solution.truck_routes[critical_idx];
@@ -1234,49 +1140,68 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                     if (target_truck == critical_idx) continue;
                     const vi& tgt_r = initial_solution.truck_routes[target_truck];
                     int insert_limit = (int)tgt_r.size();
-
-                    // Pick the insertion that minimizes this truck route's time (prefix-suffix recompute)
-                    vector<double> depot_pref = compute_truck_depot_prefix_times(tgt_r);
-                    double best_ttgt = 1e100;
-                    vi best_tr;
-                    int best_ins_pos_truck = -1;
-
+                    double local_min_increase = 1e10;
+                    int best_local_pos = -1;
+                    double tgt_r_time = (tgt_r.size() > 1) ? initial_solution.truck_route_times[target_truck] : 0.0;
                     for (int ins_pos = 1; ins_pos <= insert_limit; ++ins_pos) {
+                        // Build target route with insertion
                         vi tr = tgt_r;
                         if (tr.empty()) tr.push_back(0);
                         int ip = min(max(ins_pos, 1), (int)tr.size());
                         tr.insert(tr.begin() + ip, cust);
                         if (tr.back() != 0) tr.push_back(0);
 
-                        auto [ttgt, feas_tgt] = eval_truck_time_suffix_concat(tgt_r, depot_pref, tr, ip);
+                        // Check feasibility for target route only
+                        auto [ttgt, feas_tgt] = check_truck_route_feasibility(tr, 0.0);
                         if (!feas_tgt) continue;
-                        if (ttgt < best_ttgt - 1e-12) { best_ttgt = ttgt; best_tr = tr; best_ins_pos_truck = ins_pos; }
+                        // Compute local increase of target truck route
+                        double local_increase = ttgt - tgt_r_time;
+                        if (local_increase + 1e-8 < local_min_increase){
+                            local_min_increase = local_increase;
+                            best_local_pos = ins_pos;
+                        }
+                    }
+                    if (best_local_pos < 0) continue; // no feasible insertion found
+                    // Rebuild best insertion
+                    vi tr = tgt_r;
+                    if (tr.empty()) tr.push_back(0);
+                    int ip = min(max((int)best_local_pos, 1), (int)tr.size());
+                    tr.insert(tr.begin() + ip, cust);
+                    if (tr.back() != 0) tr.push_back(0);
+                    double ttgt = tgt_r_time + local_min_increase;
+                    // Construct neighbor incrementally
+                    Solution neighbor = initial_solution;
+                    neighbor.truck_routes[critical_idx] = nr;
+                    neighbor.truck_routes[target_truck] = tr;
+
+                    // Use cached times and recompute only modified routes
+                    neighbor.truck_route_times = initial_solution.truck_route_times;
+                    neighbor.drone_route_times = initial_solution.drone_route_times;
+                    neighbor.truck_route_times[critical_idx] = crit_time_base;
+                    neighbor.truck_route_times[target_truck] = (tr.size() > 1)
+                        ? ttgt : 0.0;
+
+                    double nb_makespan = 0.0;
+                    for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
+                    for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
+                    neighbor.total_makespan = nb_makespan;
+
+                    int target_id = target_truck; // unified vehicle id
+                    bool is_tabu = (tabu_list_switch.size() > (size_t)cust && tabu_list_switch[cust].size() > (size_t)target_id &&
+                                    tabu_list_switch[cust][target_id] >= current_iter);
+                    if (is_tabu && neighbor.total_makespan > best_cost) continue;
+                    if (neighbor.total_makespan > best_neighbor_cost_local) continue;
+                    // tie-breaker: if same makespan, choose the solution that have lower target vehicle time
+                    if (neighbor.total_makespan == best_neighbor_cost_local) {
+                        double neighbor_target_time = neighbor.truck_route_times[target_truck];
+                        if (neighbor_target_time >= best_target_time) continue;
+                        else best_target_time = neighbor_target_time;
+                        best_target = target_id; best_pos = best_local_pos; best_cust = cust; best_candidate_neighbor = neighbor;
                     }
 
-                    if (best_ins_pos_truck != -1) {
-                        Solution neighbor = initial_solution;
-                        neighbor.truck_routes[critical_idx] = nr;
-                        neighbor.truck_routes[target_truck] = best_tr;
-
-                        neighbor.truck_route_times = initial_solution.truck_route_times;
-                        neighbor.drone_route_times = initial_solution.drone_route_times;
-                        neighbor.truck_route_times[critical_idx] = crit_time_base;
-                        neighbor.truck_route_times[target_truck] = (best_tr.size() > 1) ? best_ttgt : 0.0;
-
-                        double nb_makespan = 0.0;
-                        for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
-                        for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
-                        neighbor.total_makespan = nb_makespan;
-
-                        int target_id = target_truck;
-                        bool is_tabu = (tabu_list_switch.size() > (size_t)cust && tabu_list_switch[cust].size() > (size_t)target_id &&
-                                        tabu_list_switch[cust][target_id] >= current_iter);
-                        if (!(is_tabu && neighbor.total_makespan >= best_cost)) {
-                            if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
-                            if (neighbor.total_makespan < best_neighbor_cost_local) {
-                                best_target = target_id; best_pos = best_ins_pos_truck; best_cust = cust; best_neighbor_cost_local = neighbor.total_makespan; best_candidate_neighbor = neighbor;
-                            }
-                        }
+                    if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
+                    if (neighbor.total_makespan < best_neighbor_cost_local) {
+                        best_target = target_id; best_pos = best_local_pos; best_cust = cust; best_neighbor_cost_local = neighbor.total_makespan; best_candidate_neighbor = neighbor;
                     }
                 }
                 // Cross-mode: try inserting into drone routes as well
@@ -1285,62 +1210,69 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                     if (served_by_drone[cust] == 0) continue;
                     const vi& tgt_r_d = initial_solution.drone_routes[target_drone];
                     int insert_limit_d = (int)tgt_r_d.size();
-
-                    double best_new_total_tgt_d = 1e100;
-                    vi best_trd;
-                    int best_ins_pos_drone = -1;
-
+                    double tgt_r_d_time = (tgt_r_d.size() > 1) ? initial_solution.drone_route_times[target_drone] : 0.0;
+                    double local_min_increase = 1e10;
+                    int best_local_pos = -1;
                     for (int ins_pos = 1; ins_pos <= insert_limit_d; ++ins_pos) {
+                        // Build target drone route with insertion
                         vi trd = tgt_r_d;
                         if (trd.empty()) trd.push_back(0);
                         int ipd = min(max(ins_pos, 1), (int)trd.size());
                         trd.insert(trd.begin() + ipd, cust);
                         if (trd.back() != 0) trd.push_back(0);
 
-                        auto [L2, R2] = find_depot_subroute_bounds(trd, ipd);
-                        vi sub_new;
-                        if (L2 <= R2) sub_new.assign(trd.begin() + L2, trd.begin() + R2 + 1);
-                        auto [t_new_sub, feas_new_sub] = check_route_feasibility(sub_new, 0.0, false);
-                        if (!feas_new_sub) continue;
+                        // Check feasibility for target drone route only
+                        auto [ttgt_d, feas_tgt_d] = check_drone_route_feasibility(trd);
+                        if (!feas_tgt_d) continue;
 
-                        int old_anchor = min(max(ipd, 0), (int)max(0, (int)tgt_r_d.size() - 1));
-                        auto [L1, R1] = find_depot_subroute_bounds(tgt_r_d, old_anchor);
-                        double t_old_sub = 0.0;
-                        if (L1 <= R1) {
-                            vi sub_old(tgt_r_d.begin() + L1, tgt_r_d.begin() + R1 + 1);
-                            t_old_sub = (sub_old.size() > 1) ? check_route_feasibility(sub_old, 0.0, false).first : 0.0;
-                        }
-
-                        double new_total_tgt_d = max(0.0, initial_solution.drone_route_times[target_drone] - t_old_sub + ((sub_new.size() > 1) ? t_new_sub : 0.0));
-                        if (new_total_tgt_d < best_new_total_tgt_d - 1e-12) {
-                            best_new_total_tgt_d = new_total_tgt_d; best_trd = trd; best_ins_pos_drone = ins_pos;
+                        // Compute local increase in makespan
+                        double local_increase = ttgt_d - tgt_r_d_time;
+                        if (local_increase + 1e-8 < local_min_increase){
+                            local_min_increase = local_increase;
+                            best_local_pos = ins_pos;
                         }
                     }
+                    if (best_local_pos < 0) continue; // no feasible insertion found
+                    // Rebuild best insertion
+                    vi trd = tgt_r_d;
+                    if (trd.empty()) trd.push_back(0);
+                    int ipd = min(max((int)best_local_pos, 1), (int)trd.size());
+                    trd.insert(trd.begin() + ipd, cust);
+                    if (trd.back() != 0) trd.push_back(0);
 
-                    if (best_ins_pos_drone != -1) {
-                        Solution neighbor = initial_solution;
-                        neighbor.truck_routes[critical_idx] = nr;
-                        neighbor.drone_routes[target_drone] = best_trd;
+                    // Construct neighbor incrementally (cross-mode)
+                    Solution neighbor = initial_solution;
+                    neighbor.truck_routes[critical_idx] = nr;
+                    neighbor.drone_routes[target_drone] = trd;
 
-                        neighbor.truck_route_times = initial_solution.truck_route_times;
-                        neighbor.drone_route_times = initial_solution.drone_route_times;
-                        neighbor.truck_route_times[critical_idx] = crit_time_base;
-                        neighbor.drone_route_times[target_drone] = (best_trd.size() > 1) ? best_new_total_tgt_d : 0.0;
+                    // Use cached times and recompute only modified routes
+                    neighbor.truck_route_times = initial_solution.truck_route_times;
+                    neighbor.drone_route_times = initial_solution.drone_route_times;
+                    neighbor.truck_route_times[critical_idx] = crit_time_base;
+                    neighbor.drone_route_times[target_drone] = (trd.size() > 1)
+                        ? compute_drone_route_time(trd).first : 0.0;
 
-                        double nb_makespan = 0.0;
-                        for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
-                        for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
-                        neighbor.total_makespan = nb_makespan;
+                    double nb_makespan = 0.0;
+                    for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
+                    for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
+                    neighbor.total_makespan = nb_makespan;
 
-                        int target_id = h + target_drone;
-                        bool is_tabu = (tabu_list_switch.size() > (size_t)cust && tabu_list_switch[cust].size() > (size_t)target_id &&
-                                        tabu_list_switch[cust][target_id] >= current_iter);
-                        if (!(is_tabu && neighbor.total_makespan >= best_cost)) {
-                            if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
-                            if (neighbor.total_makespan < best_neighbor_cost_local) {
-                                best_target = target_id; best_pos = best_ins_pos_drone; best_cust = cust; best_neighbor_cost_local = neighbor.total_makespan; best_candidate_neighbor = neighbor;
-                            }
-                        }
+                    int target_id = h + target_drone; // unified vehicle id for drones
+                    bool is_tabu = (tabu_list_switch.size() > (size_t)cust && tabu_list_switch[cust].size() > (size_t)target_id &&
+                                    tabu_list_switch[cust][target_id] >= current_iter);
+                    if (is_tabu && neighbor.total_makespan > best_cost) continue;
+                    if (neighbor.total_makespan > best_neighbor_cost_local) continue;
+                    // tie-breaker: if same makespan, choose the solution that have lower target vehicle time
+                    if (neighbor.total_makespan == best_neighbor_cost_local) {
+                        double neighbor_target_time = neighbor.drone_route_times[target_drone];
+                        if (neighbor_target_time >= best_target_time) continue;
+                        else best_target_time = neighbor_target_time;
+                        best_target = target_id; best_pos = best_local_pos; best_cust = cust; best_candidate_neighbor = neighbor;
+                    }
+
+                    if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
+                    if (neighbor.total_makespan < best_neighbor_cost_local) {
+                        best_target = target_id; best_pos = best_local_pos; best_cust = cust; best_neighbor_cost_local = neighbor.total_makespan; best_candidate_neighbor = neighbor;
                     }
                 }
             }
@@ -1372,109 +1304,139 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                     if (target_drone == critical_idx) continue;
                     const vi& tgt_r = initial_solution.drone_routes[target_drone];
                     int insert_limit = (int)tgt_r.size();
-
-                    // Pick best insertion for this drone route using subroute-only delta
-                    double best_new_total_tgt = 1e100;
-                    vi best_tr;
-                    int best_ins_pos_drone = -1;
-
+                    int best_local_pos = -1;
+                    double best_local_increase = 1e10;
+                    double tgt_r_time = (tgt_r.size() > 1) ? initial_solution.drone_route_times[target_drone] : 0.0;
                     for (int ins_pos = 1; ins_pos <= insert_limit; ++ins_pos) {
+                        // Build target drone route with insertion
                         vi tr = tgt_r;
                         if (tr.empty()) tr.push_back(0);
                         int ip = min(max(ins_pos, 1), (int)tr.size());
                         tr.insert(tr.begin() + ip, cust);
                         if (tr.back() != 0) tr.push_back(0);
 
-                        auto [L2, R2] = find_depot_subroute_bounds(tr, ip);
-                        vi sub_new;
-                        if (L2 <= R2) sub_new.assign(tr.begin() + L2, tr.begin() + R2 + 1);
-                        auto [t_new_sub, feas_new_sub] = check_route_feasibility(sub_new, 0.0, false);
-                        if (!feas_new_sub) continue;
-
-                        int old_anchor = min(max(ip, 0), (int)max(0, (int)tgt_r.size() - 1));
-                        auto [L1, R1] = find_depot_subroute_bounds(tgt_r, old_anchor);
-                        double t_old_sub = 0.0;
-                        if (L1 <= R1) {
-                            vi sub_old(tgt_r.begin() + L1, tgt_r.begin() + R1 + 1);
-                            t_old_sub = (sub_old.size() > 1) ? check_route_feasibility(sub_old, 0.0, false).first : 0.0;
+                        // Check feasibility for target route only
+                        auto [ttgt, feas_tgt] = check_drone_route_feasibility(tr);
+                        if (!feas_tgt) continue;
+                        // Compute local increase of target drone route
+                        double local_increase = ttgt - tgt_r_time;
+                        if (local_increase + 1e-8 < best_local_increase){
+                            best_local_increase = local_increase;
+                            best_local_pos = ins_pos;
                         }
+                    }
+                    if (best_local_pos < 0) continue; // no feasible insertion found
+                    // Rebuild best insertion
+                    vi tr = tgt_r;
+                    if (tr.empty()) tr.push_back(0);
+                    int ip = min(max((int)best_local_pos, 1), (int)tr.size());
+                    tr.insert(tr.begin() + ip, cust);
+                    if (tr.back() != 0) tr.push_back(0);
+                    double ttgt = tgt_r_time + best_local_increase;
 
-                        double new_total_tgt = max(0.0, initial_solution.drone_route_times[target_drone] - t_old_sub + ((sub_new.size() > 1) ? t_new_sub : 0.0));
-                        if (new_total_tgt < best_new_total_tgt - 1e-12) { best_new_total_tgt = new_total_tgt; best_tr = tr; best_ins_pos_drone = ins_pos; }
+                    // Construct neighbor incrementally
+                    Solution neighbor = initial_solution;
+                    neighbor.drone_routes[critical_idx] = nr;
+                    neighbor.drone_routes[target_drone] = tr;
+
+                    // Use cached times and recompute only modified routes
+                    neighbor.truck_route_times = initial_solution.truck_route_times;
+                    neighbor.drone_route_times = initial_solution.drone_route_times;
+                    neighbor.drone_route_times[critical_idx] = crit_time_base;
+                    neighbor.drone_route_times[target_drone] = (tr.size() > 1)
+                        ? compute_drone_route_time(tr).first : 0.0;
+
+                    double nb_makespan = 0.0;
+                    for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
+                    for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
+                    neighbor.total_makespan = nb_makespan;
+
+                    int target_id = h + target_drone; // unified vehicle id for drones
+                    bool is_tabu = (tabu_list_switch.size() > (size_t)cust && tabu_list_switch[cust].size() > (size_t)target_id &&
+                                    tabu_list_switch[cust][target_id] >= current_iter);
+                    if (is_tabu && neighbor.total_makespan > best_cost) continue;
+                    if (neighbor.total_makespan > best_neighbor_cost_local) continue;
+                    // tie-breaker: if same makespan, choose the solution that have lower target vehicle time
+                    if (neighbor.total_makespan == best_neighbor_cost_local) {
+                        double neighbor_target_time = neighbor.drone_route_times[target_drone];
+                        if (neighbor_target_time >= best_target_time) continue;
+                        else best_target_time = neighbor_target_time;
+                        best_target = target_id; best_pos = best_local_pos; best_cust = cust; best_candidate_neighbor = neighbor;
                     }
 
-                    if (best_ins_pos_drone != -1) {
-                        Solution neighbor = initial_solution;
-                        neighbor.drone_routes[critical_idx] = nr;
-                        neighbor.drone_routes[target_drone] = best_tr;
-
-                        neighbor.truck_route_times = initial_solution.truck_route_times;
-                        neighbor.drone_route_times = initial_solution.drone_route_times;
-                        neighbor.drone_route_times[critical_idx] = crit_time_base;
-                        neighbor.drone_route_times[target_drone] = (best_tr.size() > 1) ? best_new_total_tgt : 0.0;
-
-                        double nb_makespan = 0.0;
-                        for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
-                        for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
-                        neighbor.total_makespan = nb_makespan;
-
-                        int target_id = h + target_drone; // unified vehicle id for drones
-                        bool is_tabu = (tabu_list_switch.size() > (size_t)cust && tabu_list_switch[cust].size() > (size_t)target_id &&
-                                        tabu_list_switch[cust][target_id] >= current_iter);
-                        if (!(is_tabu && neighbor.total_makespan >= best_cost)) {
-                            if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
-                            if (neighbor.total_makespan < best_neighbor_cost_local) {
-                                best_target = target_id; best_pos = best_ins_pos_drone; best_cust = cust; best_neighbor_cost_local = neighbor.total_makespan; best_candidate_neighbor = neighbor;
-                            }
-                        }
+                    if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
+                    if (neighbor.total_makespan < best_neighbor_cost_local) {
+                        best_target = target_id; best_pos = best_local_pos; best_cust = cust; best_neighbor_cost_local = neighbor.total_makespan; best_candidate_neighbor = neighbor;
                     }
                 }
                 // Cross-mode: try inserting into truck routes as well
                 for (int target_truck = 0; target_truck < h; ++target_truck) {
                     const vi& tgt_r_t = initial_solution.truck_routes[target_truck];
                     int insert_limit_t = (int)tgt_r_t.size();
-                    // Pick best insertion for this truck route using prefix-suffix recompute
-                    vector<double> depot_pref = compute_truck_depot_prefix_times(tgt_r_t);
-                    double best_ttgt_t = 1e100;
-                    vi best_trt;
-                    int best_ins_pos_truck = -1;
-
+                    double tgt_r_t_time = (tgt_r_t.size() > 1) ? initial_solution.truck_route_times[target_truck] : 0.0;
+                    int best_local_pos = -1;
+                    double best_local_increase = 1e10;
                     for (int ins_pos = 1; ins_pos <= insert_limit_t; ++ins_pos) {
+                        // Build target truck route with insertion
                         vi trt = tgt_r_t;
                         if (trt.empty()) trt.push_back(0);
                         int ipt = min(max(ins_pos, 1), (int)trt.size());
                         trt.insert(trt.begin() + ipt, cust);
                         if (trt.back() != 0) trt.push_back(0);
 
-                        auto [ttgt_t, feas_tgt_t] = eval_truck_time_suffix_concat(tgt_r_t, depot_pref, trt, ipt);
+                        // Check feasibility for target truck route only
+                        auto [ttgt_t, feas_tgt_t] = check_truck_route_feasibility(trt, 0.0);
                         if (!feas_tgt_t) continue;
-                        if (ttgt_t < best_ttgt_t - 1e-12) { best_ttgt_t = ttgt_t; best_trt = trt; best_ins_pos_truck = ins_pos; }
+
+                        // Compute local increase in makespan
+                        double local_increase = ttgt_t - tgt_r_t_time;
+                        if (local_increase + 1e-8 < best_local_increase){
+                            best_local_increase = local_increase;
+                            best_local_pos = ins_pos;
+                        }
+                    }
+                    if (best_local_pos < 0) continue; // no feasible insertion found
+                    // Rebuild best insertion
+                    vi trt = tgt_r_t;
+                    if (trt.empty()) trt.push_back(0);
+                    int ipt = min(max((int)best_local_pos, 1), (int)trt.size());
+                    trt.insert(trt.begin() + ipt, cust);
+                    if (trt.back() != 0) trt.push_back(0);
+                    double ttgt_t = tgt_r_t_time + best_local_increase;
+
+                    // Construct neighbor incrementally (cross-mode)
+                    Solution neighbor = initial_solution;
+                    neighbor.drone_routes[critical_idx] = nr;
+                    neighbor.truck_routes[target_truck] = trt;
+
+                    // Use cached times and recompute only modified routes
+                    neighbor.truck_route_times = initial_solution.truck_route_times;
+                    neighbor.drone_route_times = initial_solution.drone_route_times;
+                    neighbor.drone_route_times[critical_idx] = crit_time_base;
+                    neighbor.truck_route_times[target_truck] = (trt.size() > 1)
+                        ? ttgt_t : 0.0;
+
+                    double nb_makespan = 0.0;
+                    for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
+                    for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
+                    neighbor.total_makespan = nb_makespan;
+
+                    int target_id = target_truck; // unified vehicle id for trucks
+                    bool is_tabu = (tabu_list_switch.size() > (size_t)cust && tabu_list_switch[cust].size() > (size_t)target_id &&
+                                    tabu_list_switch[cust][target_id] >= current_iter);
+                    if (is_tabu && neighbor.total_makespan > best_cost) continue;
+                    if (neighbor.total_makespan > best_neighbor_cost_local) continue;
+                    // tie-breaker: if same makespan, choose the solution that have lower target vehicle time
+                    if (neighbor.total_makespan == best_neighbor_cost_local) {
+                        double neighbor_target_time = neighbor.truck_route_times[target_truck];
+                        if (neighbor_target_time >= best_target_time) continue;
+                        else best_target_time = neighbor_target_time;
+                        best_target = target_id; best_pos = best_local_pos; best_cust = cust; best_candidate_neighbor = neighbor;
                     }
 
-                    if (best_ins_pos_truck != -1) {
-                        Solution neighbor = initial_solution;
-                        neighbor.drone_routes[critical_idx] = nr;
-                        neighbor.truck_routes[target_truck] = best_trt;
-
-                        neighbor.truck_route_times = initial_solution.truck_route_times;
-                        neighbor.drone_route_times = initial_solution.drone_route_times;
-                        neighbor.drone_route_times[critical_idx] = crit_time_base;
-                        neighbor.truck_route_times[target_truck] = (best_trt.size() > 1) ? best_ttgt_t : 0.0;
-
-                        double nb_makespan = 0.0;
-                        for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
-                        for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
-                        neighbor.total_makespan = nb_makespan;
-
-                        int target_id = target_truck; // unified vehicle id for trucks
-                        bool is_tabu = (tabu_list_switch.size() > (size_t)cust && tabu_list_switch[cust].size() > (size_t)target_id &&
-                                        tabu_list_switch[cust][target_id] >= current_iter);
-                        if (!(is_tabu && neighbor.total_makespan >= best_cost)) {
-                            if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
-                            if (neighbor.total_makespan < best_neighbor_cost_local) {
-                                best_target = target_id; best_pos = best_ins_pos_truck; best_cust = cust; best_neighbor_cost_local = neighbor.total_makespan; best_candidate_neighbor = neighbor;
-                            }
-                        }
+                    if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
+                    if (neighbor.total_makespan < best_neighbor_cost_local) {
+                        best_target = target_id; best_pos = best_local_pos; best_cust = cust; best_neighbor_cost_local = neighbor.total_makespan; best_candidate_neighbor = neighbor;
                     }
                 }
             }
@@ -1490,14 +1452,12 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                 tabu_list_switch[best_cust][best_target] = current_iter + TABU_TENURE_RELOCATE;
             }
             // Debug: print chosen relocate move
-            //cout.setf(std::ios::fixed); cout << setprecision(6);
-            /* cout << "[N0] relocate cust " << best_cust
-                 << " -> " << ((best_target < h) ? "truck" : "drone")
-                 << " #" << ((best_target < h) ? (best_target + 1) : (best_target - h + 1))
-                 << " at pos " << best_pos
-                 << ", makespan: " << initial_solution.total_makespan << " -> " << best_candidate_neighbor.total_makespan
-                 << ", iter " << current_iter << "\n"; */
+            //cout.setf(std::ios::fixed); cout << setprecision(6); 
             return best_candidate_neighbor;
+        }
+        else {
+            // no feasible relocate found
+            return initial_solution;
         }
     } else if (neighbor_id == 1) {
         // Neighborhood 1: Intra-route swap on the critical vehicle (truck or drone)
@@ -1520,13 +1480,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
             tabu_list_swap.assign(n + 1, vector<int>(n + 1, 0));
         }
 
-    Solution best_local = initial_solution;
-        double best_local_cost = 10e10;
-    int best_swap_u = -1, best_swap_v = -1; // record best swap pair (unordered)
-        // Track best critical-route time (route-focused selection for N1)
-        double best_local_route_time = crit_is_truck
-            ? ((int)initial_solution.truck_route_times.size() > critical_idx ? initial_solution.truck_route_times[critical_idx] : 0.0)
-            : ((int)initial_solution.drone_route_times.size() > critical_idx ? initial_solution.drone_route_times[critical_idx] : 0.0);
+        Solution best_local = initial_solution;
         // Ensure tabu list for reinsert is sized to (n+1) x (h+d)
         {
             int veh_count = h + d;
@@ -1538,8 +1492,11 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
         auto consider_swap = [&](const vi& base_route, bool is_truck_mode) {
             // Collect positions of customers (exclude depots)
             vector<int> pos;
+            int best_swap_u = -1, best_swap_v = -1; // record best swap pair (unordered)
+            int best_idx1 = -1, best_idx2 = -1;
+            double best_local_cost = 1e10;
             for (int i = 0; i < (int)base_route.size(); ++i) if (base_route[i] != 0) pos.push_back(i);
-            if ((int)pos.size() < 2) return; // nothing to swap
+            if ((int)pos.size() < 2) return base_route; // nothing to swap
             for (int idx1 = 0; idx1 < (int)pos.size(); ++idx1) {
                 for (int idx2 = idx1 + 1; idx2 < (int)pos.size(); ++idx2) {
                     int p1 = pos[idx1], p2 = pos[idx2];
@@ -1561,112 +1518,69 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                     swap(r[p1], r[p2]);
                     // Feasibility and time for the modified critical route
                     double tcrit = 0.0; bool feas = false;
-                    if (is_truck_mode) {
-                        // Exact truck time via single suffix recompute from left depot before min(p1,p2)
-                        int anchor = min(p1, p2);
-                        auto [tt, ok] = eval_truck_time_suffix_concat(base_route, depot_pref_swap, r, anchor);
-                        tcrit = (r.size() > 1) ? tt : 0.0; feas = ok;
-                    } else {
-                        // Drone: recompute only affected subroute(s) and delta-update route time
-                        // Old subroutes (from base_route)
-                        vector<pair<int,int>> old_ranges;
-                        auto br1 = find_depot_subroute_bounds(base_route, p1);
-                        auto br2 = find_depot_subroute_bounds(base_route, p2);
-                        old_ranges.push_back(br1);
-                        if (!(br2.first == br1.first && br2.second == br1.second)) old_ranges.push_back(br2);
-
-                        auto sub_time_drone = [&](const vi& route, pair<int,int> LR) -> pair<double,bool> {
-                            int L = LR.first, R = LR.second;
-                            if (L > R) return {0.0, true};
-                            vi sub(route.begin() + L, route.begin() + R + 1);
-                            if ((int)sub.size() <= 1) return {0.0, true};
-                            return check_route_feasibility(sub, 0.0, false);
-                        };
-
-                        double old_sum = 0.0;
-                        for (auto LR : old_ranges) {
-                            auto [t_old, ok_old] = sub_time_drone(base_route, LR);
-                            if (!ok_old) { feas = false; break; }
-                            old_sum += t_old;
-                        }
-                        if (!feas && !old_ranges.empty()) { /* if infeasible (shouldn't happen for base), skip */ }
-
-                        // New subroutes (from candidate r)
-                        vector<pair<int,int>> new_ranges;
-                        auto nr1 = find_depot_subroute_bounds(r, p1);
-                        auto nr2 = find_depot_subroute_bounds(r, p2);
-                        new_ranges.push_back(nr1);
-                        if (!(nr2.first == nr1.first && nr2.second == nr1.second)) new_ranges.push_back(nr2);
-
-                        double new_sum = 0.0;
-                        bool ok_all = true;
-                        for (auto LR : new_ranges) {
-                            auto [t_new, ok_new] = sub_time_drone(r, LR);
-                            if (!ok_new) { ok_all = false; break; }
-                            new_sum += t_new;
-                        }
-                        if (!ok_all) { feas = false; }
-                        else {
-                            feas = true;
-                            double base_time = initial_solution.drone_route_times[critical_idx];
-                            tcrit = max(0.0, base_time - old_sum + new_sum);
-                        }
-                    }
+                    auto [tt, ok] = check_route_feasibility(r, 0.0, is_truck_mode);
+                    tcrit = (r.size() > 1) ? tt : 0.0; feas = ok;
                     if (!feas) continue;
-
-                    // Construct neighbor and reuse cached times; only critical route time changes
-                    Solution neighbor = initial_solution;
-                    if (is_truck_mode) neighbor.truck_routes[critical_idx] = r; else neighbor.drone_routes[critical_idx] = r;
-                    neighbor.truck_route_times = initial_solution.truck_route_times;
-                    neighbor.drone_route_times = initial_solution.drone_route_times;
-                    if (is_truck_mode) neighbor.truck_route_times[critical_idx] = tcrit; else neighbor.drone_route_times[critical_idx] = tcrit;
-
-                    double nb_makespan = 0.0;
-                    for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
-                    for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
-                    neighbor.total_makespan = nb_makespan;
-
-                    // Tabu with aspiration: allow if improves global best OR improves critical route time
-                    if (is_tabu && !(neighbor.total_makespan < best_cost || tcrit < best_local_route_time - 1e-12)) continue;
-
-                    // Always update global best if makespan improves
-                    if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
-
-                    // Route-focused selection: minimize tcrit; tie-break with lower global makespan
-                    if (tcrit < best_local_route_time - 1e-12 ||
-                        (fabs(tcrit - best_local_route_time) <= 1e-12 && neighbor.total_makespan < best_local_cost - 1e-12)) {
-                        best_local_route_time = tcrit;
-                        best_local_cost = neighbor.total_makespan;
-                        best_local = neighbor;
-                        best_swap_u = u; best_swap_v = v;
+                    if (tcrit >= best_local_cost && is_tabu) {
+                        // no improvement in route time, skip
+                        continue;
+                    }
+                    else {
+                        if (tcrit < best_local_cost) {
+                            best_local_cost = tcrit;
+                            best_swap_u = u; best_swap_v = v;
+                            best_idx1 = idx1; best_idx2 = idx2;
+                        }
                     }
                 }
             }
+
+            // If a better swap was found, apply it
+            if (best_idx1 == -1 || best_idx2 == -1) return base_route; // no better swap found
+            int p1 = pos[best_idx1], p2 = pos[best_idx2];
+            int a = base_route[p1], b = base_route[p2];
+            // Build swapped route
+            vi r = base_route;
+            swap(r[p1], r[p2]);
+
+            // Update tabu list for the swapped customers
+            int u = min(a,b), v = max(a,b);
+            if (tabu_list_swap.size() > (size_t)u && tabu_list_swap[u].size() > (size_t)v) {
+                tabu_list_swap[u][v] = current_iter + TABU_TENURE_SWAP;
+            }
+            // return the modified route
+            return r;
         };
 
-    // Precompute depot prefix times for trucks (used by consider_swap)
-    vector<double> depot_pref_swap;
-    if (crit_is_truck) depot_pref_swap = compute_truck_depot_prefix_times(initial_solution.truck_routes[critical_idx]);
 
-    if (crit_is_truck) consider_swap(initial_solution.truck_routes[critical_idx], true);
-    else consider_swap(initial_solution.drone_routes[critical_idx], false);
-
-        // Update swap tabu for the best move if any
-        if (best_swap_u != -1 && best_swap_v != -1) {
-            if ((int)tabu_list_swap.size() != n + 1 || ((int)tabu_list_swap.size() > 0 && (int)tabu_list_swap[0].size() != n + 1)) {
-                tabu_list_swap.assign(n + 1, vector<int>(n + 1, 0));
-            }
-            tabu_list_swap[best_swap_u][best_swap_v] = current_iter + TABU_TENURE_SWAP;
+        // Consider swaps for the critical vehicle
+        if (crit_is_truck) {
+            vi new_route = consider_swap(initial_solution.truck_routes[critical_idx], true);
+            best_local.truck_routes[critical_idx] = new_route;
+        } else {
+            vi new_route = consider_swap(initial_solution.drone_routes[critical_idx], false);
+            best_local.drone_routes[critical_idx] = new_route;
         }
+        // Recompute route times for modified routes
+        if (crit_is_truck) {
+            auto [tcrit, feas_crit] = check_truck_route_feasibility(best_local.truck_routes[critical_idx], 0.0);
+            best_local.truck_route_times[critical_idx] = (best_local.truck_routes[critical_idx].size() > 1) ? tcrit : 0.0;
+        } else {
+            auto [tcrit, feas_crit] = check_drone_route_feasibility(best_local.drone_routes[critical_idx]);
+            best_local.drone_route_times[critical_idx] = (best_local.drone_routes[critical_idx].size() > 1) ? tcrit : 0.0;
+        }
+        double nb_makespan = 0.0;
+        for (double t2 : best_local.truck_route_times) nb_makespan = max(nb_makespan, t2);
+        for (double t2 : best_local.drone_route_times) nb_makespan = max(nb_makespan, t2);
+        best_local.total_makespan = nb_makespan;
 
         // Debug: print chosen swap move when available
-        /* if (best_swap_u != -1 && best_swap_v != -1) {
-            cout.setf(std::ios::fixed); cout << setprecision(6);
-            cout << "[N1] swap customers " << best_swap_u << " <-> " << best_swap_v
+        /*    cout.setf(std::ios::fixed); cout << setprecision(6);
+            cout << "[N1] swap from crit vehicle " << (crit_is_truck ? "truck" : "drone") << " #" << critical_idx
                  << ", makespan: " << initial_solution.total_makespan << " -> " << best_local.total_makespan
-                 << ", iter " << current_iter << "\n";
-        } */
-
+                 << ", iter " << current_iter << "\n";*/
+       if (best_local.total_makespan > initial_solution.total_makespan)
+            return initial_solution;
         return best_local;
     } else if (neighbor_id == 2) {
         // Neighborhood 2: Intra-route relocate (Or-opt-1) on the critical route (truck or drone)
@@ -1684,30 +1598,20 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
         }
         if (critical_idx == -1) return initial_solution;
 
-    const vi& base_route = crit_is_truck ? initial_solution.truck_routes[critical_idx]
+        const vi& base_route = crit_is_truck ? initial_solution.truck_routes[critical_idx]
                                              : initial_solution.drone_routes[critical_idx];
         // Collect positions of customers (exclude depots)
         vector<int> pos;
         for (int i = 0; i < (int)base_route.size(); ++i) if (base_route[i] != 0) pos.push_back(i);
         if ((int)pos.size() < 2) return initial_solution; // nothing to relocate
 
-    Solution best_local = initial_solution;
-        double best_local_cost = 10e10;
-    int best_reins_cust = -1;
-        // Track best critical-route time (route-focused selection for N2)
-        double best_local_route_time = crit_is_truck
-            ? ((int)initial_solution.truck_route_times.size() > critical_idx ? initial_solution.truck_route_times[critical_idx] : 0.0)
-            : ((int)initial_solution.drone_route_times.size() > critical_idx ? initial_solution.drone_route_times[critical_idx] : 0.0);
-    // Determine unified vehicle id for tabu encoding
-    int veh_id_unified = crit_is_truck ? critical_idx : (h + critical_idx);
-
-        // Precompute depot prefix times for trucks (for suffix recompute) and base time for drones
-        vector<double> depot_pref_truck;
-        if (crit_is_truck) {
-            depot_pref_truck = compute_truck_depot_prefix_times(base_route);
-        }
-        double base_time_route_drone = (!crit_is_truck) ? initial_solution.drone_route_times[critical_idx] : 0.0;
-
+        double best_local_ins_pos = -1;
+        double best_local_idx_from = -1;
+        Solution best_local = initial_solution;
+        double best_local_cost = 1e10;
+        // Determine unified vehicle id for tabu encoding
+        int veh_id_unified = crit_is_truck ? critical_idx : (h + critical_idx);
+        
         for (int idx_from = 0; idx_from < (int)pos.size(); ++idx_from) {
             int p_from = pos[idx_from];
             int cust = base_route[p_from];
@@ -1724,392 +1628,220 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
             if (!r.empty() && r.back() != 0) r.push_back(0);
 
             int insert_limit = (int)r.size();
-            // Candidate-list guided insertion positions
-            vector<char> consider(max(0, insert_limit + 2), 0);
-            if (!KNN_ADJ.empty()) {
-                // Mark positions adjacent to KNN anchors
-                for (int q = 0; q < (int)r.size(); ++q) {
-                    int node = r[q];
-                    if (node == 0) continue;
-                    bool near = false;
-                    if (KNN_ADJ.size() > (size_t)cust && KNN_ADJ[cust].size() > (size_t)node && KNN_ADJ[cust][node]) near = true;
-                    if (!near && KNN_ADJ.size() > (size_t)node && KNN_ADJ[node].size() > (size_t)cust && KNN_ADJ[node][cust]) near = true;
-                    if (!near) continue;
-                    for (int delta = -CFG_KNN_WINDOW; delta <= CFG_KNN_WINDOW; ++delta) {
-                        int ip1 = q + delta; // before node at q
-                        int ip2 = q + 1 + delta; // after node at q
-                        if (ip1 >= 1 && ip1 <= insert_limit) consider[ip1] = 1;
-                        if (ip2 >= 1 && ip2 <= insert_limit) consider[ip2] = 1;
-                    }
-                }
-            }
-            // Always include a small window around original position to avoid missing obvious moves
-            {
-                int ip0 = min(max(1, p_from), insert_limit);
-                for (int delta = -CFG_KNN_WINDOW; delta <= CFG_KNN_WINDOW; ++delta) {
-                    int ip = ip0 + delta;
-                    if (ip >= 1 && ip <= insert_limit) consider[ip] = 1;
-                }
-            }
-            // If nothing marked (e.g., KNN disabled), consider all
-            bool any_marked = false; for (int t = 1; t <= insert_limit; ++t) if (consider[t]) { any_marked = true; break; }
+
             for (int ins_pos = 1; ins_pos <= insert_limit; ++ins_pos) {
-                if (!any_marked || consider[ins_pos]) {
-                vi r_ins = r;
-                int ip = min(max(ins_pos, 1), (int)r_ins.size());
-                r_ins.insert(r_ins.begin() + ip, cust);
-                if (r_ins.back() != 0) r_ins.push_back(0);
-
-                // Skip no-op
-                if (r_ins == base_route) continue;
-
-                // Feasibility and time for the modified critical route
-                double tcrit = 0.0; bool feas = false;
-                if (crit_is_truck) {
-                    // If reinsertion stays within the same depot-delimited subroute, use exact suffix recompute; else full check
-                    auto [Lold, Rold] = find_depot_subroute_bounds(base_route, p_from);
-                    auto [Lnew, Rnew] = find_depot_subroute_bounds(r_ins, ip);
-
-                    // Compare customer sets (ignore depots) to detect same-subroute move
-                    vector<int> old_nodes; old_nodes.reserve(max(0, Rold - Lold + 1));
-                    vector<int> new_nodes; new_nodes.reserve(max(0, Rnew - Lnew + 1));
-                    for (int k2 = Lold; k2 <= Rold; ++k2) if (base_route[k2] != 0) old_nodes.push_back(base_route[k2]);
-                    for (int k2 = Lnew; k2 <= Rnew; ++k2) if (r_ins[k2] != 0) new_nodes.push_back(r_ins[k2]);
-                    sort(old_nodes.begin(), old_nodes.end());
-                    sort(new_nodes.begin(), new_nodes.end());
-                    bool same_subroute = (old_nodes == new_nodes);
-
-                    if (same_subroute) {
-                        auto [tt, ok] = eval_truck_time_suffix_concat(base_route, depot_pref_truck, r_ins, ip);
-                        tcrit = (r_ins.size() > 1 ? tt : 0.0); feas = ok;
-                    } else {
-                        auto [tt, ok] = check_route_feasibility(r_ins, 0.0, true);
-                        tcrit = (r_ins.size() > 1 ? tt : 0.0); feas = ok;
+                // Check if insertion position is different from removal position
+                if (ins_pos == p_from || ins_pos == p_from + 1) continue;
+                // Check if insertion position is next to a KNN anchor (when KNN is enabled)
+                bool any_marked = false;
+                for (int delta = -1; delta <= 1; ++delta) {
+                    int check_pos = ins_pos + delta;
+                    if (check_pos >= 1 && check_pos < insert_limit) {
+                        int neighbor_cust = r[check_pos];
+                        if (KNN_ADJ.size() > (size_t)cust && KNN_ADJ[cust].size() > (size_t)neighbor_cust && KNN_ADJ[cust][neighbor_cust]) {
+                            any_marked = true;
+                            break;
+                        }
                     }
-                } else {
-                    // Drone: recalc only the affected subroute(s) via delta
-                    // Old source subroute in base (contains p_from)
-                    auto [La_old, Ra_old] = find_depot_subroute_bounds(base_route, p_from);
-                    vi sub_old_A; if (La_old <= Ra_old) sub_old_A.assign(base_route.begin() + La_old, base_route.begin() + Ra_old + 1);
-                    double t_old_A = 0.0; bool ok_old_A = true;
-                    if (sub_old_A.size() > 1) { auto rA = check_route_feasibility(sub_old_A, 0.0, false); t_old_A = rA.first; ok_old_A = rA.second; }
-                    if (!ok_old_A) continue;
+                }
 
-                    // New target subroute in candidate (contains ip)
-                    auto [Lb_new, Rb_new] = find_depot_subroute_bounds(r_ins, ip);
-                    vi sub_new_B; if (Lb_new <= Rb_new) sub_new_B.assign(r_ins.begin() + Lb_new, r_ins.begin() + Rb_new + 1);
-                    double t_new_B = 0.0; bool ok_new_B = true;
-                    if (sub_new_B.size() > 1) { auto rB = check_route_feasibility(sub_new_B, 0.0, false); t_new_B = rB.first; ok_new_B = rB.second; }
-                    if (!ok_new_B) continue;
+                if (any_marked) {
+                    vi r_ins = r;
+                    int ip = min(max(ins_pos, 1), (int)r_ins.size());
+                    r_ins.insert(r_ins.begin() + ip, cust);
+                    if (r_ins.back() != 0) r_ins.push_back(0);
 
-                    // Old destination subroute in base: pick an anchor from new B excluding moved customer; locate in base
-                    auto pick_anchor_excl = [&](const vi& sub, int exclude)->int{
-                        for (int x : sub) if (x != 0 && x != exclude) return x;
-                        return -1;
-                    };
-                    int anchor_B = pick_anchor_excl(sub_new_B, cust);
-                    double t_old_B = 0.0; bool have_old_B = false;
-                    if (anchor_B != -1) {
-                        int pos_base = -1;
-                        for (int ii = 0; ii < (int)base_route.size(); ++ii) if (base_route[ii] == anchor_B) { pos_base = ii; break; }
-                        if (pos_base != -1) {
-                            auto [Lb_old, Rb_old] = find_depot_subroute_bounds(base_route, pos_base);
-                            vi sub_old_B; sub_old_B.assign(base_route.begin() + Lb_old, base_route.begin() + Rb_old + 1);
-                            if (sub_old_B.size() > 1) { auto rOB = check_route_feasibility(sub_old_B, 0.0, false); if (!rOB.second) continue; t_old_B = rOB.first; }
-                            have_old_B = true;
+                    // Feasibility and time for the modified critical route
+                    auto [tcrit, feas] = check_route_feasibility(r_ins, 0.0, crit_is_truck);
+                    if (!feas) continue;
+
+                    // Tabu check for reinsert of this customer on this vehicle (with aspiration if it improves global best)
+                    int veh_id = veh_id_unified;
+                    bool is_tabu = false;
+                    if ((int)tabu_list_reinsert.size() > cust) {
+                        const auto &row = tabu_list_reinsert[cust];
+                        if ((int)row.size() > veh_id && row[veh_id] >= current_iter) {
+                            is_tabu = true;
                         }
                     }
 
-                    // New source subroute in candidate after removal (A'): pick anchor from old A excluding moved customer
-                    int anchor_A = -1;
-                    for (int x : sub_old_A) if (x != 0 && x != cust) { anchor_A = x; break; }
-                    double t_new_A = 0.0; bool have_new_A = false;
-                    if (anchor_A != -1) {
-                        int pos_new = -1;
-                        for (int ii = 0; ii < (int)r_ins.size(); ++ii) if (r_ins[ii] == anchor_A) { pos_new = ii; break; }
-                        if (pos_new != -1) {
-                            auto [La_new, Ra_new] = find_depot_subroute_bounds(r_ins, pos_new);
-                            vi sub_new_A; sub_new_A.assign(r_ins.begin() + La_new, r_ins.begin() + Ra_new + 1);
-                            if (sub_new_A.size() > 1) { auto rNA = check_route_feasibility(sub_new_A, 0.0, false); if (!rNA.second) continue; t_new_A = rNA.first; }
-                            have_new_A = true;
-                        }
-                    }
-
-                    double delta = -t_old_A + t_new_A;
-                    if (anchor_B != -1) delta += -t_old_B + t_new_B; else delta += t_new_B; // old B empty
-                    tcrit = max(0.0, base_time_route_drone + delta);
-                    feas = true;
-                }
-                if (!feas) continue;
-
-                // Tabu check for reinsert of this customer on this vehicle (with aspiration if it improves global best)
-                int veh_id = veh_id_unified;
-                bool is_tabu = false;
-                if ((int)tabu_list_reinsert.size() > cust) {
-                    const auto &row = tabu_list_reinsert[cust];
-                    if ((int)row.size() > veh_id && row[veh_id] >= current_iter) {
-                        is_tabu = true;
-                    }
-                }
-
-                // Construct neighbor and reuse cached times; only critical route time changes
-                Solution neighbor = initial_solution;
-                if (crit_is_truck) neighbor.truck_routes[critical_idx] = r_ins; else neighbor.drone_routes[critical_idx] = r_ins;
-                neighbor.truck_route_times = initial_solution.truck_route_times;
-                neighbor.drone_route_times = initial_solution.drone_route_times;
-                if (crit_is_truck) neighbor.truck_route_times[critical_idx] = (r_ins.size() > 1 ? tcrit : 0.0);
-                else neighbor.drone_route_times[critical_idx] = (r_ins.size() > 1 ? tcrit : 0.0);
-
-                double nb_makespan = 0.0;
-                for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
-                for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
-                neighbor.total_makespan = nb_makespan;
-
-                // Tabu with aspiration: allow if improves global best OR improves critical route time
-                if (is_tabu && !(neighbor.total_makespan < best_cost || tcrit < best_local_route_time - 1e-12)) continue;
-
-                // Always update global best if makespan improves
-                if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
-
-                // Route-focused selection: minimize tcrit; tie-break with lower global makespan
-                if (tcrit < best_local_route_time - 1e-12 ||
-                    (fabs(tcrit - best_local_route_time) <= 1e-12 && neighbor.total_makespan < best_local_cost - 1e-12)) {
-                    best_local_route_time = tcrit;
-                    best_local_cost = neighbor.total_makespan;
-                    best_local = neighbor;
-                    best_reins_cust = cust;
-                }
+                    // Update local best if improved
+                    if (tcrit >= best_local_cost) continue;
+                    if (is_tabu && tcrit >= best_cost) continue;
+                    best_local_cost = tcrit;
+                    best_local_ins_pos = ins_pos;
+                    best_local_idx_from = idx_from;
                 }
             }
         }
 
-        // Update reinsert tabu if a move was chosen
-        if (best_reins_cust != -1) {
-            int veh_count2 = h + d;
-            if ((int)tabu_list_reinsert.size() != n + 1 || (veh_count2 > 0 && (int)tabu_list_reinsert[0].size() != veh_count2)) {
-                tabu_list_reinsert.assign(n + 1, vector<int>(max(0, veh_count2), 0));
-            }
-            tabu_list_reinsert[best_reins_cust][veh_id_unified] = current_iter + TABU_TENURE_REINSERT;
+        // If no better reinsertion found, return initial solution
+        if (best_local_ins_pos == -1 || best_local_idx_from == -1) {
+            return initial_solution;
         }
+        // Rebuild best reinsertion
+        int p_from = pos[(int)best_local_idx_from];
+        int cust = base_route[p_from];
+        vi r_ins = base_route;
+        r_ins.erase(r_ins.begin() + p_from);
+        // Normalize depots (keep start depot; ensure end depot; compress doubles)
+        if (r_ins.empty() || r_ins.front() != 0) r_ins.insert(r_ins.begin(), 0);
+        if (!r_ins.empty() && r_ins.size() >= 2) {
+            vi r2; r2.reserve(r_ins.size());
+            for (int x : r_ins) { if (!r2.empty() && r2.back() == 0 && x == 0) continue; r2.push_back(x);} r_ins.swap(r2);
+        }
+        if (!r_ins.empty() && r_ins.back() != 0) r_ins.push_back(0);
+        int ip = min(max((int)best_local_ins_pos, 1), (int)r_ins.size());
+        r_ins.insert(r_ins.begin() + ip, cust);
+        if (r_ins.back() != 0) r_ins.push_back(0);
+        // Feasibility and time for the modified critical route
+        auto [tcrit, feas] = check_route_feasibility(r_ins, 0.0, crit_is_truck);
+        // Construct neighbor and reuse cached times; only critical route time changes
+        Solution neighbor = initial_solution;
+        if (crit_is_truck) neighbor.truck_routes[critical_idx] = r_ins; else neighbor.drone_routes[critical_idx] = r_ins;
+        neighbor.truck_route_times = initial_solution.truck_route_times;
+        neighbor.drone_route_times = initial_solution.drone_route_times;
+        if (crit_is_truck) neighbor.truck_route_times[critical_idx] = (r_ins.size() > 1 ? tcrit : 0.0);
+        else neighbor.drone_route_times[critical_idx] = (r_ins.size() > 1 ? tcrit : 0.0);
+
+        double nb_makespan = 0.0;
+        for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
+        for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
+        neighbor.total_makespan = nb_makespan;
+
+        if (neighbor.total_makespan < best_cost) { best_cost = neighbor.total_makespan; best_neighbor = neighbor; }
+
+        int veh_count2 = h + d;
+        if ((int)tabu_list_reinsert.size() != n + 1 || (veh_count2 > 0 && (int)tabu_list_reinsert[0].size() != veh_count2)) {
+            tabu_list_reinsert.assign(n + 1, vector<int>(max(0, veh_count2), 0));
+        }
+        tabu_list_reinsert[cust][veh_id_unified] = current_iter + TABU_TENURE_REINSERT;
 
         // Debug: print chosen reinsert move when available
-        /* if (best_reins_cust != -1) {
+         if (cust != -1) {
             cout.setf(std::ios::fixed); cout << setprecision(6);
             bool is_truck = veh_id_unified < h;
-            cout << "[N2] reinsert cust " << best_reins_cust << " within "
+        /*    cout << "[N2] reinsert cust " << cust << " within "
                  << (is_truck ? "truck" : "drone") << " #"
                  << (is_truck ? (veh_id_unified + 1) : (veh_id_unified - h + 1))
                  << ", makespan: " << initial_solution.total_makespan << " -> " << best_local.total_makespan
-                 << ", iter " << current_iter << "\n";
-        } */
+                 << ", iter " << current_iter << "\n";*/
+        }
 
-        return best_local;
+        return neighbor;
     } else if (neighbor_id == 3) {
-        // Neighborhood 3: 2-opt within each subroute (between depot nodes) for trucks or drones
-        // Priority: try critical route first; if no admissible improving move found, allow on other routes.
-        // Tabu: tabu_list_2opt[min(a,b)][max(a,b)] for segment endpoints, with aspiration (can override if improves global best_cost).
+        // Neighborhood 3: 2-opt within each subroute (between depot nodes) for trucks or drones.
+        // Finds the best 2-opt move across all routes that yields the largest local time drop.
 
-        // Ensure tabu list for 2-opt is sized (n+1) x (n+1)
         if ((int)tabu_list_2opt.size() != n + 1 || ((int)tabu_list_2opt.size() > 0 && (int)tabu_list_2opt[0].size() != n + 1)) {
             tabu_list_2opt.assign(n + 1, vector<int>(n + 1, 0));
         }
 
-    auto try_two_opt_on_route = [&](const vi& base_route, bool is_truck_mode, int route_idx,
-                    Solution &best_local_out, double &best_local_drop,
-                    double base_route_time, double current_best_cost,
-                    int &best_u, int &best_v, int &best_route_idx, bool &best_is_truck) {
-            // Enumerate subroutes separated by depot (0)
+        double best_overall_drop = 0.0;
+        int best_i = -1, best_j = -1;
+        int best_u = -1, best_v = -1;
+        int best_route_idx = -1;
+        bool best_is_truck = false;
+        double best_makespan_for_best_drop = 1e100;
+
+        auto find_best_2opt_on_route = [&](const vi& base_route, bool is_truck_mode, int route_idx, double base_route_time) {
             int m = (int)base_route.size();
-            if (m <= 3) return; // nothing to reverse (at most one customer)
-            // Precompute depot prefix times once for trucks (used by suffix recompute)
-            vector<double> depot_pref_truck;
-            if (is_truck_mode) {
-                depot_pref_truck = compute_truck_depot_prefix_times(base_route);
-            }
+            if (m <= 3) return;
+
             int start = 0;
             while (start < m) {
-                // find next subroute [l..r] inclusive, where l is first non-depot, r is last before next depot
                 while (start < m && base_route[start] == 0) start++;
                 if (start >= m) break;
                 int l = start;
-                int r = l;
-                while (r + 1 < m && base_route[r + 1] != 0) r++;
-                // subroute is indices [l..r] with all non-zero customers
-                int len = r - l + 1;
-                if (len >= 2) {
-                    for (int i = l; i < r; ++i) {
-                        for (int j = i + 1; j <= r; ++j) {
-                            int a = base_route[i];
-                            int b = base_route[j];
-                            if (a == 0 || b == 0) continue; // by construction shouldn't happen
-                            // Candidate-list filter: only consider reversing if endpoints are near
-                            if (!KNN_ADJ.empty()) {
-                                if (!(KNN_ADJ.size() > (size_t)a && KNN_ADJ[a].size() > (size_t)b && KNN_ADJ[a][b]) &&
-                                    !(KNN_ADJ.size() > (size_t)b && KNN_ADJ[b].size() > (size_t)a && KNN_ADJ[b][a])) {
-                                    continue;
-                                }
-                            }
-                            int u = min(a, b), v = max(a, b);
-                            bool is_tabu = (tabu_list_2opt.size() > (size_t)u && tabu_list_2opt[u].size() > (size_t)v &&
-                                            tabu_list_2opt[u][v] >= current_iter);
+                int r_end = l;
+                while (r_end + 1 < m && base_route[r_end + 1] != 0) r_end++;
 
+                if (r_end - l + 1 >= 2) {
+                    for (int i = l; i < r_end; ++i) {
+                        for (int j = i + 1; j <= r_end; ++j) {
                             vi r2 = base_route;
                             reverse(r2.begin() + i, r2.begin() + j + 1);
-                            if (r2 == base_route) continue; // no-op
 
-                            // Evaluate time with subroute-local method: suffix for truck, delta for drone
-                            double t2 = 0.0; bool feas = false;
-                            if (is_truck_mode) {
-                                // Exact suffix recompute from the left depot before i
-                                auto [tt, ok] = eval_truck_time_suffix_concat(base_route, depot_pref_truck, r2, i);
-                                t2 = (r2.size() > 1 ? tt : 0.0); feas = ok;
-                            } else {
-                                // Drone: only subroute [l..r] changes; recompute delta
-                                vi sub_old; sub_old.reserve((r - l + 1) + 2);
-                                sub_old.push_back(0);
-                                for (int p = l; p <= r; ++p) sub_old.push_back(base_route[p]);
-                                sub_old.push_back(0);
-                                auto [t_old, ok_old] = check_route_feasibility(sub_old, 0.0, false);
-                                if (!ok_old) { feas = false; }
-                                else {
-                                    vi sub_new; sub_new.reserve((r - l + 1) + 2);
-                                    sub_new.push_back(0);
-                                    for (int p = l; p <= r; ++p) sub_new.push_back(r2[p]);
-                                    sub_new.push_back(0);
-                                    auto [t_new, ok_new] = check_route_feasibility(sub_new, 0.0, false);
-                                    if (!ok_new) { feas = false; }
-                                    else { t2 = max(0.0, base_route_time - t_old + t_new); feas = true; }
-                                }
-                            }
+                            auto [t2, feas] = check_route_feasibility(r2, 0.0, is_truck_mode);
                             if (!feas) continue;
 
-                            // Build neighbor with cached times; only this route's time changes
-                            Solution neighbor = initial_solution;
-                            if (is_truck_mode) neighbor.truck_routes[route_idx] = r2; else neighbor.drone_routes[route_idx] = r2;
-                            neighbor.truck_route_times = initial_solution.truck_route_times;
-                            neighbor.drone_route_times = initial_solution.drone_route_times;
-                            if (is_truck_mode) neighbor.truck_route_times[route_idx] = (r2.size() > 1 ? t2 : 0.0);
-                            else neighbor.drone_route_times[route_idx] = (r2.size() > 1 ? t2 : 0.0);
+                            double current_makespan = t2;
+                            for(int k=0; k<h; ++k) if(!is_truck_mode || k != route_idx) current_makespan = max(current_makespan, initial_solution.truck_route_times[k]);
+                            for(int k=0; k<(int)initial_solution.drone_routes.size(); ++k) if(is_truck_mode || k != route_idx) current_makespan = max(current_makespan, initial_solution.drone_route_times[k]);
 
-                            double nb_makespan = 0.0;
-                            for (double t : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t);
-                            for (double t : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t);
-                            neighbor.total_makespan = nb_makespan;
+                            int u_cand = min(base_route[i], base_route[j+1]);
+                            int v_cand = max(base_route[i], base_route[j+1]);
+                            bool is_tabu = (tabu_list_2opt.size() > (size_t)u_cand && tabu_list_2opt[u_cand].size() > (size_t)v_cand && tabu_list_2opt[u_cand][v_cand] >= current_iter);
 
-                            // Aspiration: allow tabu if it improves global best_cost
-                            if (is_tabu && neighbor.total_makespan >= current_best_cost) continue;
+                            if (is_tabu && current_makespan >= best_cost) continue;
 
-                            double drop = base_route_time - (is_truck_mode ? neighbor.truck_route_times[route_idx]
-                                                                            : neighbor.drone_route_times[route_idx]);
-                            if (drop > best_local_drop + 1e-12) {
-                                best_local_drop = drop;
-                                best_local_out = neighbor;
-                                best_u = u; best_v = v; best_route_idx = route_idx; best_is_truck = is_truck_mode;
-                            } else if (fabs(drop - best_local_drop) <= 1e-12) {
-                                // tie-breaker: choose better makespan
-                                if (neighbor.total_makespan < best_local_out.total_makespan) {
-                                    best_local_out = neighbor;
-                                    best_u = u; best_v = v; best_route_idx = route_idx; best_is_truck = is_truck_mode;
+                            double drop = base_route_time - t2;
+                            if (drop > best_overall_drop + 1e-12) {
+                                best_overall_drop = drop;
+                                best_makespan_for_best_drop = current_makespan;
+                                best_i = i; best_j = j;
+                                best_u = u_cand; best_v = v_cand;
+                                best_route_idx = route_idx; best_is_truck = is_truck_mode;
+                            } else if (fabs(drop - best_overall_drop) <= 1e-12) {
+                                if (current_makespan < best_makespan_for_best_drop) {
+                                    best_makespan_for_best_drop = current_makespan;
+                                    best_i = i; best_j = j;
+                                    best_u = u_cand; best_v = v_cand;
+                                    best_route_idx = route_idx; best_is_truck = is_truck_mode;
                                 }
                             }
                         }
                     }
                 }
-                start = r + 1;
+                start = r_end + 1;
             }
         };
 
-        // Identify critical route (max time)
-        bool crit_is_truck = true; int critical_idx = -1; double max_time = -1.0;
+        // Evaluate all routes to find the single best 2-opt move
         for (int i = 0; i < h; ++i) {
-            double t = (i < (int)initial_solution.truck_route_times.size()) ? initial_solution.truck_route_times[i] : 0.0;
-            if (t > max_time) { max_time = t; crit_is_truck = true; critical_idx = i; }
+            find_best_2opt_on_route(initial_solution.truck_routes[i], true, i, initial_solution.truck_route_times[i]);
         }
-        for (int i = 0; i < (int)initial_solution.drone_route_times.size(); ++i) {
-            double t = initial_solution.drone_route_times[i];
-            if (t > max_time) { max_time = t; crit_is_truck = false; critical_idx = i; }
-        }
-        if (critical_idx == -1) return initial_solution;
-
-    Solution best_local = initial_solution; // will hold best 2-opt neighbor according to drop
-        double best_local_drop = 0.0; // positive only means improvement
-    int best2_u = -1, best2_v = -1, best2_route_idx = -1; bool best2_is_truck = true;
-
-        // Try critical route first
-        if (crit_is_truck) {
-            double base_t = initial_solution.truck_route_times[critical_idx];
-            try_two_opt_on_route(initial_solution.truck_routes[critical_idx], true, critical_idx,
-                                 best_local, best_local_drop, base_t, best_cost,
-                                 best2_u, best2_v, best2_route_idx, best2_is_truck);
-        } else {
-            double base_t = initial_solution.drone_route_times[critical_idx];
-            try_two_opt_on_route(initial_solution.drone_routes[critical_idx], false, critical_idx,
-                                 best_local, best_local_drop, base_t, best_cost,
-                                 best2_u, best2_v, best2_route_idx, best2_is_truck);
+        for (int i = 0; i < (int)initial_solution.drone_routes.size(); ++i) {
+            find_best_2opt_on_route(initial_solution.drone_routes[i], false, i, initial_solution.drone_route_times[i]);
         }
 
-        if (best_local_drop > 1e-12) {
-            // Also update running best if makespan improved
-            if (best_local.total_makespan < best_cost) {
-                best_neighbor = best_local;
-                best_cost = best_local.total_makespan;
+        // If an improving move was found, construct the solution and return it
+        if (best_overall_drop > 1e-12) {
+            Solution neighbor = initial_solution;
+            vi final_route = best_is_truck ? initial_solution.truck_routes[best_route_idx] : initial_solution.drone_routes[best_route_idx];
+            
+            reverse(final_route.begin() + best_i, final_route.begin() + best_j + 1);
+            auto [t_final, feas_final] = check_route_feasibility(final_route, 0.0, best_is_truck);
+
+            if (best_is_truck) {
+                neighbor.truck_routes[best_route_idx] = final_route;
+                neighbor.truck_route_times[best_route_idx] = t_final;
+            } else {
+                neighbor.drone_routes[best_route_idx] = final_route;
+                neighbor.drone_route_times[best_route_idx] = t_final;
             }
-            // Update 2-opt tabu for the chosen segment endpoints
-            if (best2_u != -1 && best2_v != -1) {
-                if ((int)tabu_list_2opt.size() != n + 1 || ((int)tabu_list_2opt.size() > 0 && (int)tabu_list_2opt[0].size() != n + 1)) {
-                    tabu_list_2opt.assign(n + 1, vector<int>(n + 1, 0));
-                }
-                tabu_list_2opt[best2_u][best2_v] = current_iter + TABU_TENURE_2OPT;
-            }
-            // Debug
-            /* cout.setf(std::ios::fixed); cout << setprecision(6);
-            cout << "[N3] 2-opt on " << (best2_is_truck ? "truck" : "drone")
-                 << " #" << (best2_is_truck ? (best2_route_idx + 1) : (best2_route_idx + 1))
-                 << " cut (" << best2_u << "," << best2_v << ")"
-                 << ", makespan: " << initial_solution.total_makespan << " -> " << best_local.total_makespan
-                 << ", iter " << current_iter << "\n"; */
-            return best_local;
-        }
+            
+            double nb_makespan = 0.0;
+            for (double t2 : neighbor.truck_route_times) nb_makespan = max(nb_makespan, t2);
+            for (double t2 : neighbor.drone_route_times) nb_makespan = max(nb_makespan, t2);
+            neighbor.total_makespan = nb_makespan;
 
-        // If no improving move on critical route, allow other routes and pick the largest drop
-        for (int i = 0; i < h; ++i) {
-            if (crit_is_truck && i == critical_idx) continue;
-            double base_t = initial_solution.truck_route_times[i];
-            try_two_opt_on_route(initial_solution.truck_routes[i], true, i,
-                                 best_local, best_local_drop, base_t, best_cost,
-                                 best2_u, best2_v, best2_route_idx, best2_is_truck);
-        }
-        for (int i = 0; i < (int)initial_solution.drone_route_times.size(); ++i) {
-            if (!crit_is_truck && i == critical_idx) continue;
-            double base_t = initial_solution.drone_route_times[i];
-            try_two_opt_on_route(initial_solution.drone_routes[i], false, i,
-                                 best_local, best_local_drop, base_t, best_cost,
-                                 best2_u, best2_v, best2_route_idx, best2_is_truck);
-        }
+            tabu_list_2opt[best_u][best_v] = current_iter + TABU_TENURE_2OPT;
+            // Debug: print chosen 2-opt move
+            /* if (best_u != -1 && best_v != -1) {
+                cout.setf(std::ios::fixed); cout << setprecision(6);
+                cout << "[N3] 2-opt on " << (best_is_truck ? "truck" : "drone") << " #" << (best_route_idx + 1)
+                     << " between positions " << best_i << " and " << best_j
+                     << ", makespan: " << initial_solution.total_makespan << " -> " << neighbor.total_makespan
+                     << ", iter " << current_iter << "\n";
+            } */
 
-        if (best_local_drop > 1e-12) {
-            if (best_local.total_makespan < best_cost) {
-                best_neighbor = best_local;
-                best_cost = best_local.total_makespan;
-            }
-            // Update 2-opt tabu for the chosen segment endpoints
-            if (best2_u != -1 && best2_v != -1) {
-                if ((int)tabu_list_2opt.size() != n + 1 || ((int)tabu_list_2opt.size() > 0 && (int)tabu_list_2opt[0].size() != n + 1)) {
-                    tabu_list_2opt.assign(n + 1, vector<int>(n + 1, 0));
-                }
-                tabu_list_2opt[best2_u][best2_v] = current_iter + TABU_TENURE_2OPT;
-            }
-            // Debug
-            /* cout.setf(std::ios::fixed); cout << setprecision(6);
-            cout << "[N3] 2-opt on " << (best2_is_truck ? "truck" : "drone")
-                 << " #" << (best2_is_truck ? (best2_route_idx + 1) : (best2_route_idx + 1))
-                 << " cut (" << best2_u << "," << best2_v << ")"
-                 << ", makespan: " << initial_solution.total_makespan << " -> " << best_local.total_makespan
-                 << ", iter " << current_iter << "\n"; */
-            return best_local;
+            return neighbor;
         }
-
-        return initial_solution; // no improving move found
+        else {
+            // No improving 2-opt found
+            return initial_solution;
+        }
 
     } else if (neighbor_id == 4) {
         // Neighborhood 4: 2-opt-star (inter-route exchange) within depot-delimited subroutes.
@@ -2131,15 +1863,6 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
             int mA = (int)routeA.size();
             int mB = (int)routeB.size();
             if (mA <= 3 || mB <= 3) return; // need at least two customers per route to cut within a subroute
-
-            // Precompute truck depot prefix times and base route times
-            vector<double> depot_pref_A, depot_pref_B;
-            if (a_is_truck) depot_pref_A = compute_truck_depot_prefix_times(routeA);
-            if (b_is_truck) depot_pref_B = compute_truck_depot_prefix_times(routeB);
-            double base_time_A = a_is_truck ? ((int)initial_solution.truck_route_times.size() > idxA ? initial_solution.truck_route_times[idxA] : 0.0)
-                                            : ((int)initial_solution.drone_route_times.size() > idxA ? initial_solution.drone_route_times[idxA] : 0.0);
-            double base_time_B = b_is_truck ? ((int)initial_solution.truck_route_times.size() > idxB ? initial_solution.truck_route_times[idxB] : 0.0)
-                                            : ((int)initial_solution.drone_route_times.size() > idxB ? initial_solution.drone_route_times[idxB] : 0.0);
 
             // Enumerate subroutes for A
             int startA = 0;
@@ -2226,44 +1949,11 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                                     // No-op guard
                                     if (rA2 == routeA && rB2 == routeB) continue;
 
-                                    // Feasibility and times using suffix (truck) or subroute delta (drone)
-                                    double tA2 = 0.0, tB2 = 0.0; bool feasA = false, feasB = false;
-
-                                    if (a_is_truck) {
-                                        auto [ttA, okA] = eval_truck_time_suffix_concat(routeA, depot_pref_A, rA2, lA);
-                                        tA2 = (rA2.size() > 1 ? ttA : 0.0); feasA = okA;
-                                    } else {
-                                        vi sub_old_A; sub_old_A.push_back(0);
-                                        for (int p = lA; p <= rA; ++p) sub_old_A.push_back(routeA[p]);
-                                        sub_old_A.push_back(0);
-                                        auto [t_old_A, ok_old_A] = check_route_feasibility(sub_old_A, 0.0, false);
-                                        if (ok_old_A) {
-                                            vi sub_new_A; sub_new_A.push_back(0);
-                                            for (int x : new_subA) sub_new_A.push_back(x);
-                                            sub_new_A.push_back(0);
-                                            auto [t_new_A, ok_new_A] = check_route_feasibility(sub_new_A, 0.0, false);
-                                            if (ok_new_A) { tA2 = max(0.0, base_time_A - t_old_A + t_new_A); feasA = true; }
-                                        }
-                                    }
-
-                                    if (b_is_truck) {
-                                        auto [ttB, okB] = eval_truck_time_suffix_concat(routeB, depot_pref_B, rB2, lB);
-                                        tB2 = (rB2.size() > 1 ? ttB : 0.0); feasB = okB;
-                                    } else {
-                                        vi sub_old_B; sub_old_B.push_back(0);
-                                        for (int p = lB; p <= rB; ++p) sub_old_B.push_back(routeB[p]);
-                                        sub_old_B.push_back(0);
-                                        auto [t_old_B, ok_old_B] = check_route_feasibility(sub_old_B, 0.0, false);
-                                        if (ok_old_B) {
-                                            vi sub_new_B; sub_new_B.push_back(0);
-                                            for (int x : new_subB) sub_new_B.push_back(x);
-                                            sub_new_B.push_back(0);
-                                            auto [t_new_B, ok_new_B] = check_route_feasibility(sub_new_B, 0.0, false);
-                                            if (ok_new_B) { tB2 = max(0.0, base_time_B - t_old_B + t_new_B); feasB = true; }
-                                        }
-                                    }
-
-                                    if (!feasA || !feasB) continue;
+                                    // Feasibility and times for the two modified routes only
+                                    auto [tA2, feasA] = check_route_feasibility(rA2, 0.0, a_is_truck);
+                                    if (!feasA) continue;
+                                    auto [tB2, feasB] = check_route_feasibility(rB2, 0.0, b_is_truck);
+                                    if (!feasB) continue;
 
                                     Solution neighbor = initial_solution;
                                     if (a_is_truck) neighbor.truck_routes[idxA] = rA2; else neighbor.drone_routes[idxA] = rA2;
@@ -2471,16 +2161,14 @@ Solution tabu_search(const Solution& initial_solution) {
             score[i] = 0.0;
             count[i] = 0;
         }
-        current_sol = best_segment_sol;
-        current_cost = best_segment_cost;
 
         // Debug: print neighborhood weights after each segment
-        //cout.setf(std::ios::fixed); cout << setprecision(6);
-        //cout << "[Segment " << (segment + 1) << "] weights:";
-        //for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-        //    cout << " w" << i << "=" << weight[i];
-        //}
-        //cout << "\n";
+        /*cout.setf(std::ios::fixed); cout << setprecision(6);
+        cout << "[Segment " << (segment + 1) << "] weights:";
+        for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+            cout << " w" << i << "=" << weight[i];
+        }
+        cout << "\n";*/
     }
     return best_solution;
 }
@@ -2581,26 +2269,28 @@ int main(int argc, char* argv[]) {
     }
 
     // Optional auto-tuning based on instance size if requested
+    // For now, set auto-tune to always true
+    auto_tune = true;
     if (auto_tune) {
         if (n <= 50) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 20);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 20);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 2000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
-            CFG_KNN_K = min(CFG_KNN_K, max(5, min(n - 1, 30))); // modest k for small n
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 200);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 5);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 50);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 25);
+            CFG_KNN_K = min(CFG_KNN_K, 50); // modest k for small n
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 8);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 10);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 2000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
-            CFG_KNN_K = min(CFG_KNN_K, max(10, min(n - 1, 25)));
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 100);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 5);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 50);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 25);
+            CFG_KNN_K = min(CFG_KNN_K, 100); // moderate k for medium n
         } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 3);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 10);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 350);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 60);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 5);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 100);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);
             if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 180.0; // default wall-clock budget
-            CFG_KNN_K = min(CFG_KNN_K, max(10, min(n - 1, 20))); // slightly smaller k for very large n
+            CFG_KNN_K = min(CFG_KNN_K, int(n * 0.5)); // slightly smaller k for very large n
         }
     }
 
@@ -2609,7 +2299,7 @@ int main(int argc, char* argv[]) {
 
     // Pre-filter dronable customers by capacity/energy
     update_served_by_drone();
-    
+
     // Track best across attempts
     bool have_best = false;
     Solution best_overall_sol;
@@ -2645,12 +2335,10 @@ int main(int argc, char* argv[]) {
         bool final_feas = true;
         for (const vi &r : best_overall_sol.truck_routes) {
             auto [t, feas] = check_route_feasibility(r, 0.0, true);
-            cout << "Truck route time: " << t << "\n";
             if (!feas) { final_feas = false; break; }
         }
         for (const vi &r : best_overall_sol.drone_routes) {
             auto [t, feas] = check_route_feasibility(r, 0.0, false);
-            cout << "Drone route time: " << t << "\n";
             if (!feas) { final_feas = false; break; }
         }
         if (final_feas) {
