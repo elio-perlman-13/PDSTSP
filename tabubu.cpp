@@ -2277,19 +2277,19 @@ int main(int argc, char* argv[]) {
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 20);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 50);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 25);
-            CFG_KNN_K = min(CFG_KNN_K, int(n/2)); // modest k for small n
+            CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
         } else if (n <= 100) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 100);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 10);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 100);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 25);
-            CFG_KNN_K = min(CFG_KNN_K, int(n/2)); // moderate k for medium n
+            CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
         } else {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 2);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 20);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
-            CFG_KNN_K = min(CFG_KNN_K, int(n/2)); // slightly smaller k for very large n
+            CFG_KNN_K = min(CFG_KNN_K, int(n)); // slightly smaller k for very large n
         }
     }
 
