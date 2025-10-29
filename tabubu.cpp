@@ -72,8 +72,8 @@ static vector<vector<int>> tabu_list_2opt; // sized (n+1) x (n+1)
 static int TABU_TENURE_2OPT = 5; // default tenure for 2-opt moves
 const int NUM_NEIGHBORHOODS = 5;
 const int NUM_OF_INITIAL_SOLUTIONS = 200;
-const int MAX_SEGMENT = 20;
-const int MAX_NO_IMPROVE = 100;
+const int MAX_SEGMENT = 200;
+const int MAX_NO_IMPROVE = 1000;
 const int MAX_ITER_PER_SEGMENT = 1000;
 const double gamma1 = 1.0;
 const double gamma2 = 0.3;
@@ -1452,7 +1452,8 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                 tabu_list_switch[best_cust][best_target] = current_iter + TABU_TENURE_RELOCATE;
             }
             // Debug: print chosen relocate move
-            //cout.setf(std::ios::fixed); cout << setprecision(6); 
+            //cout.setf(std::ios::fixed); cout << setprecision(6);
+            // cout << "[N0] Relocate customer " << best_cust << " to vehicle " << best_target << " at pos " << best_pos << "; New makespan: " << best_candidate_neighbor.total_makespan << "\n";
             return best_candidate_neighbor;
         }
         else {
@@ -1575,10 +1576,10 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
         best_local.total_makespan = nb_makespan;
 
         // Debug: print chosen swap move when available
-        /*    cout.setf(std::ios::fixed); cout << setprecision(6);
+        /*     cout.setf(std::ios::fixed); cout << setprecision(6);
             cout << "[N1] swap from crit vehicle " << (crit_is_truck ? "truck" : "drone") << " #" << critical_idx
                  << ", makespan: " << initial_solution.total_makespan << " -> " << best_local.total_makespan
-                 << ", iter " << current_iter << "\n";*/
+                 << ", iter " << current_iter << "\n"; */
        if (best_local.total_makespan > initial_solution.total_makespan)
             return initial_solution;
         return best_local;
@@ -1718,15 +1719,15 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
         tabu_list_reinsert[cust][veh_id_unified] = current_iter + TABU_TENURE_REINSERT;
 
         // Debug: print chosen reinsert move when available
-         if (cust != -1) {
+        /*  if (cust != -1) {
             cout.setf(std::ios::fixed); cout << setprecision(6);
             bool is_truck = veh_id_unified < h;
-        /*    cout << "[N2] reinsert cust " << cust << " within "
+            cout << "[N2] reinsert cust " << cust << " within "
                  << (is_truck ? "truck" : "drone") << " #"
                  << (is_truck ? (veh_id_unified + 1) : (veh_id_unified - h + 1))
                  << ", makespan: " << initial_solution.total_makespan << " -> " << best_local.total_makespan
-                 << ", iter " << current_iter << "\n";*/
-        }
+                 << ", iter " << current_iter << "\n";
+        } */
 
         return neighbor;
     } else if (neighbor_id == 3) {
@@ -1828,13 +1829,13 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
 
             tabu_list_2opt[best_u][best_v] = current_iter + TABU_TENURE_2OPT;
             // Debug: print chosen 2-opt move
-            /* if (best_u != -1 && best_v != -1) {
+            /*  if (best_u != -1 && best_v != -1) {
                 cout.setf(std::ios::fixed); cout << setprecision(6);
                 cout << "[N3] 2-opt on " << (best_is_truck ? "truck" : "drone") << " #" << (best_route_idx + 1)
                      << " between positions " << best_i << " and " << best_j
                      << ", makespan: " << initial_solution.total_makespan << " -> " << neighbor.total_makespan
                      << ", iter " << current_iter << "\n";
-            } */
+            }  */
 
             return neighbor;
         }
@@ -2040,7 +2041,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                  << " cutB (" << best_ub << "," << best_vb << ")"
                  << " on routes " << (best_idxA + 1) << " and " << (best_idxB + 1)
                  << ", makespan: " << initial_solution.total_makespan << " -> " << best_local.total_makespan
-                 << ", iter " << current_iter << "\n"; */
+                 << ", iter " << current_iter << "\n";  */
             return best_local;
         }
 
@@ -2109,7 +2110,6 @@ Solution tabu_search(const Solution& initial_solution) {
                 current_sol = neighbor;
                 current_cost = neighbor.total_makespan;
                 score[selected_neighbor] += gamma2;
-                no_improve_iters = 0;
             } else {
                 // Simulated annealing acceptance
                 double T = T0 * pow(alpha, iter);
@@ -2272,25 +2272,24 @@ int main(int argc, char* argv[]) {
     // For now, set auto-tune to always true
     auto_tune = true;
     if (auto_tune) {
-        if (n <= 50) {
+        if (n <= 20) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 200);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 5);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 20);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 50);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 25);
-            CFG_KNN_K = min(CFG_KNN_K, 50); // modest k for small n
-        } else if (n <= 200) {
+            CFG_KNN_K = min(CFG_KNN_K, int(n/2)); // modest k for small n
+        } else if (n <= 100) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 100);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 5);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 50);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 25);
-            CFG_KNN_K = min(CFG_KNN_K, 100); // moderate k for medium n
-        } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 5);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 10);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 100);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);
-            if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 180.0; // default wall-clock budget
-            CFG_KNN_K = min(CFG_KNN_K, int(n * 0.5)); // slightly smaller k for very large n
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 25);
+            CFG_KNN_K = min(CFG_KNN_K, int(n/2)); // moderate k for medium n
+        } else {
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 2);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 20);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
+            CFG_KNN_K = min(CFG_KNN_K, int(n/2)); // slightly smaller k for very large n
         }
     }
 
