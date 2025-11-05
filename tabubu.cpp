@@ -69,12 +69,14 @@ static vector<vector<int>> tabu_list_reinsert; // sized (n+1) x (h + d)
 static int TABU_TENURE_REINSERT = 20; // default tenure for reinsert moves
 // Separate tabu list for 2-opt moves: keyed by segment endpoints (min_id,max_id)
 static vector<vector<int>> tabu_list_2opt; // sized (n+1) x (n+1)
-static int TABU_TENURE_2OPT = 20; // default tenure for 2-opt moves
-static map<vector<int>, int> tabu_list_21;; // keyed by (a,b,c,d) for (2,1) moves
+static int TABU_TENURE_2OPT = 25; // default tenure for 2-opt moves
+static map<vector<int>, int> tabu_list_21; // keyed by (a,b,c,d) for (2,1) moves
 static int TABU_TENURE_21 = 20; // default tenure for (2,1) moves
 static map<vector<int>, int> tabu_list_22;; // keyed by (a,b,c,d) for (2,2) moves
 static int TABU_TENURE_22 = 20; // default tenure for (2,2) moves
-const int NUM_NEIGHBORHOODS = 7;
+static map<vector<int>, int> tabu_list_ejection; // keyed by sorted customer sequence
+static int TABU_TENURE_EJECTION = 50; // default tenure for ejection chain moves
+const int NUM_NEIGHBORHOODS = 8;
 const int NUM_OF_INITIAL_SOLUTIONS = 200;
 const int MAX_SEGMENT = 200;
 const int MAX_NO_IMPROVE = 1000;
@@ -82,7 +84,7 @@ const int MAX_ITER_PER_SEGMENT = 1000;
 const double gamma1 = 1.0;
 const double gamma2 = 0.3;
 const double gamma3 = 0.0;
-const double gamma4 = 0.5;
+const double gamma4 = 0.3;
 
 // Runtime-configurable search knobs (initialized from compile-time defaults)
 static int CFG_NUM_INITIAL = NUM_OF_INITIAL_SOLUTIONS;
@@ -2999,6 +3001,214 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
             // no feasible swap found
             return initial_solution;
         }
+    } else if (neighbor_id == 7) {
+        // Neighborhood 7: Ejection chain (depth-2: remove from i, insert to j ejecting customer, insert ejected to k)
+        // This is a 3-route coordinated move: route_i → route_j → route_k
+        
+        Solution best_local = initial_solution;
+        vector<int> best_tabu_key;
+        double best_local_cost = 1e10;
+        double best_local_sum_times = 1e10;
+        
+        // Maximum chain exploration to avoid exponential complexity
+        const int MAX_ROUTE_TRIPLETS = min(50, (h + d) * (h + d - 1) * (h + d - 2) / 6);
+        int triplets_evaluated = 0;
+        
+        // Build unified vehicle indexing: 0..h-1 trucks, h..h+d-1 drones
+        auto get_route = [&](int veh_id) -> const vi& {
+            return (veh_id < h) ? initial_solution.truck_routes[veh_id]
+                                : initial_solution.drone_routes[veh_id - h];
+        };
+        
+        auto is_truck_veh = [&](int veh_id) -> bool {
+            return veh_id < h;
+        };
+        
+        // Lambda to normalize routes (ensure depot endpoints, collapse consecutive depots)
+        auto normalize_route = [](vi& r) {
+            if (r.empty() || r.front() != 0) r.insert(r.begin(), 0);
+            if (r.back() != 0) r.push_back(0);
+            if (r.size() >= 2) {
+                vi tmp; tmp.reserve(r.size());
+                for (int x : r) {
+                    if (!tmp.empty() && tmp.back() == 0 && x == 0) continue;
+                    tmp.push_back(x);
+                }
+                r.swap(tmp);
+            }
+        };
+        
+        // Enumerate all route triplets (i, j, k) where i ≠ j ≠ k
+        for (int veh_i = 0; veh_i < h + d && triplets_evaluated < MAX_ROUTE_TRIPLETS; ++veh_i) {
+            const vi& route_i = get_route(veh_i);
+            if (route_i.size() <= 2) continue; // need at least one customer to remove
+            
+            // Collect non-depot customers from route_i
+            vector<int> cust_i;
+            for (int c : route_i) if (c != 0) cust_i.push_back(c);
+            if (cust_i.empty()) continue;
+            
+            for (int veh_j = 0; veh_j < h + d && triplets_evaluated < MAX_ROUTE_TRIPLETS; ++veh_j) {
+                if (veh_j == veh_i) continue;
+                const vi& route_j = get_route(veh_j);
+                if (route_j.size() <= 1) continue; // need space to insert
+                
+                // Collect non-depot customers from route_j
+                vector<int> cust_j;
+                for (int c : route_j) if (c != 0) cust_j.push_back(c);
+                
+                for (int veh_k = 0; veh_k < h + d && triplets_evaluated < MAX_ROUTE_TRIPLETS; ++veh_k) {
+                    if (veh_k == veh_i || veh_k == veh_j) continue;
+                    const vi& route_k = get_route(veh_k);
+                    if (route_k.size() <= 1) continue; // need space to insert
+                    
+                    ++triplets_evaluated;
+                    
+                    // Try removing each customer from route_i
+                    for (int cust_removed : cust_i) {
+                        // KNN filter: only consider if removed customer is near some customer in route_j
+                        bool near_j = false;
+                        if (!KNN_ADJ.empty() && KNN_ADJ.size() > (size_t)cust_removed) {
+                            for (int c : cust_j) {
+                                if (KNN_ADJ[cust_removed].size() > (size_t)c && KNN_ADJ[cust_removed][c]) {
+                                    near_j = true;
+                                    break;
+                                }
+                            }
+                            if (!near_j && !cust_j.empty()) continue;
+                        }
+                        
+                        // Remove customer from route_i
+                        vi new_route_i = route_i;
+                        auto it_i = find(new_route_i.begin(), new_route_i.end(), cust_removed);
+                        if (it_i == new_route_i.end()) continue;
+                        new_route_i.erase(it_i);
+                        normalize_route(new_route_i);
+                        
+                        // Check feasibility of reduced route_i
+                        auto [t_i, feas_i] = check_route_feasibility(new_route_i, 0.0, is_truck_veh(veh_i));
+                        if (!feas_i) continue;
+                        
+                        // Try inserting cust_removed into route_j at each position (potentially ejecting existing customer)
+                        for (size_t pos_j = 0; pos_j < cust_j.size(); ++pos_j) {
+                            int cust_ejected = cust_j[pos_j];
+                            
+                            // KNN filter: check if removed customer is near ejected customer
+                            if (!KNN_ADJ.empty() && KNN_ADJ.size() > (size_t)cust_removed) {
+                                if (!(KNN_ADJ[cust_removed].size() > (size_t)cust_ejected && 
+                                      KNN_ADJ[cust_removed][cust_ejected])) {
+                                    continue;
+                                }
+                            }
+                            
+                            // Build route_j with cust_removed replacing cust_ejected at position
+                            vi new_route_j = route_j;
+                            auto it_j = find(new_route_j.begin(), new_route_j.end(), cust_ejected);
+                            if (it_j == new_route_j.end()) continue;
+                            *it_j = cust_removed; // replace ejected customer with removed customer
+                            normalize_route(new_route_j);
+                            
+                            // Check feasibility of modified route_j
+                            auto [t_j, feas_j] = check_route_feasibility(new_route_j, 0.0, is_truck_veh(veh_j));
+                            if (!feas_j) continue;
+                            
+                            // Try inserting ejected customer into route_k at all positions
+                            vi new_route_k = route_k;
+                            // Try insertion at position 1 (after first depot)
+                            for (int ins_pos_k = 1; ins_pos_k <= (int)new_route_k.size(); ++ins_pos_k) {
+                                vi test_route_k = route_k;
+                                int ip = min(max(ins_pos_k, 1), (int)test_route_k.size());
+                                test_route_k.insert(test_route_k.begin() + ip, cust_ejected);
+                                normalize_route(test_route_k);
+                                
+                                // Check feasibility of modified route_k
+                                auto [t_k, feas_k] = check_route_feasibility(test_route_k, 0.0, is_truck_veh(veh_k));
+                                if (!feas_k) continue;
+                                
+                                // Construct candidate solution
+                                Solution candidate = initial_solution;
+                                if (is_truck_veh(veh_i)) candidate.truck_routes[veh_i] = new_route_i;
+                                else candidate.drone_routes[veh_i - h] = new_route_i;
+                                
+                                if (is_truck_veh(veh_j)) candidate.truck_routes[veh_j] = new_route_j;
+                                else candidate.drone_routes[veh_j - h] = new_route_j;
+                                
+                                if (is_truck_veh(veh_k)) candidate.truck_routes[veh_k] = test_route_k;
+                                else candidate.drone_routes[veh_k - h] = test_route_k;
+                                
+                                // Update times for modified routes
+                                candidate.truck_route_times = initial_solution.truck_route_times;
+                                candidate.drone_route_times = initial_solution.drone_route_times;
+                                
+                                if (is_truck_veh(veh_i)) candidate.truck_route_times[veh_i] = (new_route_i.size() > 1) ? t_i : 0.0;
+                                else candidate.drone_route_times[veh_i - h] = (new_route_i.size() > 1) ? t_i : 0.0;
+                                
+                                if (is_truck_veh(veh_j)) candidate.truck_route_times[veh_j] = (new_route_j.size() > 1) ? t_j : 0.0;
+                                else candidate.drone_route_times[veh_j - h] = (new_route_j.size() > 1) ? t_j : 0.0;
+                                
+                                if (is_truck_veh(veh_k)) candidate.truck_route_times[veh_k] = (test_route_k.size() > 1) ? t_k : 0.0;
+                                else candidate.drone_route_times[veh_k - h] = (test_route_k.size() > 1) ? t_k : 0.0;
+                                
+                                // Compute makespan
+                                double nb_makespan = 0.0;
+                                for (double t : candidate.truck_route_times) nb_makespan = max(nb_makespan, t);
+                                for (double t : candidate.drone_route_times) nb_makespan = max(nb_makespan, t);
+                                candidate.total_makespan = nb_makespan;
+                                
+                                // Build tabu key: sorted pair of relocated customers
+                                vector<int> tabu_key = {cust_removed, cust_ejected};
+                                sort(tabu_key.begin(), tabu_key.end());
+                                
+                                // Check tabu status
+                                bool is_tabu = (tabu_list_ejection.count(tabu_key) > 0 && 
+                                               tabu_list_ejection[tabu_key] >= current_iter);
+                                
+                                // Aspiration criterion: accept if improving global best
+                                if (is_tabu && candidate.total_makespan >= best_cost) continue;
+                                
+                                // Update best if improved
+                                if (candidate.total_makespan < best_local_cost) {
+                                    best_local_cost = candidate.total_makespan;
+                                    best_local_sum_times = t_i + t_j + t_k;
+                                    best_local = candidate;
+                                    best_tabu_key = tabu_key;
+                                }
+                                // tie-breaker: smaller sum of modified routes' times
+                                else if (candidate.total_makespan == best_local_cost) {
+                                    double sum_times_candidate = t_i + t_j + t_k;
+                                    double sum_times_best = best_local_sum_times;
+                                    if (sum_times_candidate < sum_times_best) {
+                                        best_local = candidate;
+                                        best_tabu_key = tabu_key;
+                                        best_local_sum_times = sum_times_candidate;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Apply best ejection chain found
+        if (!best_tabu_key.empty() && best_local_cost < 1e10) {
+            tabu_list_ejection[best_tabu_key] = current_iter + TABU_TENURE_EJECTION;
+            
+            // Debug output - uncomment to trace ejection chain moves
+            /* cout.setf(std::ios::fixed); cout << setprecision(6);
+            cout << "[N7] Ejection chain: customers [";
+            for (size_t i = 0; i < best_tabu_key.size(); ++i) {
+                if (i > 0) cout << ", ";
+                cout << best_tabu_key[i];
+            }
+            cout << "], makespan: " << initial_solution.total_makespan 
+                 << " -> " << best_local.total_makespan
+                 << ", iter " << current_iter << "\n";
+             */
+            return best_local;
+        }
+        
+        return initial_solution; // no improving ejection chain found
     }
     return initial_solution; // should not reach here
 }
@@ -3021,7 +3231,7 @@ Solution tabu_search(const Solution& initial_solution) {
         int iter = 1;
         int no_improve_iters = 0;
         double T0 = 100.0; // initial temperature for simulated annealing acceptance
-        double alpha = 0.995; // cooling rate
+        double alpha = 0.998; // cooling rate
     // Reset tabu lists at the start of each segment (iteration counter restarts per segment)
         tabu_list_switch.clear();
         tabu_list_swap.clear();
@@ -3244,13 +3454,13 @@ int main(int argc, char* argv[]) {
         } else if (n <= 100) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 10);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 400);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 25);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
         } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 2);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 20);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 2000);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // slightly smaller k for very large n
         }
