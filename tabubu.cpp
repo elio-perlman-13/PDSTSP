@@ -1750,6 +1750,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                 vi reduced = orig_norm;
                 reduced.erase(reduced.begin() + p); // removes c1
                 reduced.erase(reduced.begin() + p); // removes c2 (now at same index)
+                reduced = normalize_route(reduced);
                 vd reduced_metrics = is_truck_mode
                     ? check_route_feasibility(reduced, 0.0, true)
                     : check_route_feasibility(reduced, 0.0, false);
@@ -2049,6 +2050,18 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
         int best_i = -1, best_j = -1;
         bool best_is_truck = crit_is_truck;
 
+        auto normalize_route = [](vi r) -> vi {
+            if (r.empty()) return r;
+            if (r.front() != 0) r.insert(r.begin(), 0);
+            if (r.back() != 0) r.push_back(0);
+            vi cleaned; cleaned.reserve(r.size());
+            for (int node : r) {
+                if (!cleaned.empty() && cleaned.back() == 0 && node == 0) continue;
+                cleaned.push_back(node);
+            }
+            return cleaned;
+        };
+
         auto consider_2opt = [&](const vi& base_route, bool is_truck_mode, int route_idx) {
             if (base_route.size() <= 3) return;
 
@@ -2067,6 +2080,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                         reverse(new_route.begin() + i, new_route.begin() + j + 1);
                         if (new_route == base_route) continue;
 
+                        new_route = normalize_route(new_route);
                         vd new_metrics = check_route_feasibility(new_route, 0.0, is_truck_mode);
                         int u = min(base_route[i], base_route[j]);
                         int v = max(base_route[i], base_route[j]);
@@ -2308,6 +2322,19 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
         int best_other_vehicle = -1;
         bool best_other_is_truck = true;
 
+        auto normalize_route = [](vi route) {
+            if (route.empty()) return route;
+            if (route.front() != 0) route.insert(route.begin(), 0);
+            if (route.back() != 0) route.push_back(0);
+            vi cleaned;
+            cleaned.reserve(route.size());
+            for (int node : route) {
+                if (!cleaned.empty() && cleaned.back() == 0 && node == 0) continue;
+                cleaned.push_back(node);
+            }
+            return cleaned;
+        };
+
         auto consider_pair_vs_single = [&](const vi& crit_route, bool crit_mode_truck, int crit_route_idx) {
             if (crit_route.size() <= 3) return;
 
@@ -2357,11 +2384,13 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                         crit_new.erase(crit_new.begin() + pair_idx);
                         crit_new.erase(crit_new.begin() + pair_idx);
                         crit_new.insert(crit_new.begin() + pair_idx, single);
+                        crit_new = normalize_route(crit_new);
 
                         vi target_new = target_route;
                         target_new.erase(target_new.begin() + pos_single);
                         target_new.insert(target_new.begin() + pos_single, c1);
                         target_new.insert(target_new.begin() + pos_single + 1, c2);
+                        target_new = normalize_route(target_new);
 
                         vd crit_new_metrics = check_route_feasibility(crit_new, 0.0, crit_mode_truck);
                         vd target_new_metrics = check_route_feasibility(target_new, 0.0, target_is_truck);
@@ -2468,11 +2497,13 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                         crit_new.erase(crit_new.begin() + single_idx);
                         crit_new.insert(crit_new.begin() + single_idx, b1);
                         crit_new.insert(crit_new.begin() + single_idx + 1, b2);
+                        crit_new = normalize_route(crit_new);
 
                         vi target_new = target_route;
                         target_new.erase(target_new.begin() + pair_idx);
                         target_new.erase(target_new.begin() + pair_idx);
                         target_new.insert(target_new.begin() + pair_idx, single);
+                        target_new = normalize_route(target_new);
 
                         vd crit_new_metrics = check_route_feasibility(crit_new, 0.0, crit_mode_truck);
                         vd target_new_metrics = check_route_feasibility(target_new, 0.0, target_is_truck);
@@ -2580,6 +2611,19 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
             return starts;
         };
 
+        auto normalize_route = [](vi route) {
+            if (route.empty()) return route;
+            if (route.front() != 0) route.insert(route.begin(), 0);
+            if (route.back() != 0) route.push_back(0);
+            vi cleaned;
+            cleaned.reserve(route.size());
+            for (int node : route) {
+                if (!cleaned.empty() && cleaned.back() == 0 && node == 0) continue;
+                cleaned.push_back(node);
+            }
+            return cleaned;
+        };
+
         auto near_enough = [&](int u, int v) {
             return !KNN_ADJ.empty() && KNN_ADJ.size() > (size_t)u &&
                    KNN_ADJ[u].size() > (size_t)v && KNN_ADJ[u][v];
@@ -2649,6 +2693,8 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             target_new[q] = a1;
                             target_new[q + 1] = a2;
                         }
+                        base_new = normalize_route(base_new);
+                        target_new = normalize_route(target_new);
 
                         vd base_new_metrics = check_route_feasibility(base_new, 0.0, base_is_truck);
                         vd target_new_metrics;
@@ -3442,7 +3488,7 @@ Solution tabu_search(const Solution& initial_solution) {
                 no_improve_iters = 0;
                 int local_iter = 0;
                 for (int i = 0; i < EJECTION_CHAIN_ITERS; ++i) {
-                    current_sol = local_search(current_sol, 7, local_iter, best_solution_score_now);
+                    current_sol = local_search(current_sol, 0, local_iter, best_solution_score_now);
                     current_cost = current_sol.total_makespan;
                     if (is_feasible(current_sol) &&
                         current_sol.total_makespan + 1e-12 < best_feasible_makespan) {

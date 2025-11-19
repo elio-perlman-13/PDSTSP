@@ -44,7 +44,7 @@ jobs:
     strategy:
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
-      max-parallel: 6
+      max-parallel: 10
     runs-on: ubuntu-latest
     timeout-minutes: 350   # near 6h limit per job; tune as needed
     steps:
@@ -78,7 +78,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.base }}-tabubu-results
-          path: outputs/
+          # upload only the solver best output for this instance (avoid other files)
+          # ensure we upload only this job's instance best file
+          path: |
+            outputs/${{ matrix.base }}_best.txt
+            outputs/${{ matrix.base }}.txt
+          if-no-files-found: warn
 
   collect-all:
     name: Collect and compress all artifacts
@@ -100,16 +105,12 @@ jobs:
         run: |
           rm -rf summary || true
           mkdir -p summary
+          # copy only per-instance *_best.txt into per-artifact subfolders
           for a in all_artifacts/*; do
             name=$(basename "$a")
-            # If artifact contains a single directory or files, copy them under summary/name
             mkdir -p "summary/$name"
-            if [ -d "$a" ]; then
-              cp -r "$a"/* "summary/$name/" 2>/dev/null || true
-            else
-              # copy files directly
-              cp -r "$a" "summary/$name/" 2>/dev/null || true
-            fi
+            # copy only files ending with _best.txt
+            find "$a" -type f -name '*_best.txt' -exec cp {} "summary/$name/" \; || true
           done
 
       - name: Create final compressed summary
