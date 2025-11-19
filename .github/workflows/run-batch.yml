@@ -42,7 +42,8 @@ jobs:
     needs: prepare
     # dynamic matrix produced from the prepare job
     strategy:
-      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
       max-parallel: 6
     runs-on: ubuntu-latest
     timeout-minutes: 350   # near 6h limit per job; tune as needed
