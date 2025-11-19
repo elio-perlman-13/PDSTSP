@@ -1,10 +1,10 @@
-Initial solution cost: 8346.801820
-Improved solution cost: 6469.042593
-Elapsed time: 3.323765 seconds
+Initial solution cost: 10533.650775
+Improved solution cost: 5738.066783
+Elapsed time: 1.677717 seconds
 Final solution feasibility: FEASIBLE
 Solution Details:
 Truck Routes:
-Truck 1: 0 6 3 2 1 0 7 9 8 10 4 0 |Truck Time: 6469.042593|6469.042593,0.000000,0.000000,0.000000
+Truck 1: 0 5 2 9 6 3 8 0 10 0 |Truck Time: 5738.066783|5738.066783,0.000000,0.000000,0.000000
 Drone Routes:
-Drone 1: 0 5 0 |Drone Time: 423.120599|423.120599,0.000000,0.000000,0.000000
-Total validation: Makespan=6469.042593, Deadline violation=0.000000, Energy violation=0.000000, Capacity violation=0.000000
+Drone 1: 0 7 1 0 4 0 |Drone Time: 1001.125692|1001.125692,0.000000,0.000000,0.000000
+Total validation: Makespan=5738.066783, Deadline violation=0.000000, Energy violation=0.000000, Capacity violation=0.000000
