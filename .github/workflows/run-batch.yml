@@ -1,40 +1,78 @@
-name: Run PDSTSP batch
+name: Run tabubu per instance
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
     paths:
-      - 'tabubu.cpp'
-      - 'scripts/**'
       - 'instance/**'
 
 jobs:
-  batch:
+  prepare:
+    name: Prepare matrix
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Build JSON matrix from instance/*.txt
+        id: set-matrix
+        run: |
+          items=()
+          for f in instance/*.txt; do
+            if [ -f "$f" ]; then
+              base=$(basename "$f" .txt)
+              # escape quotes in path just in case
+              file=$(printf '%s' "$f" | sed 's/"/\\"/g')
+              base=$(printf '%s' "$base" | sed 's/"/\\"/g')
+              items+=("{\"file\":\"$file\",\"base\":\"$base\"}")
+            fi
+          done
+          if [ ${#items[@]} -eq 0 ]; then
+            echo "No instance files found under instance/"; exit 1
+          fi
+          matrix="[${items[*]}]"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  run-instance:
+    name: Run instance ${{ matrix.base }}
+    needs: prepare
+    # dynamic matrix produced from the prepare job
+    strategy:
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      max-parallel: 6
+    runs-on: ubuntu-latest
+    timeout-minutes: 350   # near 6h limit per job; tune as needed
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-13 python3
+          sudo apt-get install -y build-essential g++-13 jq || sudo apt-get install -y build-essential g++
 
-      - name: Run batch
+      - name: Build solver
         run: |
-          bash scripts/run_batch.sh
+          # prefer g++-13 if available
+          if command -v g++-13 >/dev/null 2>&1; then
+            g++-13 -O3 -std=c++17 -o tabubu tabubu.cpp
+          else
+            g++ -O3 -std=c++17 -o tabubu tabubu.cpp
+          fi
 
-      - name: Summarize results
+      - name: Run tabubu on instance
         run: |
-          python3 scripts/summarize_best.py
+          mkdir -p outputs
+          ./tabubu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
+          # copy solver's best output if created
+          if [[ -f output_solution_best.txt ]]; then
+            cp output_solution_best.txt "outputs/${{ matrix.base }}_best.txt"
+          fi
 
-      - name: Upload outputs artifact
+      - name: Upload per-instance artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pdstsp-outputs
-          path: |
-            outputs/**
-            output_solution_best.txt
-          if-no-files-found: warn
+          name: ${{ matrix.base }}-tabubu-results
+          path: outputs/

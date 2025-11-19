@@ -1,13 +1,14 @@
-Initial solution cost: 25010.611210
-Improved solution cost: 13320.595673
-Elapsed time: 1335.234558 seconds
+Initial solution cost: 23746.846833
+Improved solution cost: 13801.972319
+Elapsed time: 1727.648515 seconds
 Final solution feasibility: FEASIBLE
 Solution Details:
 Truck Routes:
-Truck 1: 0 44 24 19 28 45 0 30 35 6 2 4 36 33 0 21 0 |Truck Time: 13193.577846
-Truck 2: 0 13 37 50 0 20 23 11 10 5 49 25 16 0 22 39 7 3 46 0 |Truck Time: 13320.595673
-Truck 3: 0 47 14 40 38 15 32 0 17 27 8 18 34 48 41 0 1 31 42 12 43 29 0 |Truck Time: 13164.605049
+Truck 1: 0 44 19 24 32 0 43 12 42 31 47 40 0 14 1 17 27 8 0 |Truck Time: 13801.972319|13801.972319,0.000000,0.000000,0.000000
+Truck 2: 0 15 28 45 0 36 4 13 37 50 21 0 20 23 11 10 5 49 25 16 0 |Truck Time: 13800.100725|13800.100725,0.000000,0.000000,0.000000
+Truck 3: 0 41 48 48 34 38 0 35 30 3 7 39 22 29 0 2 6 46 33 0 |Truck Time: 13750.221304|13750.221304,0.000000,0.000000,0.000000
 Drone Routes:
-Drone 1: 0 9 26 0 |Drone Time: 607.391231
-Drone 2: 0 |Drone Time: 0.000000
-Drone 3: 0 |Drone Time: 0.000000
+Drone 1: 0 26 9 0 |Drone Time: 607.391231|607.391231,0.000000,0.000000,0.000000
+Drone 2: 0 |Drone Time: 0.000000|0.000000,0.000000,0.000000,0.000000
+Drone 3: 0 |Drone Time: 0.000000|0.000000,0.000000,0.000000,0.000000
+Total validation: Makespan=13801.972319, Deadline violation=0.000000, Energy violation=0.000000, Capacity violation=0.000000
