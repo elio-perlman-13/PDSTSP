@@ -79,3 +79,45 @@ jobs:
         with:
           name: ${{ matrix.base }}-tabubu-results
           path: outputs/
+
+  collect-all:
+    name: Collect and compress all artifacts
+    runs-on: ubuntu-latest
+    needs: run-instance
+    timeout-minutes: 60
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all_artifacts
+
+      - name: List downloaded artifacts
+        run: |
+          echo "Downloaded artifact dirs:"
+          ls -la all_artifacts || true
+
+      - name: Consolidate into summary directory
+        run: |
+          rm -rf summary || true
+          mkdir -p summary
+          for a in all_artifacts/*; do
+            name=$(basename "$a")
+            # If artifact contains a single directory or files, copy them under summary/name
+            mkdir -p "summary/$name"
+            if [ -d "$a" ]; then
+              cp -r "$a"/* "summary/$name/" 2>/dev/null || true
+            else
+              # copy files directly
+              cp -r "$a" "summary/$name/" 2>/dev/null || true
+            fi
+          done
+
+      - name: Create final compressed summary
+        run: |
+          tar -czf tabubu_all_instances_summary.tar.gz -C summary .
+
+      - name: Upload consolidated summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabubu_all_instances_summary
+          path: tabubu_all_instances_summary.tar.gz
