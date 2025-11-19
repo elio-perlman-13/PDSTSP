@@ -32,8 +32,10 @@ jobs:
           if [ ${#items[@]} -eq 0 ]; then
             echo "No instance files found under instance/"; exit 1
           fi
-          matrix="[${items[*]}]"
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          # join items with commas to produce valid JSON array
+          matrix_json="$(printf '%s,' "${items[@]}")"
+          matrix_json="[${matrix_json%,}]"
+          echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
 
   run-instance:
     name: Run instance ${{ matrix.base }}
