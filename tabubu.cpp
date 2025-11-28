@@ -5077,7 +5077,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
     // Reset tabu lists at the start of each segment (iteration counter restarts per segment)
         while (iter <= CFG_MAX_ITER_PER_SEGMENT) {
             // testing
-            //total_score_iter = false;
+            total_score_iter = false;
             if (CFG_TIME_LIMIT_SEC > 0.0) {
                 double elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - ts_start).count();
                 if (elapsed >= CFG_TIME_LIMIT_SEC) break;
