@@ -44,7 +44,7 @@ jobs:
     strategy:
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
-      max-parallel: 10
+      max-parallel: 64
     runs-on: ubuntu-latest
     timeout-minutes: 350   # near 6h limit per job; tune as needed
     steps:
