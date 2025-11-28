@@ -20,7 +20,7 @@ def read_instance(filename):
         customers.append((x, y, dronable))
     return depot_coords, customers
 
-file_path = '500.40.4.txt'
+file_path = '/workspaces/PDSTSP/instance/50.20.4.txt'
 
 depot, customers = read_instance(file_path)
 
