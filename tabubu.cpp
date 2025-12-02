@@ -311,7 +311,8 @@ pair<double, double> compute_truck_route_time(const vi& route, double start=0) {
                 // Duration from leaving customer to returning to depot
                 double duration = time - visit_times[cust];
                 if (duration > deadline[cust] + 1e-8) {
-                    deadline_feasible += duration - deadline[cust];
+                    double deadline_norm = (deadline[cust] > 1e-6) ? deadline[cust] : 1.0;
+                    deadline_feasible += (duration - deadline[cust]) / deadline_norm;
                 }
             }
             // After returning to depot, reset visit times for customers
@@ -374,7 +375,8 @@ pair<double, double> compute_drone_route_time(const vi& route) {
             for (int cust : customers_since_last_depot) {
                 double duration = time - visit_times[cust];
                 if (duration > deadline[cust] + 1e-8) {
-                    deadline_feasible += duration - deadline[cust];
+                    double deadline_norm = (deadline[cust] > 1e-6) ? deadline[cust] : 1.0;
+                    deadline_feasible += (duration - deadline[cust]) / deadline_norm;
                 }
             }
             for (int cust : customers_since_last_depot) {
@@ -481,7 +483,10 @@ double solution_score(const Solution& sol) {
     double penalty_multiplier = 1.0 + PENALTY_LAMBDA_CAPACITY * sol.capacity_violation
                                 + PENALTY_LAMBDA_ENERGY * sol.energy_violation
                                 + PENALTY_LAMBDA_DEADLINE * sol.deadline_violation;
-    return sol.total_makespan * pow(penalty_multiplier, PENALTY_EXPONENT);
+/*     double total_time = 0.0;
+    for (double t : sol.truck_route_times) total_time += t;
+    for (double t : sol.drone_route_times) total_time += t;    */            
+    return (sol.total_makespan) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
 double solution_score_total_time(const Solution& sol) {
@@ -2256,7 +2261,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
             return cleaned;
         };
 
-        auto consider_pair_vs_single = [&](const vi& crit_route, bool crit_mode_truck, int crit_route_idx) {
+        auto consider_pair_vs_single = [&](const vi& crit_route, bool crit_mode_truck, int crit_global_idx, int crit_route_idx) {
             if (crit_route.size() <= 3) return;
 
             vd crit_metrics = check_route_feasibility(crit_route, 0.0, crit_mode_truck);
@@ -2328,7 +2333,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             candidate.truck_routes[crit_route_idx] = crit_new;
                             candidate.truck_route_times[crit_route_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
                         } else {
-                            int crit_drone_idx = crit_route_idx - h;
+                            int crit_drone_idx = crit_route_idx;
                             if (crit_drone_idx >= 0 && crit_drone_idx < (int)candidate.drone_routes.size()) {
                                 candidate.drone_routes[crit_drone_idx] = crit_new;
                                 candidate.drone_route_times[crit_drone_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
@@ -2338,7 +2343,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             candidate.truck_routes[target_idx] = target_new;
                             candidate.truck_route_times[target_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
                         } else {
-                            int target_drone_idx = target_idx - h;
+                            int target_drone_idx = target_idx;
                             if (target_drone_idx >= 0 && target_drone_idx < (int)candidate.drone_routes.size()) {
                                 candidate.drone_routes[target_drone_idx] = target_new;
                                 candidate.drone_route_times[target_drone_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
@@ -2447,7 +2452,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             candidate.truck_routes[crit_route_idx] = crit_new;
                             candidate.truck_route_times[crit_route_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
                         } else {
-                            int crit_drone_idx = crit_route_idx - h;
+                            int crit_drone_idx = crit_route_idx;
                             if (crit_drone_idx >= 0 && crit_drone_idx < (int)candidate.drone_routes.size()) {
                                 candidate.drone_routes[crit_drone_idx] = crit_new;
                                 candidate.drone_route_times[crit_drone_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
@@ -2457,7 +2462,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             candidate.truck_routes[target_idx] = target_new;
                             candidate.truck_route_times[target_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
                         } else {
-                            int target_drone_idx = target_idx - h;
+                            int target_drone_idx = target_idx;
                             if (target_drone_idx >= 0 && target_drone_idx < (int)candidate.drone_routes.size()) {
                                 candidate.drone_routes[target_drone_idx] = target_new;
                                 candidate.drone_route_times[target_drone_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
@@ -2495,10 +2500,10 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
         };
 
         if (crit_is_truck) {
-            consider_pair_vs_single(initial_solution.truck_routes[critical_idx], true, critical_idx);
+            consider_pair_vs_single(initial_solution.truck_routes[critical_idx], true, critical_idx, critical_idx);
             consider_single_vs_pair(initial_solution.truck_routes[critical_idx], true, critical_idx);
         } else {
-            consider_pair_vs_single(initial_solution.drone_routes[critical_idx], false, critical_idx);
+            consider_pair_vs_single(initial_solution.drone_routes[critical_idx], false, h + critical_idx, critical_idx);
             consider_single_vs_pair(initial_solution.drone_routes[critical_idx], false, critical_idx);
         }
 
@@ -3942,7 +3947,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             return cleaned;
         };
 
-        auto consider_pair_vs_single = [&](const vi& crit_route, bool crit_mode_truck, int crit_route_idx) {
+        auto consider_pair_vs_single = [&](const vi& crit_route, bool crit_mode_truck, int crit_global_idx, int crit_route_idx) {
             if (crit_route.size() <= 3) return;
 
             vd crit_metrics = check_route_feasibility(crit_route, 0.0, crit_mode_truck);
@@ -3960,8 +3965,9 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                 int c2 = crit_route[pair_idx + 1];
 
                 for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                    if (target_veh == (crit_mode_truck ? crit_route_idx : h + crit_route_idx)) continue;
                     bool target_is_truck = target_veh < h;
+                    if (target_veh == crit_global_idx) continue;
+                    
                     if (!target_is_truck && (!served_by_drone[c1] || !served_by_drone[c2])) continue;
 
                     int target_idx = target_is_truck ? target_veh : target_veh - h;
@@ -4014,7 +4020,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             candidate.truck_routes[crit_route_idx] = crit_new;
                             candidate.truck_route_times[crit_route_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
                         } else {
-                            int crit_drone_idx = crit_route_idx - h;
+                            int crit_drone_idx = crit_route_idx;
                             if (crit_drone_idx >= 0 && crit_drone_idx < (int)candidate.drone_routes.size()) {
                                 candidate.drone_routes[crit_drone_idx] = crit_new;
                                 candidate.drone_route_times[crit_drone_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
@@ -4024,7 +4030,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             candidate.truck_routes[target_idx] = target_new;
                             candidate.truck_route_times[target_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
                         } else {
-                            int target_drone_idx = target_idx - h;
+                            int target_drone_idx = target_idx;
                             if (target_drone_idx >= 0 && target_drone_idx < (int)candidate.drone_routes.size()) {
                                 candidate.drone_routes[target_drone_idx] = target_new;
                                 candidate.drone_route_times[target_drone_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
@@ -4061,7 +4067,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             }
         };
 
-        auto consider_single_vs_pair = [&](const vi& crit_route, bool crit_mode_truck, int crit_route_idx) {
+        auto consider_single_vs_pair = [&](const vi& crit_route, bool crit_mode_truck, int crit_global_idx, int crit_route_idx) {
             if (crit_route.size() <= 2) return;
 
             vd crit_metrics = check_route_feasibility(crit_route, 0.0, crit_mode_truck);
@@ -4078,7 +4084,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                 int single = crit_route[single_idx];
 
                 for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                    if (target_veh == (crit_mode_truck ? crit_route_idx : h + crit_route_idx)) continue;
+                    if (target_veh == crit_global_idx) continue;
                     bool target_is_truck = target_veh < h;
                     if (!target_is_truck && !served_by_drone[single]) continue;
 
@@ -4133,7 +4139,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             candidate.truck_routes[crit_route_idx] = crit_new;
                             candidate.truck_route_times[crit_route_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
                         } else {
-                            int crit_drone_idx = crit_route_idx - h;
+                            int crit_drone_idx = crit_route_idx;
                             if (crit_drone_idx >= 0 && crit_drone_idx < (int)candidate.drone_routes.size()) {
                                 candidate.drone_routes[crit_drone_idx] = crit_new;
                                 candidate.drone_route_times[crit_drone_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
@@ -4143,7 +4149,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             candidate.truck_routes[target_idx] = target_new;
                             candidate.truck_route_times[target_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
                         } else {
-                            int target_drone_idx = target_idx - h;
+                            int target_drone_idx = target_idx;
                             if (target_drone_idx >= 0 && target_drone_idx < (int)candidate.drone_routes.size()) {
                                 candidate.drone_routes[target_drone_idx] = target_new;
                                 candidate.drone_route_times[target_drone_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
@@ -4185,8 +4191,9 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             const vi& route = crit_is_truck
                 ? initial_solution.truck_routes[critical_idx]
                 : initial_solution.drone_routes[critical_idx - h];
-            consider_pair_vs_single(route, crit_is_truck, critical_idx);
-            consider_single_vs_pair(route, crit_is_truck, critical_idx);
+            int route_idx = crit_is_truck ? critical_idx : critical_idx - h;
+            consider_pair_vs_single(route, crit_is_truck, critical_idx, route_idx);
+            consider_single_vs_pair(route, crit_is_truck, critical_idx, route_idx);
         }
 
         if (!best_tabu_triple.empty() && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
@@ -4738,10 +4745,43 @@ Solution recalculate_solution(Solution sol) {
         sol.energy_violation += metrics[2];
         sol.capacity_violation += metrics[3];
     }
+
     sol.total_makespan = 0.0;
     for (int t = 0; t < h; ++t) sol.total_makespan = max(sol.total_makespan, sol.truck_route_times[t]);
     for (int t = 0; t < d; ++t) sol.total_makespan = max(sol.total_makespan, sol.drone_route_times[t]);
     return sol;
+}
+
+bool check_solution_integrity(const Solution& sol) {
+    int served_count = 0;
+    vector<bool> served(n + 1, false);
+    for (int i = 0; i < h; ++i) {
+        const vi& route = sol.truck_routes[i];
+        for (size_t j = 0; j < route.size(); ++j) {
+            int customer = route[j];
+            if (customer != 0 && served[customer]){
+                return false;
+            }
+            if (customer != 0 && !served[customer]) {
+                served[customer] = true;
+                served_count++;
+            }
+        }
+    }
+    for (int i = 0; i < d; ++i) {
+        const vi& route = sol.drone_routes[i];
+        for (size_t j = 0; j < route.size(); ++j) {
+            int customer = route[j];
+            if (customer != 0 && served[customer]){
+                return false;
+            }
+            if (customer != 0 && !served[customer]) {
+                served[customer] = true;
+                served_count++;
+            }
+        }
+    }
+    return (served_count == n);
 }
 
 Solution updated_elite_set(const Solution& sol) {
@@ -5077,7 +5117,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
     // Reset tabu lists at the start of each segment (iteration counter restarts per segment)
         while (iter <= CFG_MAX_ITER_PER_SEGMENT) {
             // testing
-            total_score_iter = false;
+            //total_score_iter = false;
             if (CFG_TIME_LIMIT_SEC > 0.0) {
                 double elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - ts_start).count();
                 if (elapsed >= CFG_TIME_LIMIT_SEC) break;
@@ -5116,6 +5156,15 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now);
             }
             else neighbor = local_search(current_sol, selected_neighbor, iter, best_solution_score_now);
+            neighbor = recalculate_solution(neighbor);
+            if (!check_solution_integrity(neighbor)) {
+                cout << "Iter " << iter << ", Selected Neighborhood: " << selected_neighbor << "failed integrity check!\n";
+                cout << "Current Solution:\n";
+                print_solution_stream(current_sol, cout);
+                cout << "Neighbor Solution:\n";
+                print_solution_stream(neighbor, cout);
+                neighbor = current_sol;
+            }
             bool neighbor_feasible = is_feasible(neighbor);
             // Clamp neighbor violation values to zero if they are very small
             if (neighbor.deadline_violation < 1e-8) neighbor.deadline_violation = 0.0;
@@ -5145,7 +5194,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 score[selected_neighbor] += gamma1;
                 no_improve_iters = 0;
                 best_solution_score_now = neighbor_score;
-                //updated_edge_records(neighbor);
+                updated_edge_records(neighbor);
                 //Solution tmp = updated_elite_set(neighbor);
                 total_score_segment = false;
                 /* if (!total_score_iter) cout << "New best sol with makespan " << neighbor.total_makespan << endl;
@@ -5208,7 +5257,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                     cout << "[Restart] from no-improve solution " << tmp.total_makespan << " to elite solution with cost: " << current_sol.total_makespan << " ";
                     current_sol = destroy_and_repair(current_sol);
                     current_cost = current_sol.total_makespan;
-                }*/
+                }
                 int local_iter = 0;
                 for (int i = 0; i < EJECTION_CHAIN_ITERS; ++i) {
                     if (total_score_iter){
@@ -5229,9 +5278,10 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         best_solution_score_now = neighbor_score;
                     }
                     update_penalties(current_sol);
-                    // update he so = 1
                     local_iter++;
-                }
+                }*/
+                current_sol = destroy_and_repair(current_sol);
+                current_cost = current_sol.total_makespan;
                 tabu_list_ejection.clear();
                 break;
                 //cout << "after destroy-and-repair and ejection chain: " << current_sol.total_makespan << "\n";
@@ -5290,17 +5340,45 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
 
         // Debug: print neighborhood weights after each segment
         cout.setf(std::ios::fixed); cout << setprecision(6);
-        //cout << "[Segment " << (segment + 1) << "] weights:";
-        /* for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+        cout << "[Segment " << (segment + 1) << "] weights:";
+         for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
             cout << " w" << i << "=" << weight[i];
         }
-        cout << endl; */
-        //print_solution_stream(current_sol, cout);
+        cout << endl;
+        print_solution_stream(current_sol, cout);
         //print current elite set makespans
         cout << endl;
     }
     if (best_feasible_makespan < std::numeric_limits<double>::infinity()) {
         return best_feasible_solution;
+    }
+    // Post-optimal:
+    // Sort neighborhood by weights descending
+    vector<int> neighborhood_order(NUM_NEIGHBORHOODS);;
+    for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+        neighborhood_order[i] = i;
+    }
+    sort(neighborhood_order.begin(), neighborhood_order.end(), [&](int a, int b) {
+        return weight[a] > weight[b];
+    });
+    // Apply local search on best solution using sorted neighborhoods until no improvement
+    bool improved = true;
+    Solution post_opt_solution = best_solution;
+    while (improved) {
+        improved = false;
+        for (int ni : neighborhood_order) {
+            Solution neighbor = local_search(post_opt_solution, ni, 0, solution_score(best_solution));
+            neighbor = recalculate_solution(neighbor);
+            if (solution_score(neighbor) + 1e-12 < solution_score(post_opt_solution) ||
+                (std::abs(solution_score(neighbor) - solution_score(post_opt_solution)) <= 1e-12 &&
+                 neighbor.total_makespan + 1e-12 < post_opt_solution.total_makespan)) {
+                post_opt_solution = neighbor;
+                improved = true;
+                updated_edge_records(neighbor);
+                //Debug:
+                cout << "Post-opt improved with neighborhood " << ni << " to makespan " << neighbor.total_makespan << "\n";
+            }
+        }
     }
     return best_solution;
 }
@@ -5393,7 +5471,7 @@ int main(int argc, char* argv[]) {
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
         } else if (n <= 100) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);
@@ -5420,6 +5498,8 @@ int main(int argc, char* argv[]) {
         serve_drone[i] = 0.0;
     }
 
+    
+
     // Track best across attempts
     bool have_best = false;
     Solution best_overall_sol;
@@ -5427,7 +5507,7 @@ int main(int argc, char* argv[]) {
     auto start_time = std::chrono::high_resolution_clock::now();
     for (int attempt = 0; attempt < CFG_NUM_INITIAL; ++attempt) {
         Solution initial_solution = generate_initial_solution();
-        
+        print_solution_stream(initial_solution, cout);
         Solution improved_sol = tabu_search(initial_solution, CFG_NUM_INITIAL);
         // Output both to stdout and to file
         cout.setf(std::ios::fixed); cout << setprecision(6);
