@@ -79,7 +79,7 @@ static map<vector<int>, int> tabu_list_22; // keyed by (a,b,c,d) for (2,2) moves
 static int TABU_TENURE_22 = 20; // default tenure for (2,2) moves
 static map<vector<int>, int> tabu_list_ejection; // keyed by sorted customer sequence
 static int TABU_TENURE_EJECTION = 50; // default tenure for ejection chain moves
-const int NUM_NEIGHBORHOODS = 8;
+const int NUM_NEIGHBORHOODS = 9;
 const int NUM_OF_INITIAL_SOLUTIONS = 200;
 const int MAX_SEGMENT = 200;
 const int MAX_NO_IMPROVE = 1000;
@@ -2961,6 +2961,110 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
             return best_neighbor;
         }
         return initial_solution;
+    } else if (neighbor_id == 8) {
+        //Depot pruning with flip
+        Solution best_candidate_neighbor = best_neighbor;
+        double best_neighbor_cost_local = 1e18;
+
+        for (int veh = 0; veh < h + d; ++veh) {
+            bool is_truck = veh < h;
+            const vi& route = is_truck ? initial_solution.truck_routes[veh] 
+                                       : initial_solution.drone_routes[veh - h];
+            if (route.size() < 3) continue;
+
+            vector<int> zeros;
+            for(int i=0; i<route.size(); ++i) if(route[i] == 0) zeros.push_back(i);
+
+            // Iterate over intermediate depots
+            for (size_t z = 1; z < zeros.size() - 1; ++z) {
+                int prev_idx = zeros[z-1];
+                int curr_idx = zeros[z];
+                int next_idx = zeros[z+1];
+
+                // Optimization: Check capacity feasibility before generating routes
+                double total_demand = 0.0;
+                for(int k=prev_idx+1; k<next_idx; ++k) {
+                    if(route[k] != 0) total_demand += demand[route[k]];
+                }
+                if (is_truck) {
+                    if (total_demand > Dh + 1e-9) continue;
+                } else {
+                    if (total_demand > Dd + 1e-9) continue;
+                }
+
+                // 4 configurations:
+                // 0: No flip
+                // 1: Flip Left (prev->curr)
+                // 2: Flip Right (curr->next)
+                // 3: Flip Both
+                for (int opt = 0; opt < 4; ++opt) {
+                    vi new_route;
+                    // Prefix: 0 .. prev_idx
+                    for(int k=0; k<=prev_idx; ++k) new_route.push_back(route[k]);
+                    
+                    // Left Segment
+                    if (opt == 1 || opt == 3) {
+                        for(int k=curr_idx-1; k>prev_idx; --k) new_route.push_back(route[k]);
+                    } else {
+                        for(int k=prev_idx+1; k<curr_idx; ++k) new_route.push_back(route[k]);
+                    }
+                    
+                    // Right Segment
+                    if (opt == 2 || opt == 3) {
+                        for(int k=next_idx-1; k>curr_idx; --k) new_route.push_back(route[k]);
+                    } else {
+                        for(int k=curr_idx+1; k<next_idx; ++k) new_route.push_back(route[k]);
+                    }
+                    
+                    // Suffix: next_idx .. end
+                    for(int k=next_idx; k<route.size(); ++k) new_route.push_back(route[k]);
+                    
+                    // Clean up double zeros
+                    vi cleaned;
+                    for(int node : new_route) {
+                        if(!cleaned.empty() && cleaned.back() == 0 && node == 0) continue;
+                        cleaned.push_back(node);
+                    }
+                    new_route = cleaned;
+
+                    vd new_metrics = check_route_feasibility(new_route, 0.0, is_truck);
+                    
+                    // Strict feasibility check to ensure quality
+                    if (new_metrics[1] > 1e-8 || new_metrics[2] > 1e-8 || new_metrics[3] > 1e-8) continue;
+
+                    vd old_metrics = check_route_feasibility(route, 0.0, is_truck);
+
+                    Solution candidate = initial_solution;
+                    candidate.deadline_violation += new_metrics[1] - old_metrics[1];
+                    candidate.capacity_violation += new_metrics[3] - old_metrics[3];
+                    candidate.energy_violation += new_metrics[2] - old_metrics[2];
+
+                    if (is_truck) {
+                        candidate.truck_routes[veh] = new_route;
+                        candidate.truck_route_times[veh] = (new_route.size() > 1) ? new_metrics[0] : 0.0;
+                    } else {
+                        candidate.drone_routes[veh - h] = new_route;
+                        candidate.drone_route_times[veh - h] = (new_route.size() > 1) ? new_metrics[0] : 0.0;
+                    }
+
+                    candidate.total_makespan = 0.0;
+                    for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
+                    for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
+
+                    double candidate_score = solution_score(candidate);
+                    
+                    if (candidate_score + 1e-8 < best_neighbor_cost_local) {
+                        best_neighbor_cost_local = candidate_score;
+                        best_candidate_neighbor = candidate;
+                    }
+                }
+            }
+        }
+
+        if (best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
+            return best_candidate_neighbor;
+        }
+        return initial_solution;
     }
 // ...existing code...
 return initial_solution;
@@ -3046,7 +3150,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             for (int i = 0; i < (int)candidate.drone_route_times.size(); ++i) {
                                 candidate.total_makespan = max(candidate.total_makespan, candidate.drone_route_times[i]);
                             }
-                            double candidate_score = solution_score(candidate);
+                            double candidate_score = solution_score_total_time(candidate);
                             bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
                                                        candidate.capacity_violation <= 1e-8 &&
                                                        candidate.energy_violation <= 1e-8;
@@ -4653,9 +4757,116 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             return best_neighbor;
         }
         return initial_solution;
+    } else if (neighbor_id == 8) {
+        // Neighborhood 8: Merge Any Two Trips (Trip Fusion) - Total Time Version
+        Solution best_candidate_neighbor = best_neighbor;
+        double best_neighbor_cost_local = 1e18;
+
+        for (int veh = 0; veh < h + d; ++veh) {
+            bool is_truck = veh < h;
+            const vi& route = is_truck ? initial_solution.truck_routes[veh] 
+                                       : initial_solution.drone_routes[veh - h];
+            if (route.size() < 3) continue;
+
+            vector<vector<int>> trips;
+            vector<int> current_trip;
+            for (size_t i = 1; i < route.size(); ++i) {
+                if (route[i] == 0) {
+                    if (!current_trip.empty()) {
+                        trips.push_back(current_trip);
+                        current_trip.clear();
+                    }
+                } else {
+                    current_trip.push_back(route[i]);
+                }
+            }
+            if (!current_trip.empty()) trips.push_back(current_trip);
+
+            if (trips.size() < 2) continue;
+
+            for (int i = 0; i < (int)trips.size(); ++i) {
+                for (int j = i + 1; j < (int)trips.size(); ++j) {
+                    double demand_i = 0;
+                    for(int c : trips[i]) demand_i += demand[c];
+                    double demand_j = 0;
+                    for(int c : trips[j]) demand_j += demand[c];
+                    
+                    if (is_truck) {
+                        if (demand_i + demand_j > Dh + 1e-9) continue;
+                    } else {
+                        if (demand_i + demand_j > Dd + 1e-9) continue;
+                    }
+
+                    for (int opt = 0; opt < 8; ++opt) {
+                        vi merged_trip;
+                        vi ti = trips[i];
+                        vi tj = trips[j];
+
+                        bool i_first = (opt < 4);
+                        int type = opt % 4; 
+                        
+                        vi* first = i_first ? &ti : &tj;
+                        vi* second = i_first ? &tj : &ti;
+                        
+                        bool rev_first = (type == 2 || type == 3);
+                        bool rev_second = (type == 1 || type == 3);
+
+                        if (rev_first) reverse(first->begin(), first->end());
+                        if (rev_second) reverse(second->begin(), second->end());
+
+                        merged_trip.insert(merged_trip.end(), first->begin(), first->end());
+                        merged_trip.insert(merged_trip.end(), second->begin(), second->end());
+
+                        vi new_route;
+                        new_route.push_back(0);
+                        for (int k = 0; k < (int)trips.size(); ++k) {
+                            if (k == j) continue; 
+                            if (k == i) {
+                                new_route.insert(new_route.end(), merged_trip.begin(), merged_trip.end());
+                            } else {
+                                new_route.insert(new_route.end(), trips[k].begin(), trips[k].end());
+                            }
+                            new_route.push_back(0);
+                        }
+
+                        vd new_metrics = check_route_feasibility(new_route, 0.0, is_truck);
+                        if (new_metrics[1] > 1e-8 || new_metrics[2] > 1e-8 || new_metrics[3] > 1e-8) continue;
+
+                        vd old_metrics = check_route_feasibility(route, 0.0, is_truck);
+                        Solution candidate = initial_solution;
+                        candidate.deadline_violation += new_metrics[1] - old_metrics[1];
+                        candidate.capacity_violation += new_metrics[3] - old_metrics[3];
+                        candidate.energy_violation += new_metrics[2] - old_metrics[2];
+
+                        if (is_truck) {
+                            candidate.truck_routes[veh] = new_route;
+                            candidate.truck_route_times[veh] = (new_route.size() > 1) ? new_metrics[0] : 0.0;
+                        } else {
+                            candidate.drone_routes[veh - h] = new_route;
+                            candidate.drone_route_times[veh - h] = (new_route.size() > 1) ? new_metrics[0] : 0.0;
+                        }
+
+                        candidate.total_makespan = 0.0;
+                        for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
+                        for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
+
+                        double candidate_score = solution_score_total_time(candidate);
+                        
+                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
+                            best_neighbor_cost_local = candidate_score;
+                            best_candidate_neighbor = candidate;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
+            return best_candidate_neighbor;
+        }
+        return initial_solution;
     }
-// ...existing code...
-return initial_solution;
+    return initial_solution;
 }
 
 void updated_edge_records(const Solution& sol){
@@ -4810,7 +5021,7 @@ Solution updated_elite_set(const Solution& sol) {
     return tmp;
 }
 
-Solution greedy_insert_customer(Solution sol, int customer) {
+Solution greedy_insert_customer(Solution sol, int customer, bool minimize_delta) {
     Solution best_sol = sol;
     double best_score = 1e18;
     auto try_insert = [&](vi base_route, bool is_truck, int route_idx) {
@@ -4832,7 +5043,24 @@ Solution greedy_insert_customer(Solution sol, int customer) {
             double violation = new_deadline_violation * 1e3 +
                                new_energy_violation * 1e3 +
                                new_capacity_violation * 1e3;
-            double new_score = new_makespan * pow((1.0 + violation), PENALTY_EXPONENT);
+           double objective_val = 0.0;
+            if (minimize_delta) {
+                // Minimize added time (Cheapest Insertion) -> Creates tight clusters
+                double delta = new_metrics[0] - base_metrics[0];
+                
+                // Get the current total time of the vehicle we are considering
+                double current_load = is_truck ? sol.truck_route_times[route_idx] : sol.drone_route_times[route_idx];
+                
+                // Add a tiny penalty based on current load.
+                // If Deltas are equal (common for drones), this forces the algorithm to pick the emptier vehicle.
+                // 1e-4 is small enough not to override true geographic efficiency.
+                objective_val = delta + (current_load * 1e-3);
+            } else {
+                // Minimize global makespan -> Balances load (but can cause crossing)
+                objective_val = new_makespan;
+            }
+
+            double new_score = objective_val * pow((1.0 + violation), PENALTY_EXPONENT);
             if (new_score + 1e-8 < best_score) {
                 best_score = new_score;
                 best_sol = sol;
@@ -4869,7 +5097,24 @@ Solution greedy_insert_customer(Solution sol, int customer) {
             double violation = new_deadline_violation * 1e3 +
                                new_energy_violation * 1e3 +
                                new_capacity_violation * 1e3;
-            double new_score = new_makespan * pow((1.0 + violation), PENALTY_EXPONENT);
+            double objective_val = 0.0;
+            if (minimize_delta) {
+                // Minimize added time (Cheapest Insertion) -> Creates tight clusters
+                double delta = new_metrics[0] - base_metrics[0];
+                
+                // Get the current total time of the vehicle we are considering
+                double current_load = is_truck ? sol.truck_route_times[route_idx] : sol.drone_route_times[route_idx];
+                
+                // Add a tiny penalty based on current load.
+                // If Deltas are equal (common for drones), this forces the algorithm to pick the emptier vehicle.
+                // 1e-4 is small enough not to override true geographic efficiency.
+                objective_val = delta + (current_load * 1e-3);
+            } else {
+                // Minimize global makespan -> Balances load (but can cause crossing)
+                objective_val = new_makespan;
+            }
+
+            double new_score = objective_val * pow((1.0 + violation), PENALTY_EXPONENT);
             if (new_score + 1e-8 < best_score) {
                 best_score = new_score;
                 best_sol = sol;
@@ -4897,51 +5142,31 @@ Solution greedy_insert_customer(Solution sol, int customer) {
 }
 
 Solution destroy_and_repair(Solution sol) {
-    vector<double> scores(n+1, 0.0);
-    for (int i = 0; i < h; ++i) {
-        const vi& route = sol.truck_routes[i];
-        for (size_t j = 1; j + 1 < route.size(); ++j) {
-            int u = route[j - 1];
-            int c = route[j];
-            int v = route[j + 1];
-            scores[c] = edge_records[u][c] + edge_records[c][v];
-        }
-    }
-    for (int i = 0; i < d; ++i) {
-        const vi& route = sol.drone_routes[i];
-        for (size_t j = 1; j + 1 < route.size(); ++j) {
-            int u = route[j - 1];
-            int c = route[j];
-            int v = route[j + 1];
-            scores[c] = edge_records[u][c] + edge_records[c][v];
-        }
-    }
-    for (int i = 1; i <= n; ++i) scores[i] = 1.0 / (1.0 + scores[i]);
-    vector<int> ordered_customers;
-    for (int i = 1; i <= n; ++i) {
-        ordered_customers.push_back(i);
-    }
-    sort(ordered_customers.begin(), ordered_customers.end(), [&](int a, int b) {
-        return scores[a] < scores[b];
-    });
-
+    // [FIX] Use Radial Ruin (Spatial) instead of random/history
+    // This removes a geographic cluster, allowing it to be reassigned to a single vehicle
+    
     unordered_set<int> to_destroy;
-    int destroy_count = static_cast<int>(n * DESTROY_RATE);
+    int destroy_count = static_cast<int>(n * 0.4); // Increased to 40% to break structures
     
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-    std::uniform_int_distribution<int> dist(0, ordered_customers.size() - 1);
-
-    while (to_destroy.size() < destroy_count) {
-        int rand_val = dist(rng);
-        // Bias towards higher-scored customers (at the end of 'ordered_customers')
-        if (rand_val == 0) rand_val = 1;
-        if (ordered_customers.size() > 1) {
-            int index = (static_cast<long long>(rand_val) * rand_val) / (ordered_customers.size() - 1);
-            to_destroy.insert(ordered_customers[index]);
+    std::uniform_int_distribution<int> dist(1, n);
+    
+    // Pick a random center customer
+    int center_cust = dist(rng);
+    to_destroy.insert(center_cust);
+    
+    // Add nearest neighbors to the destroy set
+    if (center_cust <= n && !KNN_LIST[center_cust].empty()) {
+        for (int neighbor : KNN_LIST[center_cust]) {
+            if ((int)to_destroy.size() >= destroy_count) break;
+            to_destroy.insert(neighbor);
         }
-        else {
-            to_destroy.insert(ordered_customers[0]);
-        }
+    }
+    
+    // If we still need more (e.g. K is small), fill randomly
+    while ((int)to_destroy.size() < destroy_count) {
+        int r = dist(rng);
+        to_destroy.insert(r);
     }
 
     Solution new_sol = sol;
@@ -4982,8 +5207,9 @@ Solution destroy_and_repair(Solution sol) {
     vector<int> customers_to_insert(to_destroy.begin(), to_destroy.end());
     std::shuffle(customers_to_insert.begin(), customers_to_insert.end(), rng);
 
+
     for (int cust : customers_to_insert) {
-        new_sol = greedy_insert_customer(new_sol, cust);
+        new_sol = greedy_insert_customer(new_sol, cust, true);
     }
     // Normalize route formats after insertions
     for (int i = 0; i < h; ++i) {
@@ -5112,8 +5338,14 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
         double T0 = 100.0; // initial temperature for simulated annealing acceptance
         double alpha = 0.998; // cooling rate
         bool total_score_iter = total_score_segment;
+        Solution best_segment_sol = current_sol;
+        double best_segment_score = total_score_iter
+            ? solution_score_total_time(best_segment_sol)
+            : solution_score(best_segment_sol);
         //Debug:
-        //cout << "=== Starting Segment " << segment + 1 <<" with searching " << (total_score_iter ? "on all routes" : "on critical route only") << " ===\n";
+        cout << "=== Starting Segment " << segment + 1 <<" with searching " << (total_score_iter ? "on all routes" : "on critical route only") << " ===\n";
+        cout << "Current Solution Score: " << best_segment_score
+             << ", Makespan: " << best_segment_sol.total_makespan << "\n";
     // Reset tabu lists at the start of each segment (iteration counter restarts per segment)
         while (iter <= CFG_MAX_ITER_PER_SEGMENT) {
             // testing
@@ -5228,11 +5460,17 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 best_feasible_solution = neighbor;
                 best_cost = best_feasible_makespan;
             }
+            if (neighbor_score + 1e-12 < best_segment_score ||
+                (std::abs(neighbor_score - best_segment_score) <= 1e-12 &&
+                 neighbor.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
+                best_segment_sol = neighbor;
+                best_segment_score = neighbor_score;
+            }
             update_penalties(current_sol);
             if (no_improve_iters >= CFG_MAX_NO_IMPROVE || iter >= CFG_MAX_ITER_PER_SEGMENT){
                 // Restart from a random elite solution 
-                if (total_score_segment) total_score_segment = false;
-                else total_score_segment = true;
+                if (total_score_iter) total_score_segment = false;
+                else if (no_improve_iters >= CFG_MAX_NO_IMPROVE) total_score_segment = true;
                 tabu_list_10.clear();
                 tabu_list_11.clear();
                 tabu_list_20.clear();
@@ -5345,7 +5583,11 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
             cout << " w" << i << "=" << weight[i];
         }
         cout << endl;
-        print_solution_stream(current_sol, cout);
+        cout << "Best segment solution score: " << best_segment_score
+             << ", Makespan: " << best_segment_sol.total_makespan << "\n";
+        cout << "Current solution score: " << (total_score_segment ? solution_score_total_time(current_sol) : solution_score(current_sol))
+             << ", Makespan: " << current_sol.total_makespan << "\n";
+        print_solution_stream(best_segment_sol, cout);
         //print current elite set makespans
         cout << endl;
     }
@@ -5471,7 +5713,7 @@ int main(int argc, char* argv[]) {
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
         } else if (n <= 100) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);

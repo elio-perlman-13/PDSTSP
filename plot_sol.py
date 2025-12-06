@@ -20,7 +20,7 @@ def read_instance(filename):
         customers.append((x, y, dronable))
     return depot_coords, customers
 
-file_path = '/workspaces/PDSTSP/instance/50.20.3.txt'
+file_path = '/workspaces/PDSTSP/instance/50.20.4.txt'
 
 depot, customers = read_instance(file_path)
 
@@ -287,12 +287,12 @@ def plot_routes(instance_file: str, trucks: List[List[int]], drones: List[List[i
 # --- Entry point ---
 if __name__ == "__main__":
     # 1) Try plotting routes if present
-    trucks, drones = parse_routes_from_output('output.txt')
+    trucks, drones = parse_routes_from_output('output_solution_best.txt')
     if trucks or drones:
         plot_routes(file_path, trucks, drones, savepath='routes_plot.png')
     else:
         # 2) Else try clusters
-        clusters = parse_clusters_from_output('output.txt')
+        clusters = parse_clusters_from_output('output_solution_best.txt')
         if clusters:
             plot_clusters(file_path, clusters, savepath='clusters_plot.png')
         else:
