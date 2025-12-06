@@ -5518,9 +5518,68 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                     update_penalties(current_sol);
                     local_iter++;
                 }*/
-                current_sol = destroy_and_repair(current_sol);
-                current_cost = current_sol.total_makespan;
-                tabu_list_ejection.clear();
+                if (no_improve_iters >= CFG_MAX_NO_IMPROVE){
+                    vector<int> neighborhood_order(NUM_NEIGHBORHOODS);;
+                    for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+                        neighborhood_order[i] = i;
+                    }
+                    sort(neighborhood_order.begin(), neighborhood_order.end(), [&](int a, int b) {
+                        return weight[a] > weight[b];
+                    });
+                    bool improved = true;
+                    while (improved) {
+                        improved = false;
+                        for (int ni : neighborhood_order) {
+                            if (total_score_iter){
+                                Solution neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now);
+                                neighbor = recalculate_solution(neighbor);
+                                if (solution_score_total_time(neighbor) + 1e-12 < solution_score_total_time(current_sol) ||
+                                    (std::abs(solution_score_total_time(neighbor) - solution_score_total_time(current_sol)) <= 1e-12 &&
+                                    neighbor.total_makespan + 1e-12 < current_sol.total_makespan)) {
+                                    current_sol = neighbor;
+                                    improved = true;
+                                    updated_edge_records(neighbor);
+                                }
+                            }
+                            else {
+                                Solution neighbor = local_search(current_sol, ni, 0, solution_score(best_solution));
+                                neighbor = recalculate_solution(neighbor);
+                                if (solution_score(neighbor) + 1e-12 < solution_score(current_sol) ||
+                                    (std::abs(solution_score(neighbor) - solution_score(current_sol)) <= 1e-12 &&
+                                    neighbor.total_makespan + 1e-12 < current_sol.total_makespan)) {
+                                    current_sol = neighbor;
+                                    improved = true;
+                                    updated_edge_records(neighbor);
+                                }
+                            }
+                        }
+                    }
+                    if (is_feasible(current_sol) &&
+                        current_sol.total_makespan + 1e-12 < best_feasible_makespan) {
+                        best_feasible_makespan = current_sol.total_makespan;
+                        best_feasible_solution = current_sol;
+                        best_cost = best_feasible_makespan;
+                    }
+                    if (total_score_iter) {
+                        if (solution_score_total_time(current_sol) + 1e-12 < best_segment_score ||
+                            (std::abs(solution_score_total_time(current_sol) - best_segment_score) <= 1e-12 &&
+                             current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
+                            best_segment_sol = current_sol;
+                            best_segment_score = solution_score_total_time(current_sol);
+                        }
+                    }
+                    else {
+                        if (solution_score(current_sol) + 1e-12 < best_segment_score ||
+                            (std::abs(solution_score(current_sol) - best_segment_score) <= 1e-12 &&
+                             current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
+                            best_segment_sol = current_sol;
+                            best_segment_score = solution_score(current_sol);
+                        }
+                    }
+                    current_sol = destroy_and_repair(current_sol);
+                    current_cost = current_sol.total_makespan;
+                    tabu_list_ejection.clear();
+                }
                 break;
                 //cout << "after destroy-and-repair and ejection chain: " << current_sol.total_makespan << "\n";
             }
@@ -5585,8 +5644,6 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
         cout << endl;
         cout << "Best segment solution score: " << best_segment_score
              << ", Makespan: " << best_segment_sol.total_makespan << "\n";
-        cout << "Current solution score: " << (total_score_segment ? solution_score_total_time(current_sol) : solution_score(current_sol))
-             << ", Makespan: " << current_sol.total_makespan << "\n";
         print_solution_stream(best_segment_sol, cout);
         //print current elite set makespans
         cout << endl;
@@ -5713,7 +5770,7 @@ int main(int argc, char* argv[]) {
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
         } else if (n <= 100) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);
