@@ -5149,21 +5149,67 @@ Solution destroy_and_repair(Solution sol) {
     int destroy_count = static_cast<int>(n * 0.4); // Increased to 40% to break structures
     
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-    std::uniform_int_distribution<int> dist(1, n);
     
-    // Pick a random center customer
-    int center_cust = dist(rng);
-    to_destroy.insert(center_cust);
+    // 1. Identify seeds: one random customer from each non-empty route
+    vector<int> seeds;
     
-    // Add nearest neighbors to the destroy set
-    if (center_cust <= n && !KNN_LIST[center_cust].empty()) {
-        for (int neighbor : KNN_LIST[center_cust]) {
+    auto pick_random_from_route = [&](const vi& route) -> int {
+        vector<int> valid_custs;
+        for (int c : route) {
+            if (c != 0) valid_custs.push_back(c);
+        }
+        if (valid_custs.empty()) return -1;
+        std::uniform_int_distribution<int> d_idx(0, valid_custs.size() - 1);
+        return valid_custs[d_idx(rng)];
+    };
+
+    // Pick seeds from trucks
+    for (int i = 0; i < h; ++i) {
+        int c = pick_random_from_route(sol.truck_routes[i]);
+        if (c != -1 && to_destroy.find(c) == to_destroy.end()) {
+            to_destroy.insert(c);
+            seeds.push_back(c);
+        }
+    }
+    // Pick seeds from drones
+    for (int i = 0; i < d; ++i) {
+        int c = pick_random_from_route(sol.drone_routes[i]);
+        if (c != -1 && to_destroy.find(c) == to_destroy.end()) {
+            to_destroy.insert(c);
+            seeds.push_back(c);
+        }
+    }
+
+    // 2. Expand from seeds (Round-Robin)
+    // We use a vector of indices to track position in KNN list for each seed
+    vector<int> knn_indices(seeds.size(), 0);
+    bool potential_remaining = true;
+
+    while ((int)to_destroy.size() < destroy_count && potential_remaining) {
+        potential_remaining = false;
+        for (size_t i = 0; i < seeds.size(); ++i) {
             if ((int)to_destroy.size() >= destroy_count) break;
-            to_destroy.insert(neighbor);
+            
+            int seed = seeds[i];
+            int& k_idx = knn_indices[i];
+            
+            if (seed <= n && !KNN_LIST[seed].empty()) {
+                // Try to find a neighbor we haven't destroyed yet
+                while (k_idx < (int)KNN_LIST[seed].size()) {
+                    int neighbor = KNN_LIST[seed][k_idx];
+                    k_idx++;
+                    if (to_destroy.find(neighbor) == to_destroy.end()) {
+                        to_destroy.insert(neighbor);
+                        potential_remaining = true; 
+                        break; // Move to next seed to keep it balanced
+                    }
+                }
+            }
         }
     }
     
-    // If we still need more (e.g. K is small), fill randomly
+    // 3. If we still need more (e.g. K is small or few seeds), fill randomly
+    std::uniform_int_distribution<int> dist(1, n);
     while ((int)to_destroy.size() < destroy_count) {
         int r = dist(rng);
         to_destroy.insert(r);

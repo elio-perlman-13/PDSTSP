@@ -1,4 +1,4 @@
-name: Run tabubu per instance
+name: Run tabubu per instance (rr destroy_and_repair version)
 
 on:
   workflow_dispatch:
