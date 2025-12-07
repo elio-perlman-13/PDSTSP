@@ -5703,12 +5703,14 @@ void print_distance_matrix(){
 
 
 
-static bool write_output_file(const std::string& out_path, const Solution& sol, double cost, double elapsed_sec, bool final_feasibility) {
+static bool write_output_file(const std::string& out_path, const Solution& sol, double cost, double elapsed_sec, bool final_feasibility, double worst_cost, double mean_cost) {
     std::ofstream ofs(out_path);
     if (!ofs) return false;
     ofs.setf(std::ios::fixed); ofs << setprecision(6);
     ofs << "Initial solution cost: " << cost << "\n";
     ofs << "Improved solution cost: " << sol.total_makespan << "\n";
+    ofs << "Worst solution cost: " << worst_cost << "\n";
+    ofs << "Mean solution cost: " << mean_cost << "\n";
     ofs << "Elapsed time: " << elapsed_sec << " seconds\n";
     ofs << "Final solution feasibility: " << (final_feasibility ? "FEASIBLE" : "INFEASIBLE") << "\n";
     ofs << "Solution Details:\n";
@@ -5803,6 +5805,9 @@ int main(int argc, char* argv[]) {
     bool have_best = false;
     Solution best_overall_sol;
     double best_overall_initial_cost = 0.0;
+    double worst_overall_cost = -1.0;
+    double sum_overall_cost = 0.0;
+
     auto start_time = std::chrono::high_resolution_clock::now();
     for (int attempt = 0; attempt < CFG_NUM_INITIAL; ++attempt) {
         Solution initial_solution = generate_initial_solution();
@@ -5813,6 +5818,14 @@ int main(int argc, char* argv[]) {
         cout << "Initial Solution Cost: " << initial_solution.total_makespan << "\n";
         cout << "Improved Solution Cost: " << improved_sol.total_makespan << "\n";
         print_solution_stream(improved_sol, cout);
+        
+        // Update stats
+        double current_makespan = improved_sol.total_makespan;
+        sum_overall_cost += current_makespan;
+        if (worst_overall_cost < 0 || current_makespan > worst_overall_cost) {
+            worst_overall_cost = current_makespan;
+        }
+
         // Update best across attempts
         if (!have_best || improved_sol.total_makespan + 1e-12 < best_overall_sol.total_makespan) {
             have_best = true;
@@ -5823,10 +5836,14 @@ int main(int argc, char* argv[]) {
     // Emit best across all attempts
     auto end_time = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration<double>(end_time - start_time).count();
+    double mean_overall_cost = (CFG_NUM_INITIAL > 0) ? (sum_overall_cost / CFG_NUM_INITIAL) : 0.0;
+
     if (have_best) {
         cout << "\n=== Best Across Attempts ===\n";
         cout << "Initial Solution Cost: " << best_overall_initial_cost << "\n";
         cout << "Improved Solution Cost: " << best_overall_sol.total_makespan << "\n";
+        cout << "Worst Solution Cost: " << worst_overall_cost << "\n";
+        cout << "Mean Solution Cost: " << mean_overall_cost << "\n";
         cout << "Elapsed Time: " << elapsed_seconds << " seconds\n";
         print_solution_stream(best_overall_sol, cout);
         // check final feasibility
@@ -5847,7 +5864,7 @@ int main(int argc, char* argv[]) {
             cout << "Final solution feasibility: INFEASIBLE\n";
         }
         string out_best = "output_solution_best.txt";
-        if (write_output_file(out_best, best_overall_sol, best_overall_initial_cost, elapsed_seconds, final_feas)) {
+        if (write_output_file(out_best, best_overall_sol, best_overall_initial_cost, elapsed_seconds, final_feas, worst_overall_cost, mean_overall_cost)) {
             cout << "Best solution written to " << out_best << "\n";
         } else {
             cout << "Failed to write best solution to " << out_best << "\n";
