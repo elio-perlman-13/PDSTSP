@@ -262,7 +262,7 @@ def plot_routes(instance_file: str, trucks: List[List[int]], drones: List[List[i
         draw_route_segments(route, color, lw=2.4, label=f'Truck {i+1}', z=3)
 
     # Plot drones
-    for i, route in enumerate(drones[:0]):
+    for i, route in enumerate(drones):
         color = drone_cmap(i % 8)
         draw_route_segments(route, color, lw=1.8, label=f'Drone {i+1}', z=2)
 

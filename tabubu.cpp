@@ -5807,19 +5807,19 @@ int main(int argc, char* argv[]) {
     if (auto_tune) {
         if (n <= 20) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
         } else if (n <= 200) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
         } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
             CFG_KNN_K = min(CFG_KNN_K, int(n/2)); // slightly smaller k for very large n
