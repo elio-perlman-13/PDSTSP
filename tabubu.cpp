@@ -496,7 +496,7 @@ double solution_score_total_time(const Solution& sol) {
     double total_time = 0.0;
     for (double t : sol.truck_route_times) total_time += t;
     for (double t : sol.drone_route_times) total_time += t;
-    return total_time * pow(penalty_multiplier, PENALTY_EXPONENT);
+    return (total_time + sol.total_makespan) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
 void update_penalties(const Solution& sol) {
@@ -5525,7 +5525,6 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 tabu_list_22.clear();
                 tabu_list_21.clear();
                 tabu_list_ejection.clear();
-                no_improve_iters = 0;
                 /*if (!elite_set.empty()) {
                     // Debug: print restart info
                     Solution tmp = current_sol;
@@ -5622,10 +5621,16 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                             best_segment_score = solution_score(current_sol);
                         }
                     }
-                    //current_sol = destroy_and_repair(current_sol);
-                    //current_cost = current_sol.total_makespan;
+                    cout << "[Restart] after no-improve to local optima with cost: " << current_sol.total_makespan << " ";
+                    print_solution_stream(current_sol, cout);
+                    current_sol = destroy_and_repair(current_sol);
+                    cout << " after destroy-and-repair: " << current_sol.total_makespan << "\n";
+                    print_solution_stream(current_sol, cout);
+                    cout << "\n";
+                    current_cost = current_sol.total_makespan;
                     tabu_list_ejection.clear();
                 }
+                no_improve_iters = 0;
                 break;
                 //cout << "after destroy-and-repair and ejection chain: " << current_sol.total_makespan << "\n";
             }
@@ -5821,10 +5826,10 @@ int main(int argc, char* argv[]) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 50);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
         } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);

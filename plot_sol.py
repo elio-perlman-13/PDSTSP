@@ -20,7 +20,7 @@ def read_instance(filename):
         customers.append((x, y, dronable))
     return depot_coords, customers
 
-file_path = '/workspaces/PDSTSP/instance/50.20.4.txt'
+file_path = '/workspaces/PDSTSP/instance/500.10.4.txt'
 
 depot, customers = read_instance(file_path)
 
@@ -257,12 +257,12 @@ def plot_routes(instance_file: str, trucks: List[List[int]], drones: List[List[i
             plt.plot(xs, ys, '-', color=color, lw=lw, alpha=0.8, zorder=z, label=(label if not placed_label else None))
 
     # Plot trucks
-    for i, route in enumerate(trucks[:3]):
+    for i, route in enumerate(trucks):
         color = truck_cmap(i % 10)
         draw_route_segments(route, color, lw=2.4, label=f'Truck {i+1}', z=3)
 
     # Plot drones
-    for i, route in enumerate(drones[:3]):
+    for i, route in enumerate(drones[:0]):
         color = drone_cmap(i % 8)
         draw_route_segments(route, color, lw=1.8, label=f'Drone {i+1}', z=2)
 
