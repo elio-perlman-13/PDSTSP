@@ -331,6 +331,7 @@ pair<double, double> compute_drone_route_energy(const vi& route) {
     double feasible = 0;
     for (int k = 1; k < (int)route.size(); ++k) {
         int from = route[k-1], to = route[k];
+        if (from == to) continue;
         double dist = distance_matrix[from][to]; // meters
         double v = v_fly_drone; // assume constant speed for simplicity
         double time = dist / v; // seconds
@@ -358,6 +359,7 @@ pair<double, double> compute_drone_route_time(const vi& route) {
     vector<int> customers_since_last_depot;
     for (int k = 1; k < (int)route.size(); ++k) {
         int from = route[k-1], to = route[k];
+        if (from == to) continue;
         double dist = distance_matrix[from][to]; // meters
         double v = v_fly_drone; // assume constant speed for simplicity
         if (v <= 1e-8) v = v_fly_drone;
@@ -2108,17 +2110,17 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
             return segs;
         };
 
-        const vi& crit_route_raw = crit_is_truck
+        vi crit_route_raw = crit_is_truck
             ? initial_solution.truck_routes[critical_idx]
             : initial_solution.drone_routes[critical_idx];
         vi crit_route = normalize_route(crit_route_raw);
-        vd crit_metrics = check_route_feasibility(crit_route, 0.0, crit_is_truck);
+        vd crit_metrics = check_route_feasibility(crit_route_raw, 0.0, crit_is_truck);
         auto crit_segs = enumerate_segments(crit_route);
 
         auto evaluate_two_opt_star = [&](const vi& other_route_raw, bool other_is_truck, int other_idx) {
             vi other_route = normalize_route(other_route_raw);
             if (other_route.size() <= 3) return;
-            vd other_metrics = check_route_feasibility(other_route, 0.0, other_is_truck);
+            vd other_metrics = check_route_feasibility(other_route_raw, 0.0, other_is_truck);
             auto other_segs = enumerate_segments(other_route);
 
             for (const auto& segA : crit_segs) {
@@ -2167,7 +2169,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                                 candidate.truck_routes[critical_idx] = crit_new;
                                 candidate.truck_route_times[critical_idx] = (crit_new.size() > 1) ? crit_metrics_new[0] : 0.0;
                             } else {
-                                int crit_drone_idx = critical_idx - h;
+                                int crit_drone_idx = critical_idx;
                                 if (crit_drone_idx >= 0 && crit_drone_idx < (int)candidate.drone_routes.size()) {
                                     candidate.drone_routes[crit_drone_idx] = crit_new;
                                     candidate.drone_route_times[crit_drone_idx] = (crit_new.size() > 1) ? crit_metrics_new[0] : 0.0;
@@ -2178,7 +2180,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                                 candidate.truck_routes[other_idx] = other_new;
                                 candidate.truck_route_times[other_idx] = (other_new.size() > 1) ? other_metrics_new[0] : 0.0;
                             } else {
-                                int other_drone_idx = other_idx - h;
+                                int other_drone_idx = other_idx;
                                 if (other_drone_idx >= 0 && other_drone_idx < (int)candidate.drone_routes.size()) {
                                     candidate.drone_routes[other_drone_idx] = other_new;
                                     candidate.drone_route_times[other_drone_idx] = (other_new.size() > 1) ? other_metrics_new[0] : 0.0;
@@ -2227,7 +2229,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
             tabu_list_2opt_star[best_ub][best_vb] = current_iter + TABU_TENURE_2OPT_STAR;
 
             //Debug N4
-            /* cout.setf(std::ios::fixed);
+/*              cout.setf(std::ios::fixed);
             cout << setprecision(6);
             cout << "[N4] 2-opt* cuts (" << best_ua << "," << best_va << ") & (" << best_ub << "," << best_vb << ")"
                  << ", score: " << solution_score(initial_solution)
@@ -4436,6 +4438,11 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         candidate.deadline_violation += base_new_metrics[1] - base_metrics[1];
                         candidate.capacity_violation += base_new_metrics[3] - base_metrics[3];
                         candidate.energy_violation += base_new_metrics[2] - base_metrics[2];
+                        if (!same_route) {
+                            candidate.deadline_violation += target_new_metrics[1] - target_metrics[1];
+                            candidate.capacity_violation += target_new_metrics[3] - target_metrics[3];
+                            candidate.energy_violation += target_new_metrics[2] - target_metrics[2];
+                        }
 
                         if (base_is_truck) {
                             candidate.truck_routes[base_route_idx] = base_new;
@@ -4505,22 +4512,14 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             // Debug N6
             /* cout.setf(std::ios::fixed);
             cout << setprecision(6);
-            if (best_same_route) {
-                cout << "[N6] (2,2) swap within " << (crit_is_truck ? "truck" : "drone") << " #"
-                     << (critical_idx + 1) << ": (" << best_pair_a1 << "," << best_pair_a2
-                     << ") ↔ (" << best_pair_b1 << "," << best_pair_b2 << "), makespan: "
-                     << ", score: " << solution_score(initial_solution)
-                     << " -> " << solution_score(best_candidate_neighbor)
-                     << ", iter " << current_iter << "\n";
-            } else {
-                int other_idx = best_other_is_truck ? best_other_vehicle : best_other_vehicle - h;
-                cout << "[N6] (2,2) swap pairs (" << best_pair_a1 << "," << best_pair_a2 << ") ↔ ("
-                     << best_pair_b1 << "," << best_pair_b2 << ") between "
-                     << (crit_is_truck ? "truck" : "drone") << " #" << (critical_idx + 1)
-                     << " and " << (best_other_is_truck ? "truck" : "drone") << " #" << (other_idx + 1)
-                     << ", makespan: " << initial_solution.total_makespan << " -> "
-                     << best_neighbor.total_makespan << ", iter " << current_iter << "\n";
-            } */
+            bool other_is_truck = best_other_is_truck;
+            int other_idx = other_is_truck ? best_other_vehicle : best_other_vehicle - h;
+            cout << "[N6] (" << (best_same_route ? "same route" : "different routes") << ") swap pairs ("
+                 << best_pair_a1 << "," << best_pair_a2 << ") & ("
+                 << best_pair_b1 << "," << best_pair_b2 << ") "
+                 << ", score: " << solution_score(initial_solution)
+                 << " -> " << solution_score(best_candidate_neighbor)
+                 << ", iter " << current_iter << "\n"; */
 
             return best_neighbor;
         }
@@ -5436,6 +5435,22 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now);
             }
             else neighbor = local_search(current_sol, selected_neighbor, iter, best_solution_score_now);
+            /* Solution neighbor = recalculate_solution(init_neighbor);
+            // Check if recalculation changes the solution violation values
+            if (std::abs(neighbor.deadline_violation - init_neighbor.deadline_violation) > 1e-8 ||
+                std::abs(neighbor.capacity_violation - init_neighbor.capacity_violation) > 1e-8 ||
+                std::abs(neighbor.energy_violation - init_neighbor.energy_violation) > 1e-8) {
+                cout << "Iter " << iter << ", Selected Neighborhood: " << selected_neighbor << " recalculation changed violation values!\n";
+                cout << "Current Solution:\n";
+                print_solution_stream(current_sol, cout);
+                cout << "Initial Neighbor Solution:\n";
+                print_solution_stream(init_neighbor, cout);
+                cout << "Recalculated Neighbor Solution:\n";
+                print_solution_stream(neighbor, cout);
+                neighbor = current_sol;
+                exit(1);
+            } */
+
             if (!check_solution_integrity(neighbor)) {
                 cout << "Iter " << iter << ", Selected Neighborhood: " << selected_neighbor << "failed integrity check!\n";
                 cout << "Current Solution:\n";
@@ -5443,6 +5458,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 cout << "Neighbor Solution:\n";
                 print_solution_stream(neighbor, cout);
                 neighbor = current_sol;
+                exit(1);
             }
             bool neighbor_feasible = is_feasible(neighbor);
             // Clamp neighbor violation values to zero if they are very small
@@ -5581,9 +5597,9 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                             Solution neighbor;
                             if (total_score_iter){
                                 neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now);
+                                //neighbor = recalculate_solution(neighbor);
                                 double neighbor_score = solution_score_total_time(neighbor);
                                 double current_sol_score = solution_score_total_time(current_sol);
-
                                 if (neighbor_score + 1e-12 < current_sol_score ||
                                     (std::abs(neighbor_score - current_sol_score) <= 1e-12 &&
                                     neighbor.total_makespan + 1e-12 < current_sol.total_makespan)) {
@@ -5600,6 +5616,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                             }
                             else {
                                 neighbor = local_search(current_sol, ni, 0, best_solution_score_now);
+                                //neighbor = recalculate_solution(neighbor);
                                 double neighbor_score = solution_score(neighbor);
                                 double current_sol_score = solution_score(current_sol);
 
