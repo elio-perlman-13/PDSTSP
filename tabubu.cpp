@@ -5384,6 +5384,8 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
         double T0 = 100.0; // initial temperature for simulated annealing acceptance
         double alpha = 0.998; // cooling rate
         bool total_score_iter = total_score_segment;
+        // testing
+        total_score_iter = false;
         Solution best_segment_sol = current_sol;
         double best_segment_score = total_score_iter
             ? solution_score_total_time(best_segment_sol)
@@ -5822,7 +5824,7 @@ int main(int argc, char* argv[]) {
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
-            CFG_KNN_K = min(CFG_KNN_K, int(n/2)); // slightly smaller k for very large n
+            CFG_KNN_K = min(CFG_KNN_K, int(n/2));
         }
     }
 
