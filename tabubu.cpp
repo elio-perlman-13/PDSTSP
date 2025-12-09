@@ -5436,7 +5436,6 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now);
             }
             else neighbor = local_search(current_sol, selected_neighbor, iter, best_solution_score_now);
-            neighbor = recalculate_solution(neighbor);
             if (!check_solution_integrity(neighbor)) {
                 cout << "Iter " << iter << ", Selected Neighborhood: " << selected_neighbor << "failed integrity check!\n";
                 cout << "Current Solution:\n";
@@ -5582,7 +5581,6 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                             Solution neighbor;
                             if (total_score_iter){
                                 neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now);
-                                neighbor = recalculate_solution(neighbor);
                                 double neighbor_score = solution_score_total_time(neighbor);
                                 double current_sol_score = solution_score_total_time(current_sol);
 
@@ -5602,7 +5600,6 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                             }
                             else {
                                 neighbor = local_search(current_sol, ni, 0, best_solution_score_now);
-                                neighbor = recalculate_solution(neighbor);
                                 double neighbor_score = solution_score(neighbor);
                                 double current_sol_score = solution_score(current_sol);
 
@@ -5645,7 +5642,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         }
                     }
                     print_solution_stream(current_sol, cout);
-                    //current_sol = destroy_and_repair(current_sol);
+                    current_sol = destroy_and_repair(current_sol);
                     current_cost = current_sol.total_makespan;
                     tabu_list_ejection.clear();
                 }
