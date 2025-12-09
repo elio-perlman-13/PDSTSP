@@ -5385,7 +5385,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
         double alpha = 0.998; // cooling rate
         bool total_score_iter = total_score_segment;
         // testing
-        total_score_iter = false;
+        //total_score_iter = false;
         Solution best_segment_sol = current_sol;
         double best_segment_score = total_score_iter
             ? solution_score_total_time(best_segment_sol)
@@ -5645,7 +5645,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         }
                     }
                     print_solution_stream(current_sol, cout);
-                    current_sol = destroy_and_repair(current_sol);
+                    //current_sol = destroy_and_repair(current_sol);
                     current_cost = current_sol.total_makespan;
                     tabu_list_ejection.clear();
                 }
