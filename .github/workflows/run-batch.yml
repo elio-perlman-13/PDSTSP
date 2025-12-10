@@ -38,33 +38,50 @@ jobs:
           matrix_json="[${matrix_json%,}]"
           echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
 
+  # NEW: Build the solver once
+  build:
+    name: Build solver
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compile solver
+        run: |
+          # ubuntu-latest has g++ pre-installed.
+          # -march=native: optimize for the cloud CPU
+          # -DNDEBUG: disable assertions for speed
+          # -O3: max optimization
+          g++ -O3 -std=c++20 -march=native -DNDEBUG -pthread -o tabubu tabubu.cpp
+
+      - name: Upload solver binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: solver-bin
+          path: tabubu
+          retention-days: 1
+
   run-instance:
     name: Run instance ${{ matrix.base }}
-    needs: prepare
-    # dynamic matrix produced from the prepare job
+    needs: [prepare, build] # Wait for build to finish
     strategy:
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
       max-parallel: 64
     runs-on: ubuntu-latest
-    timeout-minutes: 350   # near 6h limit per job; tune as needed
+    timeout-minutes: 350
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential g++-13 jq || sudo apt-get install -y build-essential g++
+      # Download the pre-built binary
+      - name: Download solver
+        uses: actions/download-artifact@v4
+        with:
+          name: solver-bin
 
-      - name: Build solver
-        run: |
-          # prefer g++-13 if available
-          if command -v g++-13 >/dev/null 2>&1; then
-            g++-13 -O3 -std=c++17 -o tabubu tabubu.cpp
-          else
-            g++ -O3 -std=c++17 -o tabubu tabubu.cpp
-          fi
+      - name: Make executable
+        run: chmod +x tabubu
 
       - name: Run tabubu on instance
         run: |
@@ -79,11 +96,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.base }}-tabubu-results
-          # upload only the solver best output for this instance (avoid other files)
-          # ensure we upload only this job's instance best file
           path: |
             outputs/${{ matrix.base }}_best.txt
-            outputs/${{ matrix.base }}.txt
+            outputs/${{ matrix.base }}.log
           if-no-files-found: warn
 
   collect-all:

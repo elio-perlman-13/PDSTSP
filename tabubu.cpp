@@ -35,19 +35,19 @@ vd serve_truck, serve_drone; // time taken by truck and drone to serve each cust
 vi served_by_drone; //whether each customer can be served by drone or not, 1 if yes, 0 if no
 vd deadline; //customer deadlines
 vd demand; // demand[i]: demand of customer i
-double Dh = 1400.0; // truck capacity (all trucks) (kg)
+double Dh = 500.0; // truck capacity (all trucks) (kg)
 double vmax = 15.6464; // truck base speed (m/s)
 int L = 24; //number of time segments in a day
-vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
-vd time_segments_sigma = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}; //sigma (truck velocity coefficient) for each time segments
 //vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
-//vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
-double Dd = 2.27, E = 700.0; //drone's weight and energy capacities (for all drones)
+//vd time_segments_sigma = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}; //sigma (truck velocity coefficient) for each time segments
+vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
+vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
+double Dd = 2.27, E = 7200000.0; //drone's weight and energy capacities (for all drones)
 double v_fly_drone = 31.2928, v_take_off = 15.6464, v_landing = 7.8232; // speed of the drone
-//double height = 50; // height of the drone
-double height = 0; // height of the drone
-double power_beta = 0, power_gamma = 1.0; //coefficients for drone energy consumption per second
-//double power_beta = 24.2, power_gamma = 1329.0; //coefficients for drone energy consumption per second
+double height = 50; // height of the drone
+//double height = 0; // height of the drone
+//double power_beta = 0, power_gamma = 1.0; //coefficients for drone energy consumption per second
+double power_beta = 24.2, power_gamma = 1329.0; //coefficients for drone energy consumption per second
 vvd distance_matrix; //distance matrices for truck and drone
 
 // Candidate lists (k-nearest neighbors) to filter neighborhood evaluations
@@ -5496,7 +5496,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
         double alpha = 0.998; // cooling rate
         bool total_score_iter = total_score_segment;
         // testing
-        //total_score_iter = false;
+        total_score_iter = false;
         Solution best_segment_sol = current_sol;
         double best_segment_score = total_score_iter
             ? solution_score_total_time(best_segment_sol)
@@ -5921,13 +5921,6 @@ int main(int argc, char* argv[]) {
     if (print_dist_matrix) {
         print_distance_matrix();
         return 0; // only print distance matrix and exit
-    }
-
-    //For another data-testing: change all deadline to a constant 3600 and all serving time to 0
-    for (int i = 1; i <= n; ++i) {
-        deadline[i] = 3600.0;
-        serve_truck[i] = 0.0;
-        serve_drone[i] = 0.0;
     }
 
     // Optional auto-tuning based on instance size if requested
