@@ -485,10 +485,11 @@ double solution_score(const Solution& sol) {
     double penalty_multiplier = 1.0 + PENALTY_LAMBDA_CAPACITY * sol.capacity_violation
                                 + PENALTY_LAMBDA_ENERGY * sol.energy_violation
                                 + PENALTY_LAMBDA_DEADLINE * sol.deadline_violation;
-     double total_time_squared = 0.0;
-    for (double t : sol.truck_route_times) total_time_squared += t * t;
-    for (double t : sol.drone_route_times) total_time_squared += t * t;              
-    return (sol.total_makespan + std::sqrt(total_time_squared) * 1e-3) * pow(penalty_multiplier, PENALTY_EXPONENT);
+     double mean_time_squared = 0.0;
+    for (double t : sol.truck_route_times) mean_time_squared += t * t;
+    for (double t : sol.drone_route_times) mean_time_squared += t * t;
+    mean_time_squared /= (h + d);            
+    return (sol.total_makespan + std::sqrt(mean_time_squared) * 1e-3) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
 double solution_score_total_time(const Solution& sol) {
@@ -498,7 +499,7 @@ double solution_score_total_time(const Solution& sol) {
     double total_time_squared = 0.0;
     for (double t : sol.truck_route_times) total_time_squared += t * t;
     for (double t : sol.drone_route_times) total_time_squared += t * t;
-    return (std::sqrt(total_time_squared) + sol.total_makespan) * pow(penalty_multiplier, PENALTY_EXPONENT);
+    return (std::sqrt(total_time_squared)) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
 void update_penalties(const Solution& sol) {
@@ -1286,7 +1287,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
         // 1) Identify critical vehicle (truck or drone) using precomputed times
         auto [critical_idx, crit_is_truck] = critical_solution_index(initial_solution);
 
-        // Ensure tabu list is sized to (n+1) x (h+d)
+         // Ensure tabu list is sized to (n+1) x (h+d)
         int veh_count = h + d;
         if ((int)tabu_list_10.size() != n + 1 || (veh_count > 0 && (int)tabu_list_10[0].size() != veh_count)) {
             tabu_list_10.assign(n + 1, vector<int>(max(0, veh_count), 0));
@@ -1298,19 +1299,34 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
         Solution best_candidate_neighbor = best_neighbor;
         double best_neighbor_cost_local = 1e10;
 
+        // Precompute metrics for delta evaluation
+        double current_total_time_sq = 0.0;
+        double second_max_makespan = 0.0;
+        
+        // Calculate current total time squared and find the second highest makespan (excluding the critical vehicle)
+        for (int i = 0; i < h; ++i) {
+            double t = initial_solution.truck_route_times[i];
+            current_total_time_sq += t * t;
+            if (!crit_is_truck || i != critical_idx) {
+                second_max_makespan = max(second_max_makespan, t);
+            }
+        }
+        for (int i = 0; i < d; ++i) {
+            double t = initial_solution.drone_route_times[i];
+            current_total_time_sq += t * t;
+            if (crit_is_truck || i != critical_idx) {
+                second_max_makespan = max(second_max_makespan, t);
+            }
+        }
+
         auto consider_relocate = [&](const vi& base_route, bool is_truck_mode, int critical_vehicle_id) {
             // Lambda to normalize routes for comparison (detect no-ops)
-            auto normalize_route = [](const vi& route) -> vi {
-                vi normalized;
-                for (int x : route) {
-                    if (normalized.empty() || x != 0 || normalized.back() != 0)
-                        normalized.push_back(x);
-                }
-                if (!normalized.empty() && normalized.front() != 0) 
-                    normalized.insert(normalized.begin(), 0);
-                if (!normalized.empty() && normalized.back() != 0) 
-                    normalized.push_back(0);
-                return normalized;
+            auto normalize_route = []( vi& route) -> vi {
+                if (!route.empty() && route.front() != 0) 
+                    route.insert(route.begin(), 0);
+                if (!route.empty() && route.back() != 0) 
+                    route.push_back(0);
+                return route;
             };
 
             vd crit_route_time_feas = is_truck_mode
@@ -1320,223 +1336,150 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
             // Collect positions of customers (exclude depots)
             vector<int> pos;
             for (int i = 0; i < (int)base_route.size(); ++i) if (base_route[i] != 0) pos.push_back(i);
+            
             for (int idx = 0; idx < (int)pos.size(); ++idx) {
                 int p = pos[idx];
                 int cust = base_route[p];
-                // Try relocating cust to other vehicles of the same mode
+
+                // Pre-calculate the base route with customer removed (for inter-route moves)
+                vi base_route_removed = base_route;
+                base_route_removed.erase(base_route_removed.begin() + p);
+                
+                vd base_route_removed_feas = is_truck_mode
+                    ? check_route_feasibility(base_route_removed, 0.0, true)
+                    : check_route_feasibility(base_route_removed, 0.0, false);
+
+                // Try relocating cust to other vehicles
                 for (int target_veh = 0; target_veh < h + d; ++target_veh) {
+                    //if (served_by_drone[cust] == 0 && target_veh >= h) continue; // cannot assign to drone
                     bool is_tabu = (tabu_list_10[cust][target_veh] > current_iter);
-                    if (target_veh == critical_vehicle_id){
-                        for (int p2 = 1; p2 < (int)base_route.size(); ++p2) {
-                            // attempt to relocate cust to position p2 in the same route
-                            if (p2 == p) continue; // no-op
-                            // Build new candidate solution with relocation
-                            Solution candidate = initial_solution;
-                            vi new_base_route = base_route;
-                            new_base_route.erase(new_base_route.begin() + p);
-                            new_base_route.insert(new_base_route.begin() + p2 - (p2 > p ? 1 : 0), cust);
-                            vi new_norm = normalize_route(new_base_route);
-                            // Compute cost of candidate
-                            vd new_crit_route_time_feas = is_truck_mode
+                    
+                    if (target_veh == critical_vehicle_id) {
+                        // --- INTRA-ROUTE RELOCATION (Same Vehicle) ---
+                        auto evaluate_intra = [&](int p2) {
+                            vi new_route = base_route;
+                            new_route.erase(new_route.begin() + p);
+                            int insert_idx = p2 - (p2 > p ? 1 : 0);
+                            new_route.insert(new_route.begin() + insert_idx, cust);
+                            vi new_norm = normalize_route(new_route);
+                            
+                            vd new_feas = is_truck_mode
                                 ? check_route_feasibility(new_norm, 0.0, true)
                                 : check_route_feasibility(new_norm, 0.0, false);
-                            // If tabu, only consider if it improves over best known cost and feasible
-                            candidate.deadline_violation += new_crit_route_time_feas[1] - crit_route_time_feas[1];
-                            candidate.capacity_violation += new_crit_route_time_feas[3] - crit_route_time_feas[3];
-                            candidate.energy_violation += new_crit_route_time_feas[2] - crit_route_time_feas[2];
-                            if (is_truck_mode) {
-                                candidate.truck_routes[critical_vehicle_id] = new_norm;
-                                candidate.truck_route_times[critical_vehicle_id] = new_crit_route_time_feas[0];
-                            } else {
-                                candidate.drone_routes[critical_vehicle_id - h] = new_norm;
-                                candidate.drone_route_times[critical_vehicle_id - h] = new_crit_route_time_feas[0];
-                            }
-                            candidate.total_makespan = 0.0;
-                            for (int i = 0; i < h; ++i) {
-                                candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[i]);
-                            }
-                            for (int i = 0; i < (int)candidate.drone_route_times.size(); ++i) {
-                                candidate.total_makespan = max(candidate.total_makespan, candidate.drone_route_times[i]);
-                            }
-                            double candidate_score = solution_score(candidate);
-                            bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
-                                                       candidate.capacity_violation <= 1e-8 &&
-                                                       candidate.energy_violation <= 1e-8;
-                            if (is_tabu && !(candidate_score + 1e-8 < best_cost && candidate_feasible)) {
-                                continue; // skip tabu move
-                            }
-                            // Update best if improved
-                            if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                                best_neighbor_cost_local = candidate_score;
-                                best_candidate_neighbor = candidate;
+
+                            // Delta Eval
+                            double new_deadline = initial_solution.deadline_violation + new_feas[1] - crit_route_time_feas[1];
+                            double new_capacity = initial_solution.capacity_violation + new_feas[3] - crit_route_time_feas[3];
+                            double new_energy = initial_solution.energy_violation + new_feas[2] - crit_route_time_feas[2];
+                            
+                            double new_makespan = max(second_max_makespan, new_feas[0]);
+                            double new_total_sq = current_total_time_sq - (crit_route_time_feas[0]*crit_route_time_feas[0]) + (new_feas[0]*new_feas[0]);
+                            
+                            double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
+                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 1e-3) * pow(pen, PENALTY_EXPONENT);
+                            
+                            bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
+                            
+                            if (is_tabu && !(score + 1e-8 < best_cost && feasible)) return;
+                            
+                            if (score + 1e-8 < best_neighbor_cost_local) {
+                                best_neighbor_cost_local = score;
                                 best_target = target_veh;
                                 best_cust = cust;
+                                best_candidate_neighbor = initial_solution;
+                                if (is_truck_mode) {
+                                    best_candidate_neighbor.truck_routes[critical_vehicle_id] = new_norm;
+                                    best_candidate_neighbor.truck_route_times[critical_vehicle_id] = new_feas[0];
+                                } else {
+                                    best_candidate_neighbor.drone_routes[critical_vehicle_id - h] = new_norm;
+                                    best_candidate_neighbor.drone_route_times[critical_vehicle_id - h] = new_feas[0];
+                                }
+                                best_candidate_neighbor.deadline_violation = new_deadline;
+                                best_candidate_neighbor.capacity_violation = new_capacity;
+                                best_candidate_neighbor.energy_violation = new_energy;
+                                best_candidate_neighbor.total_makespan = new_makespan;
                             }
-                        }
-                        // also consider relocating to the end of the route
-                        Solution candidate = initial_solution;
-                        vi new_base_route = base_route;
-                        new_base_route.erase(new_base_route.begin() + p);
-                        if (new_base_route.back() != 0) {
-                            new_base_route.push_back(0); // ensure depot at end for insertion
-                        }
-                        new_base_route.push_back(cust);
-                        new_base_route.push_back(0);
-                        vi new_norm = normalize_route(new_base_route);
-                        // Compute cost of candidate
-                        vd new_crit_route_time_feas = is_truck_mode
-                            ? check_route_feasibility(new_norm, 0.0, true)
-                            : check_route_feasibility(new_norm, 0.0, false);
-                        // If tabu, only consider if it improves over best known cost and feasible
-                        candidate.deadline_violation += new_crit_route_time_feas[1] - crit_route_time_feas[1];
-                        candidate.capacity_violation += new_crit_route_time_feas[3] - crit_route_time_feas[3];
-                        candidate.energy_violation += new_crit_route_time_feas[2] - crit_route_time_feas[2];
-                        if (is_truck_mode) {
-                            candidate.truck_routes[critical_vehicle_id] = new_norm;
-                            candidate.truck_route_times[critical_vehicle_id] = new_crit_route_time_feas[0];
-                        } else {
-                            candidate.drone_routes[critical_vehicle_id - h] = new_norm;
-                            candidate.drone_route_times[critical_vehicle_id - h] = new_crit_route_time_feas[0];
-                        }
-                        candidate.total_makespan = 0.0;
-                        for (int i = 0; i < h; ++i) {
-                            candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[i]);
-                        }
-                        for (int i = 0; i < (int)candidate.drone_route_times.size(); ++i) {
-                            candidate.total_makespan = max(candidate.total_makespan, candidate.drone_route_times[i]);
-                        }
-                        double candidate_score = solution_score(candidate);
-                        bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
-                                                   candidate.capacity_violation <= 1e-8 &&
-                                                   candidate.energy_violation <= 1e-8;
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost && candidate_feasible)) {
-                            continue; // skip tabu move
-                        }
-                        // Update best if improved
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_target = target_veh;
-                            best_cust = cust;
-                        }
-                    }
-                    if (target_veh == critical_vehicle_id) continue; // skip same vehicle here
-                    const vi& target_route = (target_veh < h) ? initial_solution.truck_routes[target_veh - 0]
-                                                              : initial_solution.drone_routes[target_veh - h];
-                    vd target_route_time_feas = (target_veh < h)
-                        ? check_route_feasibility(target_route, 0.0, true)
-                        : check_route_feasibility(target_route, 0.0, false);                                          
-                    // Try all insertion positions in target route
-                    // Remove cust from base route
-                    vi new_base_route = base_route;
-                    new_base_route.erase(new_base_route.begin() + p);
-                    vd new_crit_route_time_feas = is_truck_mode
-                        ? check_route_feasibility(new_base_route, 0.0, true)
-                        : check_route_feasibility(new_base_route, 0.0, false);
-                    for (int insert_pos = 1; insert_pos < (int)target_route.size(); ++insert_pos) {
-                        // Build new candidate solution with relocation
-                        Solution candidate = initial_solution;
-                        // Insert cust into target route
-                        vi new_target_route = target_route;
-                        new_target_route.insert(new_target_route.begin() + insert_pos, cust);
-                        vd new_target_route_time_feas = (target_veh < h)
-                            ? check_route_feasibility(new_target_route, 0.0, true)
-                            : check_route_feasibility(new_target_route, 0.0, false);
+                        };
 
-                        // Compute cost of candidate
-                        candidate.deadline_violation += new_crit_route_time_feas[1] - crit_route_time_feas[1];
-                        candidate.deadline_violation += new_target_route_time_feas[1] - target_route_time_feas[1];
-                        candidate.capacity_violation += new_crit_route_time_feas[3] - crit_route_time_feas[3];
-                        candidate.capacity_violation += new_target_route_time_feas[3] - target_route_time_feas[3];
-                        candidate.energy_violation += new_crit_route_time_feas[2] - crit_route_time_feas[2];
-                        candidate.energy_violation += new_target_route_time_feas[2] - target_route_time_feas[2];
-                        if (is_truck_mode) {
-                            candidate.truck_routes[critical_vehicle_id] = new_base_route;
-                            candidate.truck_route_times[critical_vehicle_id] = new_crit_route_time_feas[0];
-                        } else {
-                            candidate.drone_routes[critical_vehicle_id - h] = new_base_route;
-                            candidate.drone_route_times[critical_vehicle_id - h] = new_crit_route_time_feas[0];
+                        for (int p2 = 1; p2 < (int)base_route.size(); ++p2) {
+                            if (p2 == p) continue;
+                            evaluate_intra(p2);
                         }
-                        if (target_veh < h) {
-                            candidate.truck_routes[target_veh] = new_target_route;
-                            candidate.truck_route_times[target_veh] = new_target_route_time_feas[0];
-                        } else {
-                            candidate.drone_routes[target_veh - h] = new_target_route;
-                            candidate.drone_route_times[target_veh - h] = new_target_route_time_feas[0];
-                        }
-                        candidate.total_makespan = 0.0;
-                        for (int i = 0; i < h; ++i) {
-                            candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[i]);
-                        }
+                        // End of route
+                        evaluate_intra(base_route.size());
+                    } else {
+                        // --- INTER-ROUTE RELOCATION (Different Vehicle) ---
+                        const vi& target_route = (target_veh < h) ? initial_solution.truck_routes[target_veh] : initial_solution.drone_routes[target_veh - h];
                         
-                        for (int i = 0; i < (int)candidate.drone_route_times.size(); ++i) {
-                            candidate.total_makespan = max(candidate.total_makespan, candidate.drone_route_times[i]);
+                        vd target_route_feas = (target_veh < h)
+                            ? check_route_feasibility(target_route, 0.0, true)
+                            : check_route_feasibility(target_route, 0.0, false);
+
+                        auto evaluate_inter = [&](int insert_pos) {
+                            vi new_target = target_route;
+                            if (insert_pos >= (int)new_target.size()) {
+                                new_target.push_back(cust);
+                                new_target.push_back(0);
+                            } else {
+                                new_target.insert(new_target.begin() + insert_pos, cust);
+                            }
+                            
+                            vd new_target_feas = (target_veh < h)
+                                ? check_route_feasibility(new_target, 0.0, true)
+                                : check_route_feasibility(new_target, 0.0, false);
+                            
+                            double new_deadline = initial_solution.deadline_violation 
+                                + (base_route_removed_feas[1] - crit_route_time_feas[1]) 
+                                + (new_target_feas[1] - target_route_feas[1]);
+                            double new_capacity = initial_solution.capacity_violation 
+                                + (base_route_removed_feas[3] - crit_route_time_feas[3]) 
+                                + (new_target_feas[3] - target_route_feas[3]);
+                            double new_energy = initial_solution.energy_violation 
+                                + (base_route_removed_feas[2] - crit_route_time_feas[2]) 
+                                + (new_target_feas[2] - target_route_feas[2]);
+                            
+                            double new_makespan = max({second_max_makespan, base_route_removed_feas[0], new_target_feas[0]});
+                            double new_total_sq = current_total_time_sq 
+                                - (crit_route_time_feas[0]*crit_route_time_feas[0]) + (base_route_removed_feas[0]*base_route_removed_feas[0])
+                                - (target_route_feas[0]*target_route_feas[0]) + (new_target_feas[0]*new_target_feas[0]);
+                            
+                            double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
+                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 1e-3) * pow(pen, PENALTY_EXPONENT);
+                            
+                            bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
+                            
+                            if (is_tabu && !(score + 1e-8 < best_cost && feasible)) return;
+                            
+                            if (score + 1e-8 < best_neighbor_cost_local) {
+                                best_neighbor_cost_local = score;
+                                best_target = target_veh;
+                                best_cust = cust;
+                                best_candidate_neighbor = initial_solution;
+                                if (is_truck_mode) {
+                                    best_candidate_neighbor.truck_routes[critical_vehicle_id] = base_route_removed;
+                                    best_candidate_neighbor.truck_route_times[critical_vehicle_id] = base_route_removed_feas[0];
+                                } else {
+                                    best_candidate_neighbor.drone_routes[critical_vehicle_id - h] = base_route_removed;
+                                    best_candidate_neighbor.drone_route_times[critical_vehicle_id - h] = base_route_removed_feas[0];
+                                }
+                                if (target_veh < h) {
+                                    best_candidate_neighbor.truck_routes[target_veh] = new_target;
+                                    best_candidate_neighbor.truck_route_times[target_veh] = new_target_feas[0];
+                                } else {
+                                    best_candidate_neighbor.drone_routes[target_veh - h] = new_target;
+                                    best_candidate_neighbor.drone_route_times[target_veh - h] = new_target_feas[0];
+                                }
+                                best_candidate_neighbor.deadline_violation = new_deadline;
+                                best_candidate_neighbor.capacity_violation = new_capacity;
+                                best_candidate_neighbor.energy_violation = new_energy;
+                                best_candidate_neighbor.total_makespan = new_makespan;
+                            }
+                        };
+
+                        for (int insert_pos = 1; insert_pos < (int)target_route.size(); ++insert_pos) {
+                            evaluate_inter(insert_pos);
                         }
-                        double candidate_score = solution_score(candidate);
-                        bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
-                                                   candidate.capacity_violation <= 1e-8 &&
-                                                   candidate.energy_violation <= 1e-8;
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost && candidate_feasible)) {
-                            continue; // skip tabu move
-                        }
-                        // Update best if improved
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_target = target_veh;
-                            best_cust = cust;
-                        }
-                    }
-                    // Also try inserting at the end of the target route
-                    vi new_target_route = target_route;
-                    new_target_route.push_back(cust);
-                    new_target_route.push_back(0);
-                    vd new_target_route_time_feas = (target_veh < h)
-                        ? check_route_feasibility(new_target_route, 0.0, true)
-                        : check_route_feasibility(new_target_route, 0.0, false);
-                    // Build new candidate solution with relocation
-                    Solution candidate = initial_solution;
-                    // Compute cost of candidate
-                    candidate.deadline_violation += new_crit_route_time_feas[1] - crit_route_time_feas[1];
-                    candidate.deadline_violation += new_target_route_time_feas[1] - target_route_time_feas[1];
-                    candidate.capacity_violation += new_crit_route_time_feas[3] - crit_route_time_feas[3];
-                    candidate.capacity_violation += new_target_route_time_feas[3] - target_route_time_feas[3];
-                    candidate.energy_violation += new_crit_route_time_feas[2] - crit_route_time_feas[2];
-                    candidate.energy_violation += new_target_route_time_feas[2] - target_route_time_feas[2];
-                    if (is_truck_mode) {
-                        candidate.truck_routes[critical_vehicle_id] = new_base_route;
-                        candidate.truck_route_times[critical_vehicle_id] = new_crit_route_time_feas[0];
-                    } else {
-                        candidate.drone_routes[critical_vehicle_id - h] = new_base_route;
-                        candidate.drone_route_times[critical_vehicle_id - h] = new_crit_route_time_feas[0];
-                    }
-                    if (target_veh < h) {
-                        candidate.truck_routes[target_veh] = new_target_route;
-                        candidate.truck_route_times[target_veh] = new_target_route_time_feas[0];
-                    } else {
-                        candidate.drone_routes[target_veh - h] = new_target_route;
-                        candidate.drone_route_times[target_veh - h] = new_target_route_time_feas[0];
-                    }
-                    candidate.total_makespan = 0.0;
-                    for (int i = 0; i < h; ++i) {
-                        candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[i]);
-                    }
-                    for (int i = 0; i < (int)candidate.drone_route_times.size(); ++i) {
-                        candidate.total_makespan = max(candidate.total_makespan, candidate.drone_route_times[i]);
-                    }
-                    double candidate_score = solution_score(candidate);
-                    bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
-                                               candidate.capacity_violation <= 1e-8 &&
-                                               candidate.energy_violation <= 1e-8;
-                    if (is_tabu && !(candidate_score + 1e-8 < best_cost && candidate_feasible)) {
-                        continue; // skip tabu move
-                    }
-                    // Update best if improved
-                    if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                        best_neighbor_cost_local = candidate_score;
-                        best_candidate_neighbor = candidate;
-                        best_target = target_veh;
-                        best_cust = cust;
+                        evaluate_inter(target_route.size());
                     }
                 }
             }
@@ -1554,8 +1497,6 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
             // Update tabu list
             tabu_list_10[best_cust][best_target] = current_iter + TABU_TENURE_10;
         }
-        // Debug:
-        //cout << "[N0] relocate customer " << best_cust << " to vehicle " << best_target << " score: " << solution_score(initial_solution) << " -> " << solution_score(best_neighbor) << "\n";
         return best_neighbor;
     } else if (neighbor_id == 1) {
         // Neighborhood 1: swap two customers, allowing cross-mode exchanges
@@ -3093,18 +3034,33 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
         double best_neighbor_cost_local = 1e10;
 
         auto consider_relocate = [&](const vi& base_route, bool is_truck_mode, int critical_vehicle_id) {
-            // Lambda to normalize routes for comparison (detect no-ops)
-            auto normalize_route = [](vi route) {
-                if (route.empty()) return route;
-                if (route.front() != 0) route.insert(route.begin(), 0);
-                if (route.back() != 0) route.push_back(0);
-                vi cleaned;
-                cleaned.reserve(route.size());
-                for (int node : route) {
-                    if (!cleaned.empty() && cleaned.back() == node) continue;
-                    cleaned.push_back(node);
+
+            // Precompute metrics for delta evaluation
+            double current_total_time_sq = 0.0;
+            double second_max_makespan = 0.0;
+            
+            // Calculate current total time squared and find the second highest makespan (excluding the critical vehicle)
+            for (int i = 0; i < h; ++i) {
+                double t = initial_solution.truck_route_times[i];
+                current_total_time_sq += t * t;
+                if (!is_truck_mode || i != critical_vehicle_id) {
+                    second_max_makespan = max(second_max_makespan, t);
                 }
-                return cleaned;
+            }
+            for (int i = 0; i < d; ++i) {
+                double t = initial_solution.drone_route_times[i];
+                current_total_time_sq += t * t;
+                if (is_truck_mode || i != critical_vehicle_id - h) {
+                    second_max_makespan = max(second_max_makespan, t);
+                }
+            }
+            // Lambda to normalize routes for comparison (detect no-ops)
+            auto normalize_route = []( vi& route) -> vi {
+                if (!route.empty() && route.front() != 0) 
+                    route.insert(route.begin(), 0);
+                if (!route.empty() && route.back() != 0) 
+                    route.push_back(0);
+                return route;
             };
 
             vd crit_route_time_feas = is_truck_mode
@@ -3114,220 +3070,150 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             // Collect positions of customers (exclude depots)
             vector<int> pos;
             for (int i = 0; i < (int)base_route.size(); ++i) if (base_route[i] != 0) pos.push_back(i);
+            
             for (int idx = 0; idx < (int)pos.size(); ++idx) {
                 int p = pos[idx];
                 int cust = base_route[p];
-                // Try relocating cust to other vehicles of the same mode
+
+                // Pre-calculate the base route with customer removed (for inter-route moves)
+                vi base_route_removed = base_route;
+                base_route_removed.erase(base_route_removed.begin() + p);
+                
+                vd base_route_removed_feas = is_truck_mode
+                    ? check_route_feasibility(base_route_removed, 0.0, true)
+                    : check_route_feasibility(base_route_removed, 0.0, false);
+
+                // Try relocating cust to other vehicles
                 for (int target_veh = 0; target_veh < h + d; ++target_veh) {
+                    //if (served_by_drone[cust] == 0 && target_veh >= h) continue; // cannot assign to drone
                     bool is_tabu = (tabu_list_10[cust][target_veh] > current_iter);
-                    if (target_veh == critical_vehicle_id){
-                        for (int p2 = 1; p2 < (int)base_route.size(); ++p2) {
-                            // attempt to relocate cust to position p2 in the same route
-                            if (p2 == p) continue; // no-op
-                            // Build new candidate solution with relocation
-                            Solution candidate = initial_solution;
-                            vi new_base_route = base_route;
-                            new_base_route.erase(new_base_route.begin() + p);
-                            new_base_route.insert(new_base_route.begin() + p2 - (p2 > p ? 1 : 0), cust);
-                            vi new_norm = normalize_route(new_base_route);
-                            // Compute cost of candidate
-                            vd new_crit_route_time_feas = is_truck_mode
+                    
+                    if (target_veh == critical_vehicle_id) {
+                        // --- INTRA-ROUTE RELOCATION (Same Vehicle) ---
+                        auto evaluate_intra = [&](int p2) {
+                            vi new_route = base_route;
+                            new_route.erase(new_route.begin() + p);
+                            int insert_idx = p2 - (p2 > p ? 1 : 0);
+                            new_route.insert(new_route.begin() + insert_idx, cust);
+                            vi new_norm = normalize_route(new_route);
+                            
+                            vd new_feas = is_truck_mode
                                 ? check_route_feasibility(new_norm, 0.0, true)
                                 : check_route_feasibility(new_norm, 0.0, false);
-                            // If tabu, only consider if it improves over best known cost and feasible
-                            candidate.deadline_violation += new_crit_route_time_feas[1] - crit_route_time_feas[1];
-                            candidate.capacity_violation += new_crit_route_time_feas[3] - crit_route_time_feas[3];
-                            candidate.energy_violation += new_crit_route_time_feas[2] - crit_route_time_feas[2];
-                            if (is_truck_mode) {
-                                candidate.truck_routes[critical_vehicle_id] = new_norm;
-                                candidate.truck_route_times[critical_vehicle_id] = new_crit_route_time_feas[0];
-                            } else {
-                                candidate.drone_routes[critical_vehicle_id - h] = new_norm;
-                                candidate.drone_route_times[critical_vehicle_id - h] = new_crit_route_time_feas[0];
-                            }
-                            candidate.total_makespan = 0.0;
-                            for (int i = 0; i < h; ++i) {
-                                candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[i]);
-                            }
-                            for (int i = 0; i < (int)candidate.drone_route_times.size(); ++i) {
-                                candidate.total_makespan = max(candidate.total_makespan, candidate.drone_route_times[i]);
-                            }
-                            double candidate_score = solution_score_total_time(candidate);
-                            bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
-                                                       candidate.capacity_violation <= 1e-8 &&
-                                                       candidate.energy_violation <= 1e-8;
-                            if (is_tabu && !(candidate_score + 1e-8 < best_cost && candidate_feasible)) {
-                                continue; // skip tabu move
-                            }
-                            // Update best if improved
-                            if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                                best_neighbor_cost_local = candidate_score;
-                                best_candidate_neighbor = candidate;
+
+                            // Delta Eval
+                            double new_deadline = initial_solution.deadline_violation + new_feas[1] - crit_route_time_feas[1];
+                            double new_capacity = initial_solution.capacity_violation + new_feas[3] - crit_route_time_feas[3];
+                            double new_energy = initial_solution.energy_violation + new_feas[2] - crit_route_time_feas[2];
+                            
+                            double new_makespan = max(second_max_makespan, new_feas[0]);
+                            double new_total_sq = current_total_time_sq - (crit_route_time_feas[0]*crit_route_time_feas[0]) + (new_feas[0]*new_feas[0]);
+                            
+                            double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
+                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 1e-3) * pow(pen, PENALTY_EXPONENT);
+                            
+                            bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
+                            
+                            if (is_tabu && !(score + 1e-8 < best_cost && feasible)) return;
+                            
+                            if (score + 1e-8 < best_neighbor_cost_local) {
+                                best_neighbor_cost_local = score;
                                 best_target = target_veh;
                                 best_cust = cust;
+                                best_candidate_neighbor = initial_solution;
+                                if (is_truck_mode) {
+                                    best_candidate_neighbor.truck_routes[critical_vehicle_id] = new_norm;
+                                    best_candidate_neighbor.truck_route_times[critical_vehicle_id] = new_feas[0];
+                                } else {
+                                    best_candidate_neighbor.drone_routes[critical_vehicle_id - h] = new_norm;
+                                    best_candidate_neighbor.drone_route_times[critical_vehicle_id - h] = new_feas[0];
+                                }
+                                best_candidate_neighbor.deadline_violation = new_deadline;
+                                best_candidate_neighbor.capacity_violation = new_capacity;
+                                best_candidate_neighbor.energy_violation = new_energy;
+                                best_candidate_neighbor.total_makespan = new_makespan;
                             }
-                        }
-                        // also consider relocating to the end of the route
-                        Solution candidate = initial_solution;
-                        vi new_base_route = base_route;
-                        new_base_route.erase(new_base_route.begin() + p);
-                        new_base_route.push_back(cust);
-                        new_base_route.push_back(0);
-                        vi new_norm = normalize_route(new_base_route);
-                        // Compute cost of candidate
-                        vd new_crit_route_time_feas = is_truck_mode
-                            ? check_route_feasibility(new_norm, 0.0, true)
-                            : check_route_feasibility(new_norm, 0.0, false);
-                        // If tabu, only consider if it improves over best known cost and feasible
-                        candidate.deadline_violation += new_crit_route_time_feas[1] - crit_route_time_feas[1];
-                        candidate.capacity_violation += new_crit_route_time_feas[3] - crit_route_time_feas[3];
-                        candidate.energy_violation += new_crit_route_time_feas[2] - crit_route_time_feas[2];
-                        if (is_truck_mode) {
-                            candidate.truck_routes[critical_vehicle_id] = new_norm;
-                            candidate.truck_route_times[critical_vehicle_id] = new_crit_route_time_feas[0];
-                        } else {
-                            candidate.drone_routes[critical_vehicle_id - h] = new_norm;
-                            candidate.drone_route_times[critical_vehicle_id - h] = new_crit_route_time_feas[0];
-                        }
-                        candidate.total_makespan = 0.0;
-                        for (int i = 0; i < h; ++i) {
-                            candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[i]);
-                        }
-                        for (int i = 0; i < (int)candidate.drone_route_times.size(); ++i) {
-                            candidate.total_makespan = max(candidate.total_makespan, candidate.drone_route_times[i]);
-                        }
-                        double candidate_score = solution_score_total_time(candidate);
-                        bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
-                                                   candidate.capacity_violation <= 1e-8 &&
-                                                   candidate.energy_violation <= 1e-8;
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost && candidate_feasible)) {
-                            continue; // skip tabu move
-                        }
-                        // Update best if improved
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_target = target_veh;
-                            best_cust = cust;
-                        }
-                    }
-                    if (target_veh == critical_vehicle_id) continue; // skip same vehicle here
-                    const vi& target_route = (target_veh < h) ? initial_solution.truck_routes[target_veh - 0]
-                                                              : initial_solution.drone_routes[target_veh - h];
-                    vd target_route_time_feas = (target_veh < h)
-                        ? check_route_feasibility(target_route, 0.0, true)
-                        : check_route_feasibility(target_route, 0.0, false);                                          
-                    // Try all insertion positions in target route
-                    // Remove cust from base route
-                    vi new_base_route = base_route;
-                    new_base_route.erase(new_base_route.begin() + p);
-                    vd new_crit_route_time_feas = is_truck_mode
-                        ? check_route_feasibility(new_base_route, 0.0, true)
-                        : check_route_feasibility(new_base_route, 0.0, false);
-                    for (int insert_pos = 1; insert_pos < (int)target_route.size(); ++insert_pos) {
-                        // Build new candidate solution with relocation
-                        Solution candidate = initial_solution;
-                        // Insert cust into target route
-                        vi new_target_route = target_route;
-                        new_target_route.insert(new_target_route.begin() + insert_pos, cust);
-                        vd new_target_route_time_feas = (target_veh < h)
-                            ? check_route_feasibility(new_target_route, 0.0, true)
-                            : check_route_feasibility(new_target_route, 0.0, false);
+                        };
 
-                        // Compute cost of candidate
-                        candidate.deadline_violation += new_crit_route_time_feas[1] - crit_route_time_feas[1];
-                        candidate.deadline_violation += new_target_route_time_feas[1] - target_route_time_feas[1];
-                        candidate.capacity_violation += new_crit_route_time_feas[3] - crit_route_time_feas[3];
-                        candidate.capacity_violation += new_target_route_time_feas[3] - target_route_time_feas[3];
-                        candidate.energy_violation += new_crit_route_time_feas[2] - crit_route_time_feas[2];
-                        candidate.energy_violation += new_target_route_time_feas[2] - target_route_time_feas[2];
-                        if (is_truck_mode) {
-                            candidate.truck_routes[critical_vehicle_id] = new_base_route;
-                            candidate.truck_route_times[critical_vehicle_id] = new_crit_route_time_feas[0];
-                        } else {
-                            candidate.drone_routes[critical_vehicle_id - h] = new_base_route;
-                            candidate.drone_route_times[critical_vehicle_id - h] = new_crit_route_time_feas[0];
+                        for (int p2 = 1; p2 < (int)base_route.size(); ++p2) {
+                            if (p2 == p) continue;
+                            evaluate_intra(p2);
                         }
-                        if (target_veh < h) {
-                            candidate.truck_routes[target_veh] = new_target_route;
-                            candidate.truck_route_times[target_veh] = new_target_route_time_feas[0];
-                        } else {
-                            candidate.drone_routes[target_veh - h] = new_target_route;
-                            candidate.drone_route_times[target_veh - h] = new_target_route_time_feas[0];
-                        }
-                        candidate.total_makespan = 0.0;
-                        for (int i = 0; i < h; ++i) {
-                            candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[i]);
-                        }
+                        // End of route
+                        evaluate_intra(base_route.size());
+                    } else {
+                        // --- INTER-ROUTE RELOCATION (Different Vehicle) ---
+                        const vi& target_route = (target_veh < h) ? initial_solution.truck_routes[target_veh] : initial_solution.drone_routes[target_veh - h];
                         
-                        for (int i = 0; i < (int)candidate.drone_route_times.size(); ++i) {
-                            candidate.total_makespan = max(candidate.total_makespan, candidate.drone_route_times[i]);
+                        vd target_route_feas = (target_veh < h)
+                            ? check_route_feasibility(target_route, 0.0, true)
+                            : check_route_feasibility(target_route, 0.0, false);
+
+                        auto evaluate_inter = [&](int insert_pos) {
+                            vi new_target = target_route;
+                            if (insert_pos >= (int)new_target.size()) {
+                                new_target.push_back(cust);
+                                new_target.push_back(0);
+                            } else {
+                                new_target.insert(new_target.begin() + insert_pos, cust);
+                            }
+                            
+                            vd new_target_feas = (target_veh < h)
+                                ? check_route_feasibility(new_target, 0.0, true)
+                                : check_route_feasibility(new_target, 0.0, false);
+                            
+                            double new_deadline = initial_solution.deadline_violation 
+                                + (base_route_removed_feas[1] - crit_route_time_feas[1]) 
+                                + (new_target_feas[1] - target_route_feas[1]);
+                            double new_capacity = initial_solution.capacity_violation 
+                                + (base_route_removed_feas[3] - crit_route_time_feas[3]) 
+                                + (new_target_feas[3] - target_route_feas[3]);
+                            double new_energy = initial_solution.energy_violation 
+                                + (base_route_removed_feas[2] - crit_route_time_feas[2]) 
+                                + (new_target_feas[2] - target_route_feas[2]);
+                            
+                            double new_makespan = max({second_max_makespan, base_route_removed_feas[0], new_target_feas[0]});
+                            double new_total_sq = current_total_time_sq 
+                                - (crit_route_time_feas[0]*crit_route_time_feas[0]) + (base_route_removed_feas[0]*base_route_removed_feas[0])
+                                - (target_route_feas[0]*target_route_feas[0]) + (new_target_feas[0]*new_target_feas[0]);
+                            
+                            double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
+                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 1e-3) * pow(pen, PENALTY_EXPONENT);
+                            
+                            bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
+                            
+                            if (is_tabu && !(score + 1e-8 < best_cost && feasible)) return;
+                            
+                            if (score + 1e-8 < best_neighbor_cost_local) {
+                                best_neighbor_cost_local = score;
+                                best_target = target_veh;
+                                best_cust = cust;
+                                best_candidate_neighbor = initial_solution;
+                                if (is_truck_mode) {
+                                    best_candidate_neighbor.truck_routes[critical_vehicle_id] = base_route_removed;
+                                    best_candidate_neighbor.truck_route_times[critical_vehicle_id] = base_route_removed_feas[0];
+                                } else {
+                                    best_candidate_neighbor.drone_routes[critical_vehicle_id - h] = base_route_removed;
+                                    best_candidate_neighbor.drone_route_times[critical_vehicle_id - h] = base_route_removed_feas[0];
+                                }
+                                if (target_veh < h) {
+                                    best_candidate_neighbor.truck_routes[target_veh] = new_target;
+                                    best_candidate_neighbor.truck_route_times[target_veh] = new_target_feas[0];
+                                } else {
+                                    best_candidate_neighbor.drone_routes[target_veh - h] = new_target;
+                                    best_candidate_neighbor.drone_route_times[target_veh - h] = new_target_feas[0];
+                                }
+                                best_candidate_neighbor.deadline_violation = new_deadline;
+                                best_candidate_neighbor.capacity_violation = new_capacity;
+                                best_candidate_neighbor.energy_violation = new_energy;
+                                best_candidate_neighbor.total_makespan = new_makespan;
+                            }
+                        };
+
+                        for (int insert_pos = 1; insert_pos < (int)target_route.size(); ++insert_pos) {
+                            evaluate_inter(insert_pos);
                         }
-                        double candidate_score = solution_score_total_time(candidate);
-                        bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
-                                                   candidate.capacity_violation <= 1e-8 &&
-                                                   candidate.energy_violation <= 1e-8;
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost && candidate_feasible)) {
-                            continue; // skip tabu move
-                        }
-                        // Update best if improved
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_target = target_veh;
-                            best_cust = cust;
-                        }
-                    }
-                    // Also try inserting at the end of the target route
-                    vi new_target_route = target_route;
-                    new_target_route.push_back(cust);
-                    new_target_route.push_back(0);
-                    vd new_target_route_time_feas = (target_veh < h)
-                        ? check_route_feasibility(new_target_route, 0.0, true)
-                        : check_route_feasibility(new_target_route, 0.0, false);
-                    // Build new candidate solution with relocation
-                    Solution candidate = initial_solution;
-                    // Compute cost of candidate
-                    candidate.deadline_violation += new_crit_route_time_feas[1] - crit_route_time_feas[1];
-                    candidate.deadline_violation += new_target_route_time_feas[1] - target_route_time_feas[1];
-                    candidate.capacity_violation += new_crit_route_time_feas[3] - crit_route_time_feas[3];
-                    candidate.capacity_violation += new_target_route_time_feas[3] - target_route_time_feas[3];
-                    candidate.energy_violation += new_crit_route_time_feas[2] - crit_route_time_feas[2];
-                    candidate.energy_violation += new_target_route_time_feas[2] - target_route_time_feas[2];
-                    if (is_truck_mode) {
-                        candidate.truck_routes[critical_vehicle_id] = new_base_route;
-                        candidate.truck_route_times[critical_vehicle_id] = new_crit_route_time_feas[0];
-                    } else {
-                        candidate.drone_routes[critical_vehicle_id - h] = new_base_route;
-                        candidate.drone_route_times[critical_vehicle_id - h] = new_crit_route_time_feas[0];
-                    }
-                    if (target_veh < h) {
-                        candidate.truck_routes[target_veh] = new_target_route;
-                        candidate.truck_route_times[target_veh] = new_target_route_time_feas[0];
-                    } else {
-                        candidate.drone_routes[target_veh - h] = new_target_route;
-                        candidate.drone_route_times[target_veh - h] = new_target_route_time_feas[0];
-                    }
-                    candidate.total_makespan = 0.0;
-                    for (int i = 0; i < h; ++i) {
-                        candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[i]);
-                    }
-                    for (int i = 0; i < (int)candidate.drone_route_times.size(); ++i) {
-                        candidate.total_makespan = max(candidate.total_makespan, candidate.drone_route_times[i]);
-                    }
-                    double candidate_score = solution_score_total_time(candidate);
-                    bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
-                                               candidate.capacity_violation <= 1e-8 &&
-                                               candidate.energy_violation <= 1e-8;
-                    if (is_tabu && !(candidate_score + 1e-8 < best_cost && candidate_feasible)) {
-                        continue; // skip tabu move
-                    }
-                    // Update best if improved
-                    if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                        best_neighbor_cost_local = candidate_score;
-                        best_candidate_neighbor = candidate;
-                        best_target = target_veh;
-                        best_cust = cust;
+                        evaluate_inter(target_route.size());
                     }
                 }
             }
