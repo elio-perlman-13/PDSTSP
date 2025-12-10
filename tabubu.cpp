@@ -403,8 +403,8 @@ void update_served_by_drone() {
         }
         // Energy: use compute_drone_route_energy for depot->customer->depot
         vi route = {depot, customer, depot};
-        auto [total_energy, feasible_energy] = compute_drone_route_energy(route);
-        if (!feasible_energy) {
+        auto [total_energy, energy_violation] = compute_drone_route_energy(route);
+        if (energy_violation > 1e-8) {
             served_by_drone[customer] = 0;
             continue;
         }
@@ -5732,8 +5732,6 @@ int main(int argc, char* argv[]) {
     if (CFG_KNN_K > 0) compute_knn_lists(CFG_KNN_K); else { KNN_LIST.assign(n + 1, {}); KNN_ADJ.assign(n + 1, vector<char>(n + 1, 0)); }
 
     // Pre-filter dronable customers by capacity/energy
-    update_served_by_drone();
-
     //For another data-testing: change all deadline to a constant 3600 and all serving time to 0
     for (int i = 1; i <= n; ++i) {
         deadline[i] = 3600.0;
@@ -5741,7 +5739,16 @@ int main(int argc, char* argv[]) {
         serve_drone[i] = 0.0;
     }
 
-    
+    update_served_by_drone();
+    //print test the served by drone
+    /* cout << "Customers that can be served by drone:\n";
+    for (int i = 1; i <= n; ++i) {
+        if (served_by_drone[i]) {
+            cout << i << " "; 
+        }
+    }
+    cout << "\n";
+    exit(1); */
 
     // Track best across attempts
     bool have_best = false;
