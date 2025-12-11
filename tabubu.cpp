@@ -5496,7 +5496,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
         double alpha = 0.998; // cooling rate
         bool total_score_iter = total_score_segment;
         // testing
-        //total_score_iter = false;
+        total_score_iter = false;
         Solution best_segment_sol = current_sol;
         double best_segment_score = total_score_iter
             ? solution_score_total_time(best_segment_sol)
@@ -5602,7 +5602,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 score[selected_neighbor] += gamma1;
                 no_improve_iters = 0;
                 best_solution_score_now = neighbor_score;
-                updated_edge_records(neighbor);
+                //updated_edge_records(neighbor);
                 //Solution tmp = updated_elite_set(neighbor);
                 total_score_segment = false;
                 /* if (!total_score_iter) cout << "New best sol with makespan " << neighbor.total_makespan << endl;
@@ -5695,6 +5695,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                     update_penalties(current_sol);
                     local_iter++;
                 }*/
+                // Intensification via local search on all neighborhoods
                 if (no_improve_iters >= CFG_MAX_NO_IMPROVE){
                     vector<int> neighborhood_order(NUM_NEIGHBORHOODS);;
                     for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
@@ -5703,7 +5704,9 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                     sort(neighborhood_order.begin(), neighborhood_order.end(), [&](int a, int b) {
                         return weight[a] > weight[b];
                     });
-                    bool improved = true;
+                    //testing: no intentification
+                    //bool improved = true;
+                    bool improved = false;
                     while (improved) {
                         improved = false;
                         for (int ni : neighborhood_order) {
@@ -5719,7 +5722,8 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                                     
                                     current_sol = neighbor;
                                     improved = true;
-                                    updated_edge_records(neighbor);
+                                    cout << "Improved on neighborhood " << ni << " to total score " << neighbor_score << " with makespan " << neighbor.total_makespan << "\n";
+                                    //updated_edge_records(neighbor);
                                     
                                     // [FIX] Update best score tracker for subsequent searches
                                     if (neighbor_score < best_solution_score_now) {
@@ -5739,7 +5743,8 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                                     
                                     current_sol = neighbor;
                                     improved = true;
-                                    updated_edge_records(neighbor);
+                                    //updated_edge_records(neighbor);
+                                    cout << "Improved on neighborhood " << ni << " to total score " << neighbor_score << " with makespan " << neighbor.total_makespan << "\n";
 
                                     // [FIX] Update best score tracker for subsequent searches
                                     if (neighbor_score < best_solution_score_now) {

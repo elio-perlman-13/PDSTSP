@@ -84,15 +84,21 @@ jobs:
         run: chmod +x tabubu
 
       - name: Run tabubu on instance
+        timeout-minutes: 355 # slightly less than job timeout to allow cleanup steps to run
         run: |
           mkdir -p outputs
           ./tabubu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
+
+      - name: Prepare outputs
+        if: always()
+        run: |
           # copy solver's best output if created
           if [[ -f output_solution_best.txt ]]; then
             cp output_solution_best.txt "outputs/${{ matrix.base }}_best.txt"
           fi
 
       - name: Upload per-instance artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.base }}-tabubu-results
@@ -104,6 +110,7 @@ jobs:
   collect-all:
     name: Collect and compress all artifacts
     runs-on: ubuntu-latest
+    if: always()
     needs: run-instance
     timeout-minutes: 60
     steps:
