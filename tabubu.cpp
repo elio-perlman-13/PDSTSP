@@ -5704,13 +5704,16 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                     sort(neighborhood_order.begin(), neighborhood_order.end(), [&](int a, int b) {
                         return weight[a] > weight[b];
                     });
-                    //testing: no intentification
-                    //bool improved = true;
-                    bool improved = false;
-                    while (improved) {
+                    testing: no intentification
+                    bool improved = true;
+                    //bool improved = false;
+                    int limit_intensification = 0;
+                    while (improved && limit_intensification < 20){ {
                         improved = false;
                         for (int ni : neighborhood_order) {
                             Solution neighbor;
+                            limit_intensification++;
+                            if (limit_intensification >= 21) break;
                             if (total_score_iter){
                                 neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now);
                                 //neighbor = recalculate_solution(neighbor);
