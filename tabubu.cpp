@@ -5704,7 +5704,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                     sort(neighborhood_order.begin(), neighborhood_order.end(), [&](int a, int b) {
                         return weight[a] > weight[b];
                     });
-                    testing: no intentification
+                    //testing: no intentification
                     bool improved = true;
                     //bool improved = false;
                     int limit_intensification = 0;
