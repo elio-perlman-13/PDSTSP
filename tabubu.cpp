@@ -5670,7 +5670,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         improved = false;
                         for (int ni : neighborhood_order) {
                             Solution neighbor;
-                            //limit_intensification++;
+                            limit_intensification++;
                             if (limit_intensification >= 21) break;
                             if (total_score_iter){
                                 neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now);
