@@ -613,6 +613,126 @@ vvi kmeans_clustering(int k, int max_iters=1000) {
     return clusters;
 }
 
+Solution greedy_insert_customer(Solution sol, int customer, bool minimize_delta) {
+    Solution best_sol = sol;
+    double best_score = 1e18;
+    auto try_insert = [&](vi base_route, bool is_truck, int route_idx) {
+        vd base_metrics = check_route_feasibility(base_route, 0.0, is_truck);
+        for (size_t pos = 1; pos < base_route.size(); ++pos) {
+            vi new_route = base_route;
+            new_route.insert(new_route.begin() + pos, customer);
+            vd new_metrics = check_route_feasibility(new_route, 0.0, is_truck);
+            double new_makespan = 0.0;
+            for (int t = 0; t < h; ++t){
+                new_makespan = max(new_makespan, (t == route_idx && is_truck) ? new_metrics[0] : sol.truck_route_times[t]);
+            }
+            for (int t = 0; t < d; ++t){
+                new_makespan = max(new_makespan, (t == route_idx && !is_truck) ? new_metrics[0] : sol.drone_route_times[t]);
+            }
+            double new_deadline_violation = sol.deadline_violation + new_metrics[1] - base_metrics[1];
+            double new_energy_violation = sol.energy_violation + new_metrics[2] - base_metrics[2];
+            double new_capacity_violation = sol.capacity_violation + new_metrics[3] - base_metrics[3];
+            double violation = new_deadline_violation * 1e3 +
+                               new_energy_violation * 1e3 +
+                               new_capacity_violation * 1e3;
+           double objective_val = 0.0;
+            if (minimize_delta) {
+                // Minimize added time (Cheapest Insertion) -> Creates tight clusters
+                double delta = new_metrics[0] - base_metrics[0];
+                
+                // Get the current total time of the vehicle we are considering
+                double current_load = is_truck ? sol.truck_route_times[route_idx] : sol.drone_route_times[route_idx];
+                
+                // Add a tiny penalty based on current load.
+                // If Deltas are equal (common for drones), this forces the algorithm to pick the emptier vehicle.
+                // 1e-4 is small enough not to override true geographic efficiency.
+                objective_val = delta + (current_load * 1e-3);
+            } else {
+                // Minimize global makespan -> Balances load (but can cause crossing)
+                objective_val = new_makespan;
+            }
+
+            double new_score = objective_val * pow((1.0 + violation), PENALTY_EXPONENT);
+            if (new_score + 1e-8 < best_score) {
+                best_score = new_score;
+                best_sol = sol;
+                best_sol.deadline_violation = new_deadline_violation;
+                best_sol.energy_violation = new_energy_violation;
+                best_sol.capacity_violation = new_capacity_violation; 
+                best_sol.total_makespan = new_makespan;
+                if (is_truck) {
+                    best_sol.truck_routes[route_idx] = new_route;
+                    best_sol.truck_route_times[route_idx] = new_metrics[0];
+                } else {
+                    best_sol.drone_routes[route_idx] = new_route;
+                    best_sol.drone_route_times[route_idx] = new_metrics[0];
+                }
+            }
+        }
+        // Also attempt to insert at the end of the route
+        {
+            vi new_route = base_route;
+            if (new_route.back() != 0) new_route.push_back(0);
+            new_route.push_back(customer);
+            new_route.push_back(0);
+            vd new_metrics = check_route_feasibility(new_route, 0.0, is_truck);
+            double new_makespan = 0.0;
+            for (int t = 0; t < h; ++t){
+                new_makespan = max(new_makespan, (t == route_idx && is_truck) ? new_metrics[0] : sol.truck_route_times[t]);
+            }
+            for (int t = 0; t < d; ++t){
+                new_makespan = max(new_makespan, (t == route_idx && !is_truck) ? new_metrics[0] : sol.drone_route_times[t]);
+            }
+            double new_deadline_violation = max(sol.deadline_violation + new_metrics[1] - base_metrics[1], 0.0);
+            double new_energy_violation = max(sol.energy_violation + new_metrics[2] - base_metrics[2], 0.0);
+            double new_capacity_violation = max(sol.capacity_violation + new_metrics[3] - base_metrics[3], 0.0);
+            double violation = new_deadline_violation * 1e3 +
+                               new_energy_violation * 1e3 +
+                               new_capacity_violation * 1e3;
+            double objective_val = 0.0;
+            if (minimize_delta) {
+                // Minimize added time (Cheapest Insertion) -> Creates tight clusters
+                double delta = new_metrics[0] - base_metrics[0];
+                
+                // Get the current total time of the vehicle we are considering
+                double current_load = is_truck ? sol.truck_route_times[route_idx] : sol.drone_route_times[route_idx];
+                
+                // Add a tiny penalty based on current load.
+                // If Deltas are equal (common for drones), this forces the algorithm to pick the emptier vehicle.
+                // 1e-4 is small enough not to override true geographic efficiency.
+                objective_val = delta + (current_load * 1e-3);
+            } else {
+                // Minimize global makespan -> Balances load (but can cause crossing)
+                objective_val = new_makespan;
+            }
+
+            double new_score = objective_val * pow((1.0 + violation), PENALTY_EXPONENT);
+            if (new_score + 1e-8 < best_score) {
+                best_score = new_score;
+                best_sol = sol;
+                best_sol.deadline_violation = new_deadline_violation;
+                best_sol.energy_violation = new_energy_violation;
+                best_sol.capacity_violation = new_capacity_violation;
+                best_sol.total_makespan = new_makespan;
+                if (is_truck) {
+                    best_sol.truck_routes[route_idx] = new_route;
+                    best_sol.truck_route_times[route_idx] = new_metrics[0];
+                } else {
+                    best_sol.drone_routes[route_idx] = new_route;
+                    best_sol.drone_route_times[route_idx] = new_metrics[0];
+                }
+            }
+        }
+    };
+    for (int i = 0; i < h; ++i) {
+        try_insert(sol.truck_routes[i], true, i);
+    }
+    for (int i = 0; i < d; ++i) {
+        try_insert(sol.drone_routes[i], false, i);
+    }
+    return best_sol;
+}
+
 Solution generate_initial_solution(){
     Solution sol;
     sol.truck_routes.resize(h);
@@ -992,54 +1112,6 @@ Solution generate_initial_solution(){
             stall_count = 0;
         }
     }
-    // if there are still unvisited customers, assign them to any vehicle that can take them
-    for (int cust = 1; cust <= n; ++cust) {
-        if (visited[cust]) continue;
-        bool assigned = false;
-        for (int i = 0; i < h && !assigned; ++i) {
-            // Try truck first
-            vi r = sol.truck_routes[i];
-            int current_node = r.empty() ? 0 : r.back();
-            double current_time = service_times_truck[i];
-            double time_to_cust = compute_truck_route_time({current_node, cust}, current_time).first;
-            double time_bomb_at_cust = min(timebomb_truck[i] - time_to_cust, deadline[cust]);
-            double time_back_to_depot = compute_truck_route_time({cust, 0}, current_time + time_to_cust).first;
-            if (time_bomb_at_cust - time_back_to_depot > 1e-8 && capacity_used_truck[i] + demand[cust] <= (double)Dh + 1e-9) {
-                r.push_back(cust);
-                service_times_truck[i] += time_to_cust;
-                capacity_used_truck[i] += demand[cust];
-                timebomb_truck[i] = min(timebomb_truck[i] - time_to_cust, deadline[cust]);
-                sol.truck_routes[i] = r;
-                visited[cust] = true;
-                assigned = true;
-                num_of_visited_customers++;
-                break;
-            }
-            // Then try drone
-            r = sol.drone_routes[i];
-            current_node = r.empty() ? 0 : r.back();
-            current_time = service_times_drone[i];
-            time_to_cust = compute_drone_route_time({current_node, cust}).first;
-            time_bomb_at_cust = min(timebomb_drone[i] - time_to_cust, deadline[cust]);
-            time_back_to_depot = compute_drone_route_time({cust, 0}).first;
-            double total_energy = (time_to_cust - serve_drone[cust]) * (power_beta * capacity_used_drone[i] + power_gamma)
-                                  + (time_back_to_depot) * (power_beta * (capacity_used_drone[i] + demand[cust]) + power_gamma);
-            if (time_bomb_at_cust - time_back_to_depot > 1e-8
-                && capacity_used_drone[i] + demand[cust] <= Dd + 1e-9
-                && energy_used_drone[i] + total_energy <= E + 1e-9) {
-                r.push_back(cust);
-                service_times_drone[i] += time_to_cust;
-                energy_used_drone[i] += total_energy;
-                capacity_used_drone[i] += demand[cust];
-                timebomb_drone[i] = min(timebomb_drone[i] - time_to_cust, deadline[cust]);
-                sol.drone_routes[i] = r;
-                visited[cust] = true;
-                assigned = true;
-                num_of_visited_customers++;
-                break;
-            }
-        }
-    }
     // Reallocate drone sorties (depot-to-depot) across d drones using LPT to minimize makespan
     {
         // Extract sorties from current drone routes
@@ -1166,6 +1238,12 @@ Solution generate_initial_solution(){
         sol.deadline_violation += metrics[1];
         sol.energy_violation += metrics[2];
         sol.capacity_violation += metrics[3];
+    }
+        // if there are still unvisited customers, assign them greedily with smallest delta increase
+    for (int cust = 1; cust <= n; ++cust) {
+        if (visited[cust]) continue;
+        cout << "Warning: customer " << cust << " unvisited after initial solution construction; assigning greedily.\n";
+        sol = greedy_insert_customer(sol, cust, true);
     }
     return sol;
 }
@@ -5132,126 +5210,6 @@ Solution updated_elite_set(const Solution& sol) {
     return tmp;
 }
 
-Solution greedy_insert_customer(Solution sol, int customer, bool minimize_delta) {
-    Solution best_sol = sol;
-    double best_score = 1e18;
-    auto try_insert = [&](vi base_route, bool is_truck, int route_idx) {
-        vd base_metrics = check_route_feasibility(base_route, 0.0, is_truck);
-        for (size_t pos = 1; pos < base_route.size(); ++pos) {
-            vi new_route = base_route;
-            new_route.insert(new_route.begin() + pos, customer);
-            vd new_metrics = check_route_feasibility(new_route, 0.0, is_truck);
-            double new_makespan = 0.0;
-            for (int t = 0; t < h; ++t){
-                new_makespan = max(new_makespan, (t == route_idx && is_truck) ? new_metrics[0] : sol.truck_route_times[t]);
-            }
-            for (int t = 0; t < d; ++t){
-                new_makespan = max(new_makespan, (t == route_idx && !is_truck) ? new_metrics[0] : sol.drone_route_times[t]);
-            }
-            double new_deadline_violation = sol.deadline_violation + new_metrics[1] - base_metrics[1];
-            double new_energy_violation = sol.energy_violation + new_metrics[2] - base_metrics[2];
-            double new_capacity_violation = sol.capacity_violation + new_metrics[3] - base_metrics[3];
-            double violation = new_deadline_violation * 1e3 +
-                               new_energy_violation * 1e3 +
-                               new_capacity_violation * 1e3;
-           double objective_val = 0.0;
-            if (minimize_delta) {
-                // Minimize added time (Cheapest Insertion) -> Creates tight clusters
-                double delta = new_metrics[0] - base_metrics[0];
-                
-                // Get the current total time of the vehicle we are considering
-                double current_load = is_truck ? sol.truck_route_times[route_idx] : sol.drone_route_times[route_idx];
-                
-                // Add a tiny penalty based on current load.
-                // If Deltas are equal (common for drones), this forces the algorithm to pick the emptier vehicle.
-                // 1e-4 is small enough not to override true geographic efficiency.
-                objective_val = delta + (current_load * 1e-3);
-            } else {
-                // Minimize global makespan -> Balances load (but can cause crossing)
-                objective_val = new_makespan;
-            }
-
-            double new_score = objective_val * pow((1.0 + violation), PENALTY_EXPONENT);
-            if (new_score + 1e-8 < best_score) {
-                best_score = new_score;
-                best_sol = sol;
-                best_sol.deadline_violation = new_deadline_violation;
-                best_sol.energy_violation = new_energy_violation;
-                best_sol.capacity_violation = new_capacity_violation; 
-                best_sol.total_makespan = new_makespan;
-                if (is_truck) {
-                    best_sol.truck_routes[route_idx] = new_route;
-                    best_sol.truck_route_times[route_idx] = new_metrics[0];
-                } else {
-                    best_sol.drone_routes[route_idx] = new_route;
-                    best_sol.drone_route_times[route_idx] = new_metrics[0];
-                }
-            }
-        }
-        // Also attempt to insert at the end of the route
-        {
-            vi new_route = base_route;
-            if (new_route.back() != 0) new_route.push_back(0);
-            new_route.push_back(customer);
-            new_route.push_back(0);
-            vd new_metrics = check_route_feasibility(new_route, 0.0, is_truck);
-            double new_makespan = 0.0;
-            for (int t = 0; t < h; ++t){
-                new_makespan = max(new_makespan, (t == route_idx && is_truck) ? new_metrics[0] : sol.truck_route_times[t]);
-            }
-            for (int t = 0; t < d; ++t){
-                new_makespan = max(new_makespan, (t == route_idx && !is_truck) ? new_metrics[0] : sol.drone_route_times[t]);
-            }
-            double new_deadline_violation = max(sol.deadline_violation + new_metrics[1] - base_metrics[1], 0.0);
-            double new_energy_violation = max(sol.energy_violation + new_metrics[2] - base_metrics[2], 0.0);
-            double new_capacity_violation = max(sol.capacity_violation + new_metrics[3] - base_metrics[3], 0.0);
-            double violation = new_deadline_violation * 1e3 +
-                               new_energy_violation * 1e3 +
-                               new_capacity_violation * 1e3;
-            double objective_val = 0.0;
-            if (minimize_delta) {
-                // Minimize added time (Cheapest Insertion) -> Creates tight clusters
-                double delta = new_metrics[0] - base_metrics[0];
-                
-                // Get the current total time of the vehicle we are considering
-                double current_load = is_truck ? sol.truck_route_times[route_idx] : sol.drone_route_times[route_idx];
-                
-                // Add a tiny penalty based on current load.
-                // If Deltas are equal (common for drones), this forces the algorithm to pick the emptier vehicle.
-                // 1e-4 is small enough not to override true geographic efficiency.
-                objective_val = delta + (current_load * 1e-3);
-            } else {
-                // Minimize global makespan -> Balances load (but can cause crossing)
-                objective_val = new_makespan;
-            }
-
-            double new_score = objective_val * pow((1.0 + violation), PENALTY_EXPONENT);
-            if (new_score + 1e-8 < best_score) {
-                best_score = new_score;
-                best_sol = sol;
-                best_sol.deadline_violation = new_deadline_violation;
-                best_sol.energy_violation = new_energy_violation;
-                best_sol.capacity_violation = new_capacity_violation;
-                best_sol.total_makespan = new_makespan;
-                if (is_truck) {
-                    best_sol.truck_routes[route_idx] = new_route;
-                    best_sol.truck_route_times[route_idx] = new_metrics[0];
-                } else {
-                    best_sol.drone_routes[route_idx] = new_route;
-                    best_sol.drone_route_times[route_idx] = new_metrics[0];
-                }
-            }
-        }
-    };
-    for (int i = 0; i < h; ++i) {
-        try_insert(sol.truck_routes[i], true, i);
-    }
-    for (int i = 0; i < d; ++i) {
-        try_insert(sol.drone_routes[i], false, i);
-    }
-    return best_sol;
-}
-
 Solution destroy_and_repair(Solution sol) {
     // [FIX] Use Radial Ruin (Spatial) instead of random/history
     // This removes a geographic cluster, allowing it to be reassigned to a single vehicle
@@ -5496,7 +5454,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
         double alpha = 0.998; // cooling rate
         bool total_score_iter = total_score_segment;
         // testing
-        total_score_iter = false;
+        //total_score_iter = false;
         Solution best_segment_sol = current_sol;
         double best_segment_score = total_score_iter
             ? solution_score_total_time(best_segment_sol)
@@ -5705,14 +5663,14 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         return weight[a] > weight[b];
                     });
                     //testing: no intentification
-                    bool improved = true;
-                    //bool improved = false;
+                    //bool improved = true;
+                    bool improved = false;
                     int limit_intensification = 0;
                     while (improved && limit_intensification < 20){ 
                         improved = false;
                         for (int ni : neighborhood_order) {
                             Solution neighbor;
-                            limit_intensification++;
+                            //limit_intensification++;
                             if (limit_intensification >= 21) break;
                             if (total_score_iter){
                                 neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now);

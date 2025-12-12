@@ -52,7 +52,7 @@ jobs:
           # -march=native: optimize for the cloud CPU
           # -DNDEBUG: disable assertions for speed
           # -O3: max optimization
-          g++ -O3 -std=c++20 -march=native -DNDEBUG -pthread -o tabubu tabubu.cpp 
+          g++ -O3 -std=c++20 -march=native -DNDEBUG -pthread -flto -pipe -funroll-loops -o tabubu tabubu.cpp
 
       - name: Upload solver binary
         uses: actions/upload-artifact@v4
