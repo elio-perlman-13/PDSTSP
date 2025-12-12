@@ -5708,7 +5708,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                     bool improved = true;
                     //bool improved = false;
                     int limit_intensification = 0;
-                    while (improved && limit_intensification < 20){ {
+                    while (improved && limit_intensification < 20){ 
                         improved = false;
                         for (int ni : neighborhood_order) {
                             Solution neighbor;
