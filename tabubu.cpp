@@ -43,7 +43,7 @@ int L = 24; //number of time segments in a day
 vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
 vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
 double Dd = 2.27, E = 7200000.0; //drone's weight and energy capacities (for all drones)
-double v_fly_drone = 31.2928, v_take_off = 15.6464, v_landing = 7.8232; // speed of the drone
+double v_fly_drone = 31.3, v_take_off = 15.6, v_landing = 7.8; // speed of the drone
 double height = 50; // height of the drone
 //double height = 0; // height of the drone
 //double power_beta = 0, power_gamma = 1.0; //coefficients for drone energy consumption per second
@@ -486,10 +486,10 @@ double solution_score(const Solution& sol) {
                                 + PENALTY_LAMBDA_ENERGY * sol.energy_violation
                                 + PENALTY_LAMBDA_DEADLINE * sol.deadline_violation;
      double mean_time_squared = 0.0;
-    for (double t : sol.truck_route_times) mean_time_squared += t * t;
-    for (double t : sol.drone_route_times) mean_time_squared += t * t;
-    mean_time_squared /= (h + d);            
-    return (sol.total_makespan + std::sqrt(mean_time_squared) * 1e-3) * pow(penalty_multiplier, PENALTY_EXPONENT);
+    for (double t : sol.truck_route_times) mean_time_squared += t;
+    for (double t : sol.drone_route_times) mean_time_squared += t;
+    mean_time_squared /= (h + d);        
+    return (sol.total_makespan + (mean_time_squared) * 1e-3) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
 double solution_score_total_time(const Solution& sol) {
@@ -1527,7 +1527,10 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                             
-                            if (is_tabu && !(score + 1e-8 < best_cost && feasible)) return;
+                            if (is_tabu && !(score + 1e-8 < best_cost && feasible)){
+                                cout << "Tabu move skipped: cust " << cust << " to vehicle " << target_veh << " until iter " << tabu_list_10[cust][target_veh] << "\n";
+                                return;
+                            }
                             
                             if (score + 1e-8 < best_neighbor_cost_local) {
                                 best_neighbor_cost_local = score;

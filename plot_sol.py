@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 from typing import List, Tuple, Dict
 import re
+import sys
+import os
+
 def read_instance(filename):
     with open(filename, 'r') as f:
         lines = f.readlines()
@@ -19,10 +22,6 @@ def read_instance(filename):
         dronable = int(float(parts[2]))
         customers.append((x, y, dronable))
     return depot_coords, customers
-
-file_path = '/workspaces/PDSTSP/instance/50.20.3.txt'
-
-depot, customers = read_instance(file_path)
 
 
 # --- New: Parse Served by Drone from output.txt ---
@@ -223,7 +222,32 @@ def parse_routes_from_output(output_file: str) -> Tuple[List[List[int]], List[Li
             continue
     return trucks, drones
 
-def plot_routes(instance_file: str, trucks: List[List[int]], drones: List[List[int]], savepath: str = 'routes_plot.png') -> None:
+def parse_makespan(output_file: str) -> float:
+    """
+    Parse makespan from output file.
+    Looks for lines like:
+    'Total validation: Makespan=42449.708024, ...'
+    or
+    'Current Solution Score: ..., Makespan: 42449.708024'
+    """
+    try:
+        with open(output_file, 'r') as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        return 0.0
+
+    for line in lines:
+        # Check for "Total validation: Makespan=..."
+        m = re.search(r'Makespan=([\d\.]+)', line)
+        if m:
+            return float(m.group(1))
+        # Check for "Makespan: ..."
+        m = re.search(r'Makespan:\s*([\d\.]+)', line)
+        if m:
+            return float(m.group(1))
+    return 0.0
+
+def plot_routes(instance_file: str, trucks: List[List[int]], drones: List[List[int]], savepath: str = 'routes_plot.png', title_suffix: str = "") -> None:
     depot, customers = read_instance(instance_file)
     id_to_xy: Dict[int, Tuple[float, float]] = {idx: (x, y) for idx, (x, y, _d) in enumerate(customers, start=1)}
     id_to_xy[0] = depot
@@ -276,7 +300,10 @@ def plot_routes(instance_file: str, trucks: List[List[int]], drones: List[List[i
 
     plt.xlabel('X')
     plt.ylabel('Y')
-    plt.title('Truck and Drone Routes')
+    title = 'Truck and Drone Routes'
+    if title_suffix:
+        title += f'\n{title_suffix}'
+    plt.title(title)
     plt.legend(loc='best')
     plt.grid(True)
     plt.tight_layout()
@@ -286,15 +313,30 @@ def plot_routes(instance_file: str, trucks: List[List[int]], drones: List[List[i
 
 # --- Entry point ---
 if __name__ == "__main__":
+    if len(sys.argv) >= 3:
+        instance_file = sys.argv[1]
+        solution_file = sys.argv[2]
+    else:
+        # Default fallback
+        instance_file = '/workspaces/PDSTSP/instance/200.40.4.txt'
+        solution_file = 'output_solution_best.txt'
+        print(f"Usage: python3 plot_sol.py <instance_file> <solution_file>")
+        print(f"Using defaults: {instance_file} {solution_file}")
+
+    # Extract info for title
+    instance_name = os.path.basename(instance_file)
+    makespan = parse_makespan(solution_file)
+    title_suffix = f"Instance: {instance_name}, Makespan: {makespan:.2f}"
+
     # 1) Try plotting routes if present
-    trucks, drones = parse_routes_from_output('output_solution_best.txt')
+    trucks, drones = parse_routes_from_output(solution_file)
     if trucks or drones:
-        plot_routes(file_path, trucks, drones, savepath='routes_plot.png')
+        plot_routes(instance_file, trucks, drones, savepath='routes_plot.png', title_suffix=title_suffix)
     else:
         # 2) Else try clusters
-        clusters = parse_clusters_from_output('output_solution_best.txt')
+        clusters = parse_clusters_from_output(solution_file)
         if clusters:
-            plot_clusters(file_path, clusters, savepath='clusters_plot.png')
+            plot_clusters(instance_file, clusters, savepath='clusters_plot.png')
         else:
             # 3) Else fallback to served-by-drone scatter
-            plot_served_by_drone(file_path, 'output.txt')
+            plot_served_by_drone(instance_file, 'output.txt')
