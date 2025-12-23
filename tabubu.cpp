@@ -485,14 +485,14 @@ double solution_score(const Solution& sol) {
     double penalty_multiplier = 1.0 + PENALTY_LAMBDA_CAPACITY * sol.capacity_violation
                                 + PENALTY_LAMBDA_ENERGY * sol.energy_violation
                                 + PENALTY_LAMBDA_DEADLINE * sol.deadline_violation;
-    double mean_time = 0.0;
-    for (double t : sol.truck_route_times) mean_time += t;
-    for (double t : sol.drone_route_times) mean_time += t;
-    mean_time /= (h + d);
-    double variance = 0.0;
-    for (double t : sol.truck_route_times) variance += (t - mean_time) * (t - mean_time);
-    for (double t : sol.drone_route_times) variance += (t - mean_time) * (t - mean_time);
-    return (sol.total_makespan + (variance) * 1e-3) * pow(penalty_multiplier, PENALTY_EXPONENT);
+    double sum_sq = 0.0;
+    for (double t : sol.truck_route_times) sum_sq += t * t;
+    for (double t : sol.drone_route_times) sum_sq += t * t;
+    
+    double l2_norm = std::sqrt(sum_sq);
+
+    // 1e-3 ensures it acts as a tie-breaker without overriding the primary Makespan objective
+    return (sol.total_makespan + l2_norm * 1e-3) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
 double solution_score_total_time(const Solution& sol) {
