@@ -1531,7 +1531,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                             
                             if (is_tabu && !(score + 1e-8 < best_cost && feasible)){
-                                cout << "Tabu move skipped: cust " << cust << " to vehicle " << target_veh << " until iter " << tabu_list_10[cust][target_veh] << "\n";
+                                //cout << "Tabu move skipped: cust " << cust << " to vehicle " << target_veh << " until iter " << tabu_list_10[cust][target_veh] << "\n";
                                 return;
                             }
                             
