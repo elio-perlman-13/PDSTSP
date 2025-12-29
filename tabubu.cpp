@@ -492,7 +492,7 @@ double solution_score(const Solution& sol) {
     double l2_norm = std::sqrt(sum_sq);
 
     // 1e-3 ensures it acts as a tie-breaker without overriding the primary Makespan objective
-    return (sol.total_makespan + l2_norm * 1e-3) * pow(penalty_multiplier, PENALTY_EXPONENT);
+    return (sol.total_makespan) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
 double solution_score_total_time(const Solution& sol) {
@@ -1458,7 +1458,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             double new_total_sq = current_total_time_sq - (crit_route_time_feas[0]*crit_route_time_feas[0]) + (new_feas[0]*new_feas[0]);
                             
                             double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 1e-3) * pow(pen, PENALTY_EXPONENT);
+                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 0) * pow(pen, PENALTY_EXPONENT);
                             
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                             
@@ -1526,7 +1526,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                                 - (target_route_feas[0]*target_route_feas[0]) + (new_target_feas[0]*new_target_feas[0]);
                             
                             double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 1e-3) * pow(pen, PENALTY_EXPONENT);
+                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 0) * pow(pen, PENALTY_EXPONENT);
                             
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                             
@@ -1662,7 +1662,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             double new_sum_squares = current_sum_squares
                                 - (crit_metrics[0] * crit_metrics[0]) + (new_crit_metrics[0] * new_crit_metrics[0]);
                             double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + std::sqrt(new_sum_squares) / (h + d) * 1e-3) * pow(pen, PENALTY_EXPONENT);
+                            double score = (new_makespan + std::sqrt(new_sum_squares) / (h + d) * 0) * pow(pen, PENALTY_EXPONENT);
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                             if (is_tabu && !(score + 1e-8 < best_cost && feasible)) continue;
                             if (score + 1e-8 < best_neighbor_cost_local) {
@@ -1748,7 +1748,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             - (crit_metrics[0] * crit_metrics[0]) + (new_crit_metrics[0] * new_crit_metrics[0])
                             - (target_metrics[0] * target_metrics[0]) + (new_target_metrics[0] * new_target_metrics[0]);
                         double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                        double score = (new_makespan + std::sqrt(new_sum_squares) / (h + d) * 1e-3) * pow(pen, PENALTY_EXPONENT);
+                        double score = (new_makespan + std::sqrt(new_sum_squares) / (h + d) * 0) * pow(pen, PENALTY_EXPONENT);
                         bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                         if (is_tabu && !(score + 1e-8 < best_cost && feasible)) continue;
                         if (score + 1e-8 < best_neighbor_cost_local) {
@@ -3309,7 +3309,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             double new_total_sq = current_total_time_sq - (crit_route_time_feas[0]*crit_route_time_feas[0]) + (new_feas[0]*new_feas[0]);
                             
                             double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 1e-3) * pow(pen, PENALTY_EXPONENT);
+                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 0) * pow(pen, PENALTY_EXPONENT);
                             
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                             
@@ -3377,7 +3377,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                                 - (target_route_feas[0]*target_route_feas[0]) + (new_target_feas[0]*new_target_feas[0]);
                             
                             double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 1e-3) * pow(pen, PENALTY_EXPONENT);
+                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 0) * pow(pen, PENALTY_EXPONENT);
                             
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                             
