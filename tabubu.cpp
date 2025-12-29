@@ -481,28 +481,24 @@ vector<double> check_route_feasibility(const vi& route, double start=0, bool is_
 }
 
 //score calculator
-double solution_score(const Solution& sol) {
+double solution_score_l2_norm(const Solution& sol) {
     double penalty_multiplier = 1.0 + PENALTY_LAMBDA_CAPACITY * sol.capacity_violation
                                 + PENALTY_LAMBDA_ENERGY * sol.energy_violation
                                 + PENALTY_LAMBDA_DEADLINE * sol.deadline_violation;
     double sum_sq = 0.0;
     for (double t : sol.truck_route_times) sum_sq += t * t;
     for (double t : sol.drone_route_times) sum_sq += t * t;
-    
     double l2_norm = std::sqrt(sum_sq);
 
     // 1e-3 ensures it acts as a tie-breaker without overriding the primary Makespan objective
-    return (sol.total_makespan) * pow(penalty_multiplier, PENALTY_EXPONENT);
+    return (sol.total_makespan + l2_norm * 1e-3) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
-double solution_score_total_time(const Solution& sol) {
+double solution_score_makespan(const Solution& sol) {
     double penalty_multiplier = 1.0 + PENALTY_LAMBDA_CAPACITY * sol.capacity_violation
                                 + PENALTY_LAMBDA_ENERGY * sol.energy_violation
                                 + PENALTY_LAMBDA_DEADLINE * sol.deadline_violation;
-    double total_time_squared = 0.0;
-    for (double t : sol.truck_route_times) total_time_squared += t * t;
-    for (double t : sol.drone_route_times) total_time_squared += t * t;
-    return (std::sqrt(total_time_squared)) * pow(penalty_multiplier, PENALTY_EXPONENT);
+    return (sol.total_makespan) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
 void update_penalties(const Solution& sol) {
@@ -1360,7 +1356,7 @@ pair<int, bool> critical_solution_index(const Solution& sol) {
     return {best_idx, is_truck};
 }
 
-Solution local_search(const Solution& initial_solution, int neighbor_id, int current_iter, double best_cost, function<double(const Solution&)> solution_cost) {
+Solution local_search(const Solution& initial_solution, int neighbor_id, int current_iter, double best_cost, double (*solution_cost)(const Solution&)) {
     Solution best_neighbor = initial_solution;
     double best_neighbor_cost = 1e10;
     // Depending on neighbor_id, implement different neighborhood structures
@@ -1415,6 +1411,9 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                 ? check_route_feasibility(base_route, 0.0, true)
                 : check_route_feasibility(base_route, 0.0, false);
 
+            double l2_weight = 0.0;
+                if (solution_cost == solution_score_l2_norm) l2_weight = 1e-3;
+
             // Collect positions of customers (exclude depots)
             vector<int> pos;
             for (int i = 0; i < (int)base_route.size(); ++i) if (base_route[i] != 0) pos.push_back(i);
@@ -1458,6 +1457,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             double new_total_sq = current_total_time_sq - (crit_route_time_feas[0]*crit_route_time_feas[0]) + (new_feas[0]*new_feas[0]);
                             
                             double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
+                            // check score cost function: if it's solution_score_makespan, * 0, else * 1e-3
                             double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 0) * pow(pen, PENALTY_EXPONENT);
                             
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
@@ -1526,7 +1526,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                                 - (target_route_feas[0]*target_route_feas[0]) + (new_target_feas[0]*new_target_feas[0]);
                             
                             double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 0) * pow(pen, PENALTY_EXPONENT);
+                            double score = (new_makespan + l2_weight * (std::sqrt(new_total_sq) / (h + d))) * pow(pen, PENALTY_EXPONENT);
                             
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                             
@@ -1606,7 +1606,8 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
 
         auto consider_swap = [&](const vi& base_route, bool is_truck_mode, int critical_vehicle_id) {
             if (base_route.size() <= 2) return; // nothing to swap
-
+            double l2_weight = 0.0;
+                if (solution_cost == solution_score_l2_norm) l2_weight = 1e-3;
             vd crit_metrics = is_truck_mode
                 ? check_route_feasibility(base_route, 0.0, true)
                 : check_route_feasibility(base_route, 0.0, false);
@@ -1662,7 +1663,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             double new_sum_squares = current_sum_squares
                                 - (crit_metrics[0] * crit_metrics[0]) + (new_crit_metrics[0] * new_crit_metrics[0]);
                             double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + std::sqrt(new_sum_squares) / (h + d) * 0) * pow(pen, PENALTY_EXPONENT);
+                            double score = (new_makespan + std::sqrt(new_sum_squares) / (h + d) * l2_weight) * pow(pen, PENALTY_EXPONENT);
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                             if (is_tabu && !(score + 1e-8 < best_cost && feasible)) continue;
                             if (score + 1e-8 < best_neighbor_cost_local) {
@@ -1748,7 +1749,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             - (crit_metrics[0] * crit_metrics[0]) + (new_crit_metrics[0] * new_crit_metrics[0])
                             - (target_metrics[0] * target_metrics[0]) + (new_target_metrics[0] * new_target_metrics[0]);
                         double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                        double score = (new_makespan + std::sqrt(new_sum_squares) / (h + d) * 0) * pow(pen, PENALTY_EXPONENT);
+                        double score = (new_makespan + std::sqrt(new_sum_squares) / (h + d) * l2_weight) * pow(pen, PENALTY_EXPONENT);
                         bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                         if (is_tabu && !(score + 1e-8 < best_cost && feasible)) continue;
                         if (score + 1e-8 < best_neighbor_cost_local) {
@@ -3212,9 +3213,11 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
 return initial_solution;
 }
 
-Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor_id, int current_iter, double best_cost, function<double(const Solution&)> solution_cost) {
+Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor_id, int current_iter, double best_cost, double (*solution_cost)(const Solution&)) {
     Solution best_neighbor = initial_solution;
     double best_neighbor_cost = 1e10;
+    double l2_weight = 0.0;
+    if (solution_cost == solution_score_l2_norm) l2_weight = 1e-3;
     // Depending on neighbor_id, implement different neighborhood structures
     if (neighbor_id == 0) {
         // Relocate 1 customer from the critical (longest-time) vehicle route to another route of the same mode
@@ -3309,7 +3312,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             double new_total_sq = current_total_time_sq - (crit_route_time_feas[0]*crit_route_time_feas[0]) + (new_feas[0]*new_feas[0]);
                             
                             double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 0) * pow(pen, PENALTY_EXPONENT);
+                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * l2_weight) * pow(pen, PENALTY_EXPONENT);
                             
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                             
@@ -3377,7 +3380,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                                 - (target_route_feas[0]*target_route_feas[0]) + (new_target_feas[0]*new_target_feas[0]);
                             
                             double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * 0) * pow(pen, PENALTY_EXPONENT);
+                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * l2_weight) * pow(pen, PENALTY_EXPONENT);
                             
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                             
@@ -5610,13 +5613,13 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
         double alpha = 0.998; // cooling rate
         bool total_score_iter = total_score_segment;
         // testing
-        total_score_iter = false;
+        //total_score_iter = false;
         Solution best_segment_sol = current_sol;
         double best_segment_score = total_score_iter
-            ? solution_score_total_time(best_segment_sol)
-            : solution_score(best_segment_sol);
+            ? solution_score_l2_norm(best_segment_sol)
+            : solution_score_makespan(best_segment_sol);
         //Debug:
-        cout << "=== Starting Segment " << segment + 1 <<" with searching " << (total_score_iter ? "on all routes" : "on critical route only") << " ===\n";
+        cout << "=== Starting Segment " << segment + 1 <<" searching on critical route only" << (total_score_iter ? "with cost L2 norm lexicographic order" : "with makespan only") << " ===\n";
         cout << "Current Solution Score: " << best_segment_score
              << ", Makespan: " << best_segment_sol.total_makespan << "\n";
     // Reset tabu lists at the start of each segment (iteration counter restarts per segment)
@@ -5629,12 +5632,12 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
             }
             double best_solution_score_now = 1e10, current_score = 0.0;
             if (total_score_iter) {
-                current_score = solution_score_total_time(current_sol);
-                best_solution_score_now = solution_score_total_time(best_solution);
+                current_score = solution_score_l2_norm(current_sol);
+                best_solution_score_now = solution_score_l2_norm(best_solution);
             }
             else {
-                current_score = solution_score(current_sol);
-                best_solution_score_now = solution_score(best_solution);
+                current_score = solution_score_makespan(current_sol);
+                best_solution_score_now = solution_score_makespan(best_solution);
             }
 
             double total_weight = 0.0;
@@ -5658,9 +5661,9 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
             // Use the monotonically increasing iteration counter 'iter' as the tabu iteration for local_search
             Solution init_neighbor;
             if (total_score_iter) {
-                init_neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_total_time);
+                init_neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_l2_norm);
             }
-            else init_neighbor = local_search(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score);
+            else init_neighbor = local_search(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_makespan);
             Solution neighbor = recalculate_solution(init_neighbor);
             // Check if recalculation changes the solution violation values
             if (std::abs(neighbor.deadline_violation - init_neighbor.deadline_violation) > 1e-8 ||
@@ -5694,9 +5697,9 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
             if (neighbor.energy_violation < 1e-8) neighbor.energy_violation = 0.0;
             double neighbor_score;
             if (total_score_iter) {
-                neighbor_score = solution_score_total_time(neighbor);
+                neighbor_score = solution_score_l2_norm(neighbor);
             } else {
-                neighbor_score = solution_score(neighbor);
+                neighbor_score = solution_score_makespan(neighbor);
             }
             // Debug: print selected neighborhood and scores
             /* cout.setf(std::ios::fixed); cout << setprecision(6);
@@ -5829,10 +5832,10 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                             limit_intensification++;
                             if (limit_intensification >= 21) break;
                             if (total_score_iter){
-                                neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now, solution_score_total_time);
+                                neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now, solution_score_l2_norm);
                                 //neighbor = recalculate_solution(neighbor);
-                                double neighbor_score = solution_score_total_time(neighbor);
-                                double current_sol_score = solution_score_total_time(current_sol);
+                                double neighbor_score = solution_score_l2_norm(neighbor);
+                                double current_sol_score = solution_score_l2_norm(current_sol);
                                 if (neighbor_score + 1e-12 < current_sol_score ||
                                     (std::abs(neighbor_score - current_sol_score) <= 1e-12 &&
                                     neighbor.total_makespan + 1e-12 < current_sol.total_makespan)) {
@@ -5849,10 +5852,10 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                                 }
                             }
                             else {
-                                neighbor = local_search(current_sol, ni, 0, best_solution_score_now, solution_score);
+                                neighbor = local_search(current_sol, ni, 0, best_solution_score_now, solution_score_makespan);
                                 //neighbor = recalculate_solution(neighbor);
-                                double neighbor_score = solution_score(neighbor);
-                                double current_sol_score = solution_score(current_sol);
+                                double neighbor_score = solution_score_makespan(neighbor);
+                                double current_sol_score = solution_score_makespan(current_sol);
 
                                 if (neighbor_score + 1e-12 < current_sol_score ||
                                     (std::abs(neighbor_score - current_sol_score) <= 1e-12 &&
@@ -5878,19 +5881,19 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         best_cost = best_feasible_makespan;
                     }
                     if (total_score_iter) {
-                        if (solution_score_total_time(current_sol) + 1e-12 < best_segment_score ||
-                            (std::abs(solution_score_total_time(current_sol) - best_segment_score) <= 1e-12 &&
+                        if (solution_score_l2_norm(current_sol) + 1e-12 < best_segment_score ||
+                            (std::abs(solution_score_l2_norm(current_sol) - best_segment_score) <= 1e-12 &&
                              current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
                             best_segment_sol = current_sol;
-                            best_segment_score = solution_score_total_time(current_sol);
+                            best_segment_score = solution_score_l2_norm(current_sol);
                         }
                     }
                     else {
-                        if (solution_score(current_sol) + 1e-12 < best_segment_score ||
-                            (std::abs(solution_score(current_sol) - best_segment_score) <= 1e-12 &&
+                        if (solution_score_makespan(current_sol) + 1e-12 < best_segment_score ||
+                            (std::abs(solution_score_makespan(current_sol) - best_segment_score) <= 1e-12 &&
                              current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
                             best_segment_sol = current_sol;
-                            best_segment_score = solution_score(current_sol);
+                            best_segment_score = solution_score_makespan(current_sol);
                         }
                     }
                     print_solution_stream(current_sol, cout);
@@ -5946,13 +5949,13 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
             best_cost = best_feasible_makespan;
         }
 
-        if (!elite_set.empty()) {
+        /*if (!elite_set.empty()) {
             std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
             std::uniform_int_distribution<int> dist(0, elite_set.size() - 1);
             int rand_idx = dist(rng);
             current_sol = elite_set[rand_idx];
             current_cost = current_sol.total_makespan;
-        }
+        }*/
 
         // Debug: print neighborhood weights after each segment
         cout.setf(std::ios::fixed); cout << setprecision(6);
