@@ -1360,7 +1360,7 @@ pair<int, bool> critical_solution_index(const Solution& sol) {
     return {best_idx, is_truck};
 }
 
-Solution local_search(const Solution& initial_solution, int neighbor_id, int current_iter, double best_cost) {
+Solution local_search(const Solution& initial_solution, int neighbor_id, int current_iter, double best_cost, function<double(const Solution&)> solution_cost) {
     Solution best_neighbor = initial_solution;
     double best_neighbor_cost = 1e10;
     // Depending on neighbor_id, implement different neighborhood structures
@@ -1975,7 +1975,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                     vector<int> key = { min(c1, c2), max(c1, c2), critical_vehicle_id };
                     auto it = tabu_list_20.find(key);
                     bool is_tabu = (it != tabu_list_20.end() && it->second > current_iter);
-                    double candidate_score = solution_score(candidate);
+                    double candidate_score = solution_cost(candidate);
                     bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
                                                candidate.capacity_violation <= 1e-8 &&
                                                candidate.energy_violation <= 1e-8;
@@ -2049,7 +2049,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                         vector<int> key = { min(c1, c2), max(c1, c2), target_veh };
                         auto it = tabu_list_20.find(key);
                         bool is_tabu = (it != tabu_list_20.end() && it->second > current_iter);
-                        double candidate_score = solution_score(candidate);
+                        double candidate_score = solution_cost(candidate);
                         bool feasible = candidate.deadline_violation <= 1e-8 &&
                                          candidate.capacity_violation <= 1e-8 &&
                                          candidate.energy_violation <= 1e-8;
@@ -2165,7 +2165,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                         candidate.total_makespan = 0.0;
                         for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
                         for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-                        double candidate_score = solution_score(candidate);
+                        double candidate_score = solution_cost(candidate);
                         if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
                                          candidate.deadline_violation <= 1e-8 &&
                                          candidate.capacity_violation <= 1e-8 &&
@@ -2330,7 +2330,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                             candidate.total_makespan = 0.0;
                             for (int i = 0; i < h; ++i) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[i]);
                             for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-                            double candidate_score = solution_score(candidate);
+                            double candidate_score = solution_cost(candidate);
                             if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
                                              candidate.deadline_violation <= 1e-8 &&
                                              candidate.capacity_violation <= 1e-8 &&
@@ -2499,7 +2499,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                         vector<int> key = { min(c1, c2), max(c1, c2), single };
                         auto it = tabu_list_21.find(key);
                         bool is_tabu = (it != tabu_list_21.end() && it->second > current_iter);
-                        double candidate_score = solution_score(candidate);
+                        double candidate_score = solution_cost(candidate);
                         if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
                                          candidate.deadline_violation <= 1e-8 &&
                                          candidate.capacity_violation <= 1e-8 &&
@@ -2618,7 +2618,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                         vector<int> key = { min(b1, b2), max(b1, b2), single };
                         auto it = tabu_list_21.find(key);
                         bool is_tabu = (it != tabu_list_21.end() && it->second > current_iter);
-                        double candidate_score = solution_score(candidate);
+                        double candidate_score = solution_cost(candidate);
                         if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
                                          candidate.deadline_violation <= 1e-8 &&
                                          candidate.capacity_violation <= 1e-8 &&
@@ -2813,7 +2813,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                         for (double t : candidate.truck_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
                         for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
 
-                        double candidate_score = solution_score(candidate);
+                        double candidate_score = solution_cost(candidate);
                         if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
                                          candidate.deadline_violation <= 1e-8 &&
                                          candidate.capacity_violation <= 1e-8 &&
@@ -3057,7 +3057,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                                 bool is_tabu = (tabu_list_ejection.count(tabu_key) &&
                                                 tabu_list_ejection[tabu_key] > current_iter);
 
-                                double candidate_score = solution_score(candidate);
+                                double candidate_score = solution_cost(candidate);
                                 if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
                                                 candidate.deadline_violation <= 1e-8 &&
                                                 candidate.capacity_violation <= 1e-8 &&
@@ -3193,7 +3193,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
                     for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
                     for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
 
-                    double candidate_score = solution_score(candidate);
+                    double candidate_score = solution_cost(candidate);
                     
                     if (candidate_score + 1e-8 < best_neighbor_cost_local) {
                         best_neighbor_cost_local = candidate_score;
@@ -3212,7 +3212,7 @@ Solution local_search(const Solution& initial_solution, int neighbor_id, int cur
 return initial_solution;
 }
 
-Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor_id, int current_iter, double best_cost) {
+Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor_id, int current_iter, double best_cost, function<double(const Solution&)> solution_cost) {
     Solution best_neighbor = initial_solution;
     double best_neighbor_cost = 1e10;
     // Depending on neighbor_id, implement different neighborhood structures
@@ -3822,7 +3822,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                     vector<int> key = { min(c1, c2), max(c1, c2), critical_vehicle_id };
                     auto it = tabu_list_20.find(key);
                     bool is_tabu = (it != tabu_list_20.end() && it->second > current_iter);
-                    double candidate_score = solution_score_total_time(candidate);
+                    double candidate_score = solution_cost(candidate);
                     bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
                                                candidate.capacity_violation <= 1e-8 &&
                                                candidate.energy_violation <= 1e-8;
@@ -3896,7 +3896,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         vector<int> key = { min(c1, c2), max(c1, c2), target_veh };
                         auto it = tabu_list_20.find(key);
                         bool is_tabu = (it != tabu_list_20.end() && it->second > current_iter);
-                        double candidate_score = solution_score_total_time(candidate);
+                        double candidate_score = solution_cost(candidate);
                         bool feasible = candidate.deadline_violation <= 1e-8 &&
                                          candidate.capacity_violation <= 1e-8 &&
                                          candidate.energy_violation <= 1e-8;
@@ -4011,7 +4011,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         candidate.total_makespan = 0.0;
                         for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
                         for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-                        double candidate_score = solution_score_total_time(candidate);
+                        double candidate_score = solution_cost(candidate);
                         if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
                                          candidate.deadline_violation <= 1e-8 &&
                                          candidate.capacity_violation <= 1e-8 &&
@@ -4173,7 +4173,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             candidate.total_makespan = 0.0;
                             for (int i = 0; i < h; ++i) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[i]);
                             for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-                            double candidate_score = solution_score_total_time(candidate);
+                            double candidate_score = solution_cost(candidate);
                             if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
                                              candidate.deadline_violation <= 1e-8 &&
                                              candidate.capacity_violation <= 1e-8 &&
@@ -4346,7 +4346,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         vector<int> key = { min(c1, c2), max(c1, c2), single };
                         auto it = tabu_list_21.find(key);
                         bool is_tabu = (it != tabu_list_21.end() && it->second > current_iter);
-                        double candidate_score = solution_score_total_time(candidate);
+                        double candidate_score = solution_cost(candidate);
                         if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
                                          candidate.deadline_violation <= 1e-8 &&
                                          candidate.capacity_violation <= 1e-8 &&
@@ -4465,7 +4465,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         vector<int> key = { min(b1, b2), max(b1, b2), single };
                         auto it = tabu_list_21.find(key);
                         bool is_tabu = (it != tabu_list_21.end() && it->second > current_iter);
-                        double candidate_score = solution_score_total_time(candidate);
+                        double candidate_score = solution_cost(candidate);
                         if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
                                          candidate.deadline_violation <= 1e-8 &&
                                          candidate.capacity_violation <= 1e-8 &&
@@ -4668,7 +4668,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         for (double t : candidate.truck_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
                         for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
 
-                        double candidate_score = solution_score_total_time(candidate);
+                        double candidate_score = solution_cost(candidate);
                         if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
                                          candidate.deadline_violation <= 1e-8 &&
                                          candidate.capacity_violation <= 1e-8 &&
@@ -4906,7 +4906,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                                 bool is_tabu = (tabu_list_ejection.count(tabu_key) &&
                                                 tabu_list_ejection[tabu_key] > current_iter);
 
-                                double candidate_score = solution_score_total_time(candidate);
+                                double candidate_score = solution_cost(candidate);
                                 if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
                                                 candidate.deadline_violation <= 1e-8 &&
                                                 candidate.capacity_violation <= 1e-8 &&
@@ -5045,7 +5045,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
                         for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
 
-                        double candidate_score = solution_score_total_time(candidate);
+                        double candidate_score = solution_cost(candidate);
                         
                         if (candidate_score + 1e-8 < best_neighbor_cost_local) {
                             best_neighbor_cost_local = candidate_score;
@@ -5381,6 +5381,156 @@ Solution destroy_and_repair(Solution sol) {
     return new_sol;
 }
 
+Solution destroy_worst_repair_random(Solution sol) {
+    unordered_set<int> to_destroy;
+    int destroy_count = static_cast<int>(n * 0.3); // Destroy 30%
+    
+    Solution current_sol = sol;
+    std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
+
+    // 1. Destroy: Sequential Worst Removal (Targeting Critical Routes)
+    for (int k = 0; k < destroy_count; ++k) {
+        // Identify critical vehicle
+        auto [crit_idx, is_truck] = critical_solution_index(current_sol);
+        
+        if (crit_idx == -1) break;
+
+        vi& route = is_truck ? current_sol.truck_routes[crit_idx] 
+                             : current_sol.drone_routes[crit_idx];
+        
+        double current_route_time = is_truck ? current_sol.truck_route_times[crit_idx]
+                                             : current_sol.drone_route_times[crit_idx];
+        double best_diff = -1e9;
+        int best_cust = -1;
+
+        // Find customer whose removal reduces the route time the most
+        for (int i = 1; i < (int)route.size() - 1; ++i) {
+            int cust = route[i];
+            if (cust == 0) continue;
+            
+            vi temp_route = route;
+            temp_route.erase(temp_route.begin() + i);
+            
+            double new_time = 0;
+            if (is_truck) {
+                auto res = check_route_feasibility(temp_route, 0.0, true);
+                new_time = res[0];
+            } else {
+                auto res = check_route_feasibility(temp_route, 0.0, false);
+                new_time = res[0];
+            }
+            
+            double diff = current_route_time - new_time;
+            if (diff > best_diff) {
+                best_diff = diff;
+                best_cust = cust;
+            }
+        }
+        
+        if (best_cust != -1) {
+            to_destroy.insert(best_cust);
+            // Remove from current_sol to update state for next iteration
+            route.erase(std::remove(route.begin(), route.end(), best_cust), route.end());
+            
+            // Update time
+            if (is_truck) {
+                auto res = check_route_feasibility(route, 0.0, true);
+                current_sol.truck_route_times[crit_idx] = res[0];
+            } else {
+                auto res = check_route_feasibility(route, 0.0, false);
+                current_sol.drone_route_times[crit_idx] = res[0];
+            }
+            // Update global makespan (approximate is fine for selection)
+            current_sol.total_makespan = 0;
+            for(double t : current_sol.truck_route_times) current_sol.total_makespan = max(current_sol.total_makespan, t);
+            for(double t : current_sol.drone_route_times) current_sol.total_makespan = max(current_sol.total_makespan, t);
+        } else {
+            // Fallback: random removal if critical route is empty/locked
+            std::uniform_int_distribution<int> dist(1, n);
+            int fallback = dist(rng);
+            to_destroy.insert(fallback);
+        }
+    }
+
+    // 2. Apply removal to a fresh copy of the original solution
+    Solution new_sol = sol;
+    for (int i = 0; i < h; ++i) {
+        vi& route = new_sol.truck_routes[i];
+        route.erase(remove_if(route.begin(), route.end(), [&](int c) {
+            return to_destroy.count(c) > 0;
+        }), route.end());
+    }
+    for (int i = 0; i < d; ++i) {
+        vi& route = new_sol.drone_routes[i];
+        route.erase(remove_if(route.begin(), route.end(), [&](int c) {
+            return to_destroy.count(c) > 0;
+        }), route.end());
+    }
+    new_sol = recalculate_solution(new_sol);
+
+    // 3. Repair: Random Insertion
+    vector<int> customers_to_insert(to_destroy.begin(), to_destroy.end());
+    std::shuffle(customers_to_insert.begin(), customers_to_insert.end(), rng);
+
+    for (int cust : customers_to_insert) {
+        bool inserted = false;
+        vector<int> veh_indices(h + d);
+        std::iota(veh_indices.begin(), veh_indices.end(), 0);
+        std::shuffle(veh_indices.begin(), veh_indices.end(), rng);
+        
+        for (int veh : veh_indices) {
+            bool is_truck = veh < h;
+            // Check drone eligibility
+            if (!is_truck && served_by_drone[cust] == 0) continue;
+
+            vi& route = is_truck ? new_sol.truck_routes[veh] : new_sol.drone_routes[veh - h];
+            if (route.size() < 2) continue; // Should be 0-0
+
+            // Try random positions
+            vector<int> positions;
+            for(int p=1; p < (int)route.size(); ++p) positions.push_back(p);
+            std::shuffle(positions.begin(), positions.end(), rng);
+            
+            for (int pos : positions) {
+                vi temp_route = route;
+                temp_route.insert(temp_route.begin() + pos, cust);
+                
+                vd res = is_truck ? check_route_feasibility(temp_route, 0.0, true) 
+                                  : check_route_feasibility(temp_route, 0.0, false);
+                
+                // Only accept feasible insertions for random repair
+                if (res[1] <= 1e-8 && res[2] <= 1e-8 && res[3] <= 1e-8) {
+                    route = temp_route;
+                    if (is_truck) new_sol.truck_route_times[veh] = res[0];
+                    else new_sol.drone_route_times[veh - h] = res[0];
+                    inserted = true;
+                    break;
+                }
+            }
+            if (inserted) break;
+        }
+        
+        if (!inserted) {
+            // Fallback to greedy if random fails
+            new_sol = greedy_insert_customer(new_sol, cust, true);
+        }
+    }
+    
+    // Normalize and finalize
+    for (int i = 0; i < h; ++i) {
+        vi& route = new_sol.truck_routes[i];
+        if (route.empty() || route.front() != 0) route.insert(route.begin(), 0);
+        if (route.back() != 0) route.push_back(0);
+    }
+    for (int i = 0; i < d; ++i) {
+        vi& route = new_sol.drone_routes[i];
+        if (route.empty() || route.front() != 0) route.insert(route.begin(), 0);
+        if (route.back() != 0) route.push_back(0);
+    }
+    new_sol = recalculate_solution(new_sol);
+    return new_sol;
+}
+
 Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
     auto ts_start = std::chrono::high_resolution_clock::now();
     auto is_feasible = [](const Solution& sol) {
@@ -5508,9 +5658,9 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
             // Use the monotonically increasing iteration counter 'iter' as the tabu iteration for local_search
             Solution init_neighbor;
             if (total_score_iter) {
-                init_neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now);
+                init_neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_total_time);
             }
-            else init_neighbor = local_search(current_sol, selected_neighbor, iter, best_solution_score_now);
+            else init_neighbor = local_search(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score);
             Solution neighbor = recalculate_solution(init_neighbor);
             // Check if recalculation changes the solution violation values
             if (std::abs(neighbor.deadline_violation - init_neighbor.deadline_violation) > 1e-8 ||
@@ -5679,7 +5829,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                             limit_intensification++;
                             if (limit_intensification >= 21) break;
                             if (total_score_iter){
-                                neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now);
+                                neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now, solution_score_total_time);
                                 //neighbor = recalculate_solution(neighbor);
                                 double neighbor_score = solution_score_total_time(neighbor);
                                 double current_sol_score = solution_score_total_time(current_sol);
@@ -5699,7 +5849,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                                 }
                             }
                             else {
-                                neighbor = local_search(current_sol, ni, 0, best_solution_score_now);
+                                neighbor = local_search(current_sol, ni, 0, best_solution_score_now, solution_score);
                                 //neighbor = recalculate_solution(neighbor);
                                 double neighbor_score = solution_score(neighbor);
                                 double current_sol_score = solution_score(current_sol);
@@ -5744,7 +5894,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         }
                     }
                     print_solution_stream(current_sol, cout);
-                    current_sol = destroy_and_repair(current_sol);
+                    current_sol = destroy_worst_repair_random(current_sol);
                     current_cost = current_sol.total_makespan;
                     tabu_list_ejection.clear();
                 }
