@@ -501,6 +501,18 @@ double solution_score_makespan(const Solution& sol) {
     return (sol.total_makespan) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
+double solution_score_total_time(const Solution& sol) {
+    double penalty_multiplier = 1.0 + PENALTY_LAMBDA_CAPACITY * sol.capacity_violation
+                                + PENALTY_LAMBDA_ENERGY * sol.energy_violation
+                                + PENALTY_LAMBDA_DEADLINE * sol.deadline_violation;
+    double sum_sq = 0.0;
+    for (double t : sol.truck_route_times) sum_sq += t * t;
+    for (double t : sol.drone_route_times) sum_sq += t * t;
+    double l2_norm = std::sqrt(sum_sq);
+
+    return (l2_norm) * pow(penalty_multiplier, PENALTY_EXPONENT);
+}
+
 void update_penalties(const Solution& sol) {
     // Capacity penalty
     if (sol.capacity_violation > 1e-9) {
@@ -3380,7 +3392,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                                 - (target_route_feas[0]*target_route_feas[0]) + (new_target_feas[0]*new_target_feas[0]);
                             
                             double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * l2_weight) * pow(pen, PENALTY_EXPONENT);
+                            double score = (std::sqrt(new_total_sq) / (h + d) * l2_weight) * pow(pen, PENALTY_EXPONENT);
                             
                             bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
                             
@@ -5605,21 +5617,37 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
     }*/
     current_sol = initial_solution;
     current_cost = current_sol.total_makespan; 
-    bool total_score_segment = false;
+    int scoring_mode_segment = 0;
     for (int segment = 0; segment < CFG_MAX_SEGMENT; ++segment) {
         int iter = 1;
         int no_improve_iters = 0;
         double T0 = 100.0; // initial temperature for simulated annealing acceptance
         double alpha = 0.998; // cooling rate
-        bool total_score_iter = total_score_segment;
+        int scoring_mode_iter = scoring_mode_segment;
         // testing
         //total_score_iter = false;
         Solution best_segment_sol = current_sol;
-        double best_segment_score = total_score_iter
-            ? solution_score_l2_norm(best_segment_sol)
-            : solution_score_makespan(best_segment_sol);
+        double best_segment_score;
+        if (scoring_mode_iter == 1) {
+            best_segment_score = solution_score_l2_norm(current_sol);
+        }
+        else if (scoring_mode_iter == 0){
+            best_segment_score = solution_score_makespan(current_sol);
+        }
+        else if (scoring_mode_iter == 2){
+            best_segment_score = solution_score_total_time(current_sol);
+        }
         //Debug:
-        cout << "=== Starting Segment " << segment + 1 <<" searching on critical route only" << (total_score_iter ? "with cost L2 norm lexicographic order" : "with makespan only") << " ===\n";
+        cout << "=== Starting Segment " << segment + 1 <<" searching on critical route only";
+        if (scoring_mode_iter == 0){
+            cout << " (Makespan Minimization) ===\n";
+        }
+        else if (scoring_mode_iter == 1){
+            cout << " (2nd objective: L2 norm) ===\n";
+        }
+        else if (scoring_mode_iter == 2){
+            cout << " (L2 norm on all vehicles) ===\n";
+        }
         cout << "Current Solution Score: " << best_segment_score
              << ", Makespan: " << best_segment_sol.total_makespan << "\n";
     // Reset tabu lists at the start of each segment (iteration counter restarts per segment)
@@ -5631,13 +5659,17 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 if (elapsed >= CFG_TIME_LIMIT_SEC) break;
             }
             double best_solution_score_now = 1e10, current_score = 0.0;
-            if (total_score_iter) {
+            if (scoring_mode_iter == 1) {
                 current_score = solution_score_l2_norm(current_sol);
                 best_solution_score_now = solution_score_l2_norm(best_solution);
             }
-            else {
+            else if (scoring_mode_iter == 0){
                 current_score = solution_score_makespan(current_sol);
                 best_solution_score_now = solution_score_makespan(best_solution);
+            }
+            else if (scoring_mode_iter == 2){
+                current_score = solution_score_total_time(current_sol);
+                best_solution_score_now = solution_score_total_time(best_solution);
             }
 
             double total_weight = 0.0;
@@ -5660,10 +5692,15 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
             count[selected_neighbor]++;
             // Use the monotonically increasing iteration counter 'iter' as the tabu iteration for local_search
             Solution init_neighbor;
-            if (total_score_iter) {
-                init_neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_l2_norm);
+            if (scoring_mode_iter == 0) {
+                init_neighbor = local_search(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_makespan);
             }
-            else init_neighbor = local_search(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_makespan);
+            else if (scoring_mode_iter == 1){
+                init_neighbor = local_search(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_l2_norm);
+            }
+            else if (scoring_mode_iter == 2){
+                init_neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_total_time);
+            }
             Solution neighbor = recalculate_solution(init_neighbor);
             // Check if recalculation changes the solution violation values
             if (std::abs(neighbor.deadline_violation - init_neighbor.deadline_violation) > 1e-8 ||
@@ -5696,10 +5733,12 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
             if (neighbor.capacity_violation < 1e-8) neighbor.capacity_violation = 0.0;
             if (neighbor.energy_violation < 1e-8) neighbor.energy_violation = 0.0;
             double neighbor_score;
-            if (total_score_iter) {
+            if (scoring_mode_iter == 1) {
                 neighbor_score = solution_score_l2_norm(neighbor);
-            } else {
+            } else if (scoring_mode_iter == 0) {
                 neighbor_score = solution_score_makespan(neighbor);
+            } else if (scoring_mode_iter == 2){
+                neighbor_score = solution_score_total_time(neighbor);
             }
             // Debug: print selected neighborhood and scores
             /* cout.setf(std::ios::fixed); cout << setprecision(6);
@@ -5721,9 +5760,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 best_solution_score_now = neighbor_score;
                 //updated_edge_records(neighbor);
                 //Solution tmp = updated_elite_set(neighbor);
-                total_score_segment = false;
-                /* if (!total_score_iter) cout << "New best sol with makespan " << neighbor.total_makespan << endl;
-                else cout << "New best sol with total score " << neighbor_score << endl; */
+                scoring_mode_segment = 0;
             } else if (neighbor_score + 1e-12 < current_score ||
                        (std::abs(neighbor_score - current_score) <= 1e-12 &&
                         neighbor.total_makespan + 1e-12 < current_cost)) {
@@ -5747,11 +5784,13 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 best_feasible_makespan = current_sol.total_makespan;
                 best_feasible_solution = current_sol;
                 best_cost = best_feasible_makespan;
+                scoring_mode_segment = 0;
             } else if (neighbor_feasible &&
                        neighbor.total_makespan + 1e-12 < best_feasible_makespan) {
                 best_feasible_makespan = neighbor.total_makespan;
                 best_feasible_solution = neighbor;
                 best_cost = best_feasible_makespan;
+                scoring_mode_segment = 0;
             }
             if (neighbor_score + 1e-12 < best_segment_score ||
                 (std::abs(neighbor_score - best_segment_score) <= 1e-12 &&
@@ -5761,11 +5800,17 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
             }
             update_penalties(current_sol);
             if (no_improve_iters >= CFG_MAX_NO_IMPROVE || iter >= CFG_MAX_ITER_PER_SEGMENT){
-                // Restart from a random elite solution 
-                if (total_score_iter) {
-                    total_score_segment = false;
+                if (no_improve_iters >= CFG_MAX_NO_IMPROVE) {
+                    if (scoring_mode_iter == 1) scoring_mode_segment = 2;
+                    else if (scoring_mode_iter == 0) scoring_mode_segment = 1;
+                    else if (scoring_mode_iter == 2) scoring_mode_segment = 0;
+                    cout << "No improvement in " << CFG_MAX_NO_IMPROVE << " iters, switching scoring mode to "
+                         << scoring_mode_segment << "\n";
                 }
-                else if (no_improve_iters >= CFG_MAX_NO_IMPROVE) total_score_segment = true;
+                else {
+                    cout << "Reached max iterations for segment.\n";
+                    scoring_mode_segment = 0;
+                }
                 tabu_list_10.clear();
                 tabu_list_11.clear();
                 tabu_list_20.clear();
@@ -5831,7 +5876,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                             Solution neighbor;
                             limit_intensification++;
                             if (limit_intensification >= 21) break;
-                            if (total_score_iter){
+                            if (scoring_mode_iter == 2){
                                 neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now, solution_score_l2_norm);
                                 //neighbor = recalculate_solution(neighbor);
                                 double neighbor_score = solution_score_l2_norm(neighbor);
@@ -5880,7 +5925,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         best_feasible_solution = current_sol;
                         best_cost = best_feasible_makespan;
                     }
-                    if (total_score_iter) {
+                    if (scoring_mode_iter == 1) {
                         if (solution_score_l2_norm(current_sol) + 1e-12 < best_segment_score ||
                             (std::abs(solution_score_l2_norm(current_sol) - best_segment_score) <= 1e-12 &&
                              current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
@@ -5888,12 +5933,20 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                             best_segment_score = solution_score_l2_norm(current_sol);
                         }
                     }
-                    else {
+                    else if (scoring_mode_iter == 0){
                         if (solution_score_makespan(current_sol) + 1e-12 < best_segment_score ||
                             (std::abs(solution_score_makespan(current_sol) - best_segment_score) <= 1e-12 &&
                              current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
                             best_segment_sol = current_sol;
                             best_segment_score = solution_score_makespan(current_sol);
+                        }
+                    }
+                    else if (scoring_mode_iter == 2){
+                        if (solution_score_total_time(current_sol) + 1e-12 < best_segment_score ||
+                            (std::abs(solution_score_total_time(current_sol) - best_segment_score) <= 1e-12 &&
+                             current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
+                            best_segment_sol = current_sol;
+                            best_segment_score = solution_score_total_time(current_sol);
                         }
                     }
                     print_solution_stream(current_sol, cout);
