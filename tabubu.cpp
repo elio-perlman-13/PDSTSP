@@ -6131,11 +6131,6 @@ int main(int argc, char* argv[]) {
 
     // Pre-filter dronable customers by capacity/energy
     //For another data-testing: change all deadline to a constant 3600 and all serving time to 0
-    for (int i = 1; i <= n; ++i) {
-        deadline[i] = 3600.0;
-        serve_truck[i] = 0.0;
-        serve_drone[i] = 0.0;
-    }
 
     update_served_by_drone();
     //print test the served by drone

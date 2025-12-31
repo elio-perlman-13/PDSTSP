@@ -1,16 +1,12 @@
-Initial solution cost: 7352.134575
-Improved solution cost: 3062.618414
-Worst solution cost: 3126.229214
-Mean solution cost: 3092.362779
-Elapsed time: 88.064573 seconds
+Initial solution cost: 6204.984330
+Improved solution cost: 2945.185508
+Worst solution cost: 2945.185508
+Mean solution cost: 2945.185508
+Elapsed time: 7.983617 seconds
 Final solution feasibility: FEASIBLE
 Solution Details:
 Truck Routes:
-Truck 1: 0 16 23 30 5 12 34 44 8 36 0 |Truck Time: 3062.618414|3062.618414,0.000000,0.000000,0.000000
-Truck 2: 0 40 11 18 27 21 0 |Truck Time: 3047.923766|3047.923766,0.000000,0.000000,0.000000
-Truck 3: 0 25 43 33 24 28 9 10 1 45 0 |Truck Time: 3009.223209|3009.223209,0.000000,0.000000,0.000000
+Truck 1: 0 4 0 |Truck Time: 2945.185508|2945.185508,0.000000,0.000000,0.000000
 Drone Routes:
-Drone 1: 0 19 14 46 35 0 7 39 49 13 0 |Drone Time: 3047.351203|3047.351203,0.000000,0.000000,0.000000
-Drone 2: 0 50 29 37 32 47 42 2 20 3 0 4 22 31 15 48 0 |Drone Time: 3041.054526|3041.054526,0.000000,0.000000,0.000000
-Drone 3: 0 6 17 26 0 0 38 41 0 |Drone Time: 3048.467290|3048.467290,0.000000,0.000000,0.000000
-Total validation: Makespan=3062.618414, Deadline violation=0.000000, Energy violation=0.000000, Capacity violation=0.000000
+Drone 1: 0 6 2 1 0 5 3 0 |Drone Time: 2786.753966|2786.753966,0.000000,0.000000,0.000000
+Total validation: Makespan=2945.185508, Deadline violation=0.000000, Energy violation=0.000000, Capacity violation=0.000000
