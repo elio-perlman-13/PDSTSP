@@ -24,16 +24,11 @@ jobs:
           for f in instance/*.txt; do
             if [ -f "$f" ]; then
               base=$(basename "$f" .txt)
-              # Extract number of customers (first part of filename, e.g. "10" from "10.5.1.txt")
-              num_customers=$(echo "$base" | cut -d. -f1)
-              
-              # Only include if customers < 50
-              if [ "$num_customers" -lt 50 ]; then
-                # escape quotes in path just in case
-                file=$(printf '%s' "$f" | sed 's/"/\\"/g')
-                base=$(printf '%s' "$base" | sed 's/"/\\"/g')
-                items+=("{\"file\":\"$file\",\"base\":\"$base\"}")
-              fi
+
+              # escape quotes in path just in case
+              file=$(printf '%s' "$f" | sed 's/"/\\"/g')
+              base=$(printf '%s' "$base" | sed 's/"/\\"/g')
+              items+=("{\"file\":\"$file\",\"base\":\"$base\"}")
             fi
           done
           if [ ${#items[@]} -eq 0 ]; then
