@@ -59,26 +59,26 @@ static vector<vector<char>> KNN_ADJ; // KNN_ADJ[i][j] = 1 if j in KNN_LIST[i]
 // Simple tabu structure for relocate moves: tabu_list_switch[cust][target_vehicle] stores iteration until which move is tabu
 // target_vehicle is 0..h-1 for trucks, h..h+d-1 for drones
 static vector<vector<int>> tabu_list_switch; // sized (n+1) x (h + d), initialized on first use
-static int TABU_TENURE_BASE = 20; // default tenure; actual update done in tabu loop (not here)
+static int TABU_TENURE_BASE = 0; // default tenure; actual update done in tabu loop (not here)
 // Separate tabu structure for swap moves: store until-iteration for swapping a pair (min_id,max_id)
 static vector<vector<int>> tabu_list_10; // sized (n+1) x (n+1)
-static int TABU_TENURE_10 = 20; // default tenure for swap moves
+static int TABU_TENURE_10 = 0; // default tenure for swap moves
 static vector<vector<int>> tabu_list_11; // sized (n+1) x (h + d)
-static int TABU_TENURE_11 = 20; // default tenure for relocate moves
+static int TABU_TENURE_11 = 0; // default tenure for relocate moves
 // Separate tabu list for intra-route reinsert (Or-opt-1) moves
 static map<vector<int>, int> tabu_list_20; // keyed by (cust_id1, cust_id2, vehicle_id)
-static int TABU_TENURE_20 = 20; // default tenure for reinsert moves
+static int TABU_TENURE_20 = 0; // default tenure for reinsert moves
 // Separate tabu list for 2-opt moves: keyed by segment endpoints (min_id,max_id)
 static vector<vector<int>> tabu_list_2opt; // sized (n+1) x (n+1) 
-static int TABU_TENURE_2OPT = 25; // default tenure for 2-opt moves
+static int TABU_TENURE_2OPT = 0; // default tenure for 2-opt moves
 static vector<vector<int>> tabu_list_2opt_star; // sized (n+1) x (n+1)
-static int TABU_TENURE_2OPT_STAR = 20; // default tenure for 2-opt-star moves
+static int TABU_TENURE_2OPT_STAR = 0; // default tenure for 2-opt-star moves
 static map<vector<int>, int> tabu_list_21; // keyed by (a,b,c,d) for (2,1) moves
-static int TABU_TENURE_21 = 20; // default tenure for (2,1) moves
+static int TABU_TENURE_21 = 0; // default tenure for (2,1) moves
 static map<vector<int>, int> tabu_list_22; // keyed by (a,b,c,d) for (2,2) moves
-static int TABU_TENURE_22 = 20; // default tenure for (2,2) moves
+static int TABU_TENURE_22 = 0; // default tenure for (2,2) moves
 static map<vector<int>, int> tabu_list_ejection; // keyed by sorted customer sequence
-static int TABU_TENURE_EJECTION = 50; // default tenure for ejection chain moves
+static int TABU_TENURE_EJECTION = 0; // default tenure for ejection chain moves
 const int NUM_NEIGHBORHOODS = 9;
 const int NUM_OF_INITIAL_SOLUTIONS = 200;
 const int MAX_SEGMENT = 200;
@@ -205,26 +205,46 @@ void input(string filepath){
     loc.assign(n+1, Point());
     distance_matrix.assign(n+1, vd(n+1, 0.0));
     loc[0] = {depot_x, depot_y, 0};
-        // Skip headers until data lines
-        int header_skips = 0;
-        while (header_skips < 2 && getline(fin, line)) {
-            if (!line.empty() && line[0] != '#') ++header_skips;
-        }
-        // Read customer data
-        int cust = 1;
-        while (cust <= n && getline(fin, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            stringstream ss(line);
-            double x, y, dronable, demand_val, drone_service, truck_service, deadline_val;
-            ss >> x >> y >> dronable >> demand_val >> drone_service >> truck_service >> deadline_val;
-            loc[cust] = {x, y, cust};
-            served_by_drone[cust] = (int)dronable;
-            demand[cust] = demand_val;
-            serve_drone[cust] = drone_service;
-            serve_truck[cust] = truck_service;
-            deadline[cust] = deadline_val;
-            ++cust;
-        }
+    // Skip headers until data lines
+    int header_skips = 0;
+    while (header_skips < 2 && getline(fin, line)) {
+        if (!line.empty() && line[0] != '#') ++header_skips;
+    }
+    // Read customer data
+    int cust = 1;
+    while (cust <= n && getline(fin, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        stringstream ss(line);
+        double x, y, dronable, demand_val, drone_service, truck_service, deadline_val;
+        ss >> x >> y >> dronable >> demand_val >> drone_service >> truck_service >> deadline_val;
+        loc[cust] = {x, y, cust};
+        served_by_drone[cust] = (int)dronable;
+        demand[cust] = demand_val;
+        serve_drone[cust] = drone_service;
+        serve_truck[cust] = truck_service;
+        deadline[cust] = deadline_val;
+        ++cust;
+    }
+}
+
+void update_tabu_tenures() {
+    // Base heuristic: roughly proportional to sqrt(n) or n/5
+    // sqrt(n) scales better for very large instances
+    int base = max(20, (int)(2.0 * sqrt(n))); 
+    
+    TABU_TENURE_BASE = base;
+    TABU_TENURE_10 = base;          // Swap
+    TABU_TENURE_11 = base;          // Relocate
+    TABU_TENURE_20 = base;          // Or-opt
+    TABU_TENURE_2OPT = (int)(base * 1.2); // 2-opt usually benefits from slightly longer memory
+    TABU_TENURE_2OPT_STAR = base; 
+    TABU_TENURE_21 = base;
+    TABU_TENURE_22 = base;
+    TABU_TENURE_EJECTION = max(30, (int)(base * 2.0)); // Ejection chains are disruptive, keep longer
+    
+    /* cout << "Dynamic Tabu Tenures set to: " << base 
+         << " (2-opt: " << TABU_TENURE_2OPT 
+         << ", Ejection: " << TABU_TENURE_EJECTION << ")" << endl; */
 }
 
 // Returns pair of distance matrices
@@ -5768,14 +5788,14 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 current_cost = neighbor.total_makespan;
                 score[selected_neighbor] += gamma2;
             } else {
-                double T = T0 * pow(alpha, iter);
+/*                 double T = T0 * pow(alpha, iter);
                 double delta = current_score - neighbor_score;
                 double ap = exp(delta / T);
                 double rand_val = ((double) rand() / (RAND_MAX));
                 if (rand_val < ap) {
                     current_sol = neighbor;
                     current_cost = neighbor.total_makespan;
-                }
+                } */
                 score[selected_neighbor] += gamma3;
                 no_improve_iters++;
             }
@@ -5798,12 +5818,18 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 best_segment_sol = neighbor;
                 best_segment_score = neighbor_score;
             }
+            if (is_feasible(neighbor) &&
+                    neighbor.total_makespan + 1e-12 < best_feasible_makespan) {
+                best_feasible_makespan = neighbor.total_makespan;
+                best_feasible_solution = neighbor;
+                best_cost = best_feasible_makespan;
+            }
             update_penalties(current_sol);
+            iter++;
             if (no_improve_iters >= CFG_MAX_NO_IMPROVE || iter >= CFG_MAX_ITER_PER_SEGMENT){
                 if (no_improve_iters >= CFG_MAX_NO_IMPROVE) {
-                    if (scoring_mode_iter == 1) scoring_mode_segment = 2;
+                    if (scoring_mode_iter == 1) scoring_mode_segment = 0;
                     else if (scoring_mode_iter == 0) scoring_mode_segment = 1;
-                    else if (scoring_mode_iter == 2) scoring_mode_segment = 0;
                     cout << "No improvement in " << CFG_MAX_NO_IMPROVE << " iters, switching scoring mode to "
                          << scoring_mode_segment << "\n";
                 }
@@ -5867,8 +5893,8 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         return weight[a] > weight[b];
                     });
                     //testing: no intentification
-                    bool improved = true;
-                    //bool improved = false;
+                    //bool improved = true;
+                    bool improved = false;
                     int limit_intensification = 0;
                     while (improved && limit_intensification < 20){ 
                         improved = false;
@@ -5876,7 +5902,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                             Solution neighbor;
                             limit_intensification++;
                             if (limit_intensification >= 21) break;
-                            if (scoring_mode_iter == 2){
+                            if (11 == 2){
                                 neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now, solution_score_l2_norm);
                                 //neighbor = recalculate_solution(neighbor);
                                 double neighbor_score = solution_score_l2_norm(neighbor);
@@ -5919,12 +5945,6 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                             }
                         }
                     }
-                    if (is_feasible(current_sol) &&
-                        current_sol.total_makespan + 1e-12 < best_feasible_makespan) {
-                        best_feasible_makespan = current_sol.total_makespan;
-                        best_feasible_solution = current_sol;
-                        best_cost = best_feasible_makespan;
-                    }
                     if (scoring_mode_iter == 1) {
                         if (solution_score_l2_norm(current_sol) + 1e-12 < best_segment_score ||
                             (std::abs(solution_score_l2_norm(current_sol) - best_segment_score) <= 1e-12 &&
@@ -5950,7 +5970,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         }
                     }
                     print_solution_stream(current_sol, cout);
-                    current_sol = destroy_worst_repair_random(current_sol);
+                    //current_sol = destroy_worst_repair_random(current_sol);
                     current_cost = current_sol.total_makespan;
                     tabu_list_ejection.clear();
                 }
@@ -5961,7 +5981,6 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
             // Debug: print iteration info
             //cout.setf(std::ios::fixed); cout << setprecision(6);
             //cout << "Lambda_D=" << PENALTY_LAMBDA_DEADLINE << ", Lambda_C=" << PENALTY_LAMBDA_CAPACITY << ", Lambda_E=" << PENALTY_LAMBDA_ENERGY << "\n";
-            iter++;
         }
         //recalculate solution
         current_sol = recalculate_solution(current_sol);
@@ -6094,6 +6113,8 @@ int main(int argc, char* argv[]) {
 
     // Read input instance
     input(input_file);
+    // Recalculate tenures based on instance size
+    update_tabu_tenures();
     // Build distance matrix for downstream time computations
     compute_distance_matrices(loc);
     if (print_dist_matrix) {
