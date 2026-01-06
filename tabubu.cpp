@@ -5788,14 +5788,14 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 current_cost = neighbor.total_makespan;
                 score[selected_neighbor] += gamma2;
             } else {
-/*                  double T = T0 * pow(alpha, iter);
+                  double T = T0 * pow(alpha, iter);
                 double delta = current_score - neighbor_score;
                 double ap = exp(delta / T);
                 double rand_val = ((double) rand() / (RAND_MAX));
                 if (rand_val < ap) {
                     current_sol = neighbor;
                     current_cost = neighbor.total_makespan;
-                } */
+                } 
                 score[selected_neighbor] += gamma3;
                 no_improve_iters++;
             }
@@ -5893,8 +5893,8 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         return weight[a] > weight[b];
                     });
                     //testing: no intentification
-                    bool improved = true;
-                    //bool improved = false;
+                    //bool improved = true;
+                    bool improved = false;
                     int limit_intensification = 0;
                     while (improved && limit_intensification < 20){ 
                         improved = false;
@@ -5970,7 +5970,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         }
                     }
                     print_solution_stream(current_sol, cout);
-                    current_sol = destroy_worst_repair_random(current_sol);
+                    //current_sol = destroy_worst_repair_random(current_sol);
                     current_cost = current_sol.total_makespan;
                     tabu_list_ejection.clear();
                 }
