@@ -5637,7 +5637,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
     }*/
     current_sol = initial_solution;
     current_cost = current_sol.total_makespan; 
-    int scoring_mode_segment = 1;
+    int scoring_mode_segment = 2; // 0: makespan, 1: makespan + L2 norm on critical route, 2: L2 norm on all vehicles
     for (int segment = 0; segment < CFG_MAX_SEGMENT; ++segment) {
         int iter = 1;
         int no_improve_iters = 0;
