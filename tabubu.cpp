@@ -5971,7 +5971,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                     }
                     print_solution_stream(current_sol, cout);
                     //current_sol = destroy_worst_repair_random(current_sol);
-                    current_sol = destroy_and_repair(current_sol);
+                    //current_sol = destroy_and_repair(current_sol);
                     current_cost = current_sol.total_makespan;
                     tabu_list_ejection.clear();
                 }
