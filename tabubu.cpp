@@ -5637,7 +5637,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
     }*/
     current_sol = initial_solution;
     current_cost = current_sol.total_makespan; 
-    int scoring_mode_segment = 1; // 0: makespan, 1: makespan + L2 norm on critical route, 2: L2 norm on all vehicles
+    int scoring_mode_segment = 0; // 0: makespan, 1: makespan + L2 norm on critical route, 2: L2 norm on all vehicles
     for (int segment = 0; segment < CFG_MAX_SEGMENT; ++segment) {
         int iter = 1;
         int no_improve_iters = 0;
@@ -5780,7 +5780,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 best_solution_score_now = neighbor_score;
                 //updated_edge_records(neighbor);
                 //Solution tmp = updated_elite_set(neighbor);
-                scoring_mode_segment = 1;
+                scoring_mode_segment = 0;
             } else if (neighbor_score + 1e-12 < current_score ||
                        (std::abs(neighbor_score - current_score) <= 1e-12 &&
                         neighbor.total_makespan + 1e-12 < current_cost)) {
@@ -5804,13 +5804,13 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 best_feasible_makespan = current_sol.total_makespan;
                 best_feasible_solution = current_sol;
                 best_cost = best_feasible_makespan;
-                scoring_mode_segment = 1;
+                scoring_mode_segment = 0;
             } else if (neighbor_feasible &&
                        neighbor.total_makespan + 1e-12 < best_feasible_makespan) {
                 best_feasible_makespan = neighbor.total_makespan;
                 best_feasible_solution = neighbor;
                 best_cost = best_feasible_makespan;
-                scoring_mode_segment = 1;
+                scoring_mode_segment = 0;
             }
             if (neighbor_score + 1e-12 < best_segment_score ||
                 (std::abs(neighbor_score - best_segment_score) <= 1e-12 &&
@@ -5835,7 +5835,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 }
                 else {
                     cout << "Reached max iterations for segment.\n";
-                    scoring_mode_segment = 1;
+                    scoring_mode_segment = 0;
                 }
                 tabu_list_10.clear();
                 tabu_list_11.clear();
