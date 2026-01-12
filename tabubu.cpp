@@ -5256,7 +5256,7 @@ Solution destroy_and_repair(Solution sol) {
     // This removes a geographic cluster, allowing it to be reassigned to a single vehicle
     
     unordered_set<int> to_destroy;
-    int destroy_count = static_cast<int>(n * 0.4); // Increased to 40% to break structures
+    int destroy_count = static_cast<int>(n * 0.3); // Increased to 40% to break structures
     
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
     
@@ -5970,7 +5970,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         }
                     }
                     print_solution_stream(current_sol, cout);
-                    //current_sol = destroy_worst_repair_random(current_sol);
+                    current_sol = destroy_worst_repair_random(current_sol);
                     current_cost = current_sol.total_makespan;
                     tabu_list_ejection.clear();
                 }
