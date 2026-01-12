@@ -5788,14 +5788,14 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 current_cost = neighbor.total_makespan;
                 score[selected_neighbor] += gamma2;
             } else {
-                  double T = T0 * pow(alpha, iter);
+/*                   double T = T0 * pow(alpha, iter);
                 double delta = current_score - neighbor_score;
                 double ap = exp(delta / T);
                 double rand_val = ((double) rand() / (RAND_MAX));
                 if (rand_val < ap) {
                     current_sol = neighbor;
                     current_cost = neighbor.total_makespan;
-                } 
+                }  */
                 score[selected_neighbor] += gamma3;
                 no_improve_iters++;
             }
@@ -5828,8 +5828,8 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
             iter++;
             if (no_improve_iters >= CFG_MAX_NO_IMPROVE || iter >= CFG_MAX_ITER_PER_SEGMENT){
                 if (no_improve_iters >= CFG_MAX_NO_IMPROVE) {
-                    if (scoring_mode_iter == 1) scoring_mode_segment = 0;
-                    else if (scoring_mode_iter == 0) scoring_mode_segment = 1;
+                    //if (scoring_mode_iter == 1) scoring_mode_segment = 0;
+                    //else if (scoring_mode_iter == 0) scoring_mode_segment = 1;
                     cout << "No improvement in " << CFG_MAX_NO_IMPROVE << " iters, switching scoring mode to "
                          << scoring_mode_segment << "\n";
                 }
@@ -5970,7 +5970,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                         }
                     }
                     print_solution_stream(current_sol, cout);
-                    current_sol = destroy_worst_repair_random(current_sol);
+                    //current_sol = destroy_worst_repair_random(current_sol);
                     current_cost = current_sol.total_makespan;
                     tabu_list_ejection.clear();
                 }
