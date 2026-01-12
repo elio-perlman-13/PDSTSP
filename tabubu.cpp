@@ -5828,8 +5828,8 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
             iter++;
             if (no_improve_iters >= CFG_MAX_NO_IMPROVE || iter >= CFG_MAX_ITER_PER_SEGMENT){
                 if (no_improve_iters >= CFG_MAX_NO_IMPROVE) {
-                    //if (scoring_mode_iter == 1) scoring_mode_segment = 0;
-                    //else if (scoring_mode_iter == 0) scoring_mode_segment = 1;
+                    if (scoring_mode_iter == 1) scoring_mode_segment = 0;
+                    else if (scoring_mode_iter == 0) scoring_mode_segment = 1;
                     cout << "No improvement in " << CFG_MAX_NO_IMPROVE << " iters, switching scoring mode to "
                          << scoring_mode_segment << "\n";
                 }
