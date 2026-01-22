@@ -35,20 +35,28 @@ vd serve_truck, serve_drone; // time taken by truck and drone to serve each cust
 vi served_by_drone; //whether each customer can be served by drone or not, 1 if yes, 0 if no
 vd deadline; //customer deadlines
 vd demand; // demand[i]: demand of customer i
-double Dh = 500.0; // truck capacity (all trucks) (kg)
-double vmax = 15.6464; // truck base speed (m/s)
+double Dh = 1300.0; // truck capacity (all trucks) (kg)
+double vmax = 30.0; // truck base speed (km/h)
+double drone_limit = 3.0;
+double truck_limit = 3.0;
 int L = 24; //number of time segments in a day
-//vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
-//vd time_segments_sigma = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}; //sigma (truck velocity coefficient) for each time segments
 vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
-vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
-double Dd = 2.27, E = 7200000.0; //drone's weight and energy capacities (for all drones)
-double v_fly_drone = 31.3, v_take_off = 15.6, v_landing = 7.8; // speed of the drone
-double height = 50; // height of the drone
-//double height = 0; // height of the drone
-//double power_beta = 0, power_gamma = 1.0; //coefficients for drone energy consumption per second
-double power_beta = 24.2, power_gamma = 1329.0; //coefficients for drone energy consumption per second
-vvd distance_matrix; //distance matrices for truck and drone
+vd time_segments_sigma = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}; //sigma (truck velocity coefficient) for each time segments
+//vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
+//vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
+double Dd = 2.27, E = 0.6; //drone's weight and energy capacities (for all drones). E in Hours.
+double v_fly_drone = 40.0; // speed of the drone (km/h)
+double v_take_off = 20.0; // km/h
+double v_landing = 10.0; // km/h
+double height = 0.05; // km (50m)
+double power_beta = 0, power_gamma = 1.0; //coefficients for drone energy consumption per second
+//double power_beta = 24.2, power_gamma = 1329.0; //coefficients for drone energy consumption per second
+double COST_TRUCK_KM = 1.25;
+double COST_DRONE_KM = 0.03;
+
+vvd distance_matrix; // default/truck distance
+vvd distance_matrix_euclid; //distance matrices for drone
+vvd distance_matrix_manhattan; //distance matrices for truck
 
 // Candidate lists (k-nearest neighbors) to filter neighborhood evaluations
 static int CFG_KNN_K = 1000;           // number of nearest neighbors per customer
@@ -117,10 +125,15 @@ struct Solution {
     vvi drone_routes; //drone_routes[i]: sequence of customers served by drone i
     vd truck_route_times; //truck_route_times[i]: total time of truck i
     vd drone_route_times; //drone_route_times[i]: total time of drone i
-    double total_makespan; //total makespan of the solution
+    vd truck_route_cap; //truck_route_cap[i]: total demand served by truck i
+    vd drone_route_cap; //drone_route_cap[i]: total demand served by drone i
+    double total_distance_truck; // total distance traveled by all trucks
+    double total_distance_drone; // total distance traveled by all drones
+    double total_time; // total makespan of the solution (max route time)
     double capacity_violation = 0.0;    // sum of excess capacity / total capacity
     double energy_violation = 0.0;      // sum of excess energy / total battery
     double deadline_violation = 0.0;    // sum of deadline breaches / total deadlines
+    double total_makespan = 0.0; //temporal because we don't use it in cost calculation
 };
 
 vector<Solution> elite_set; //store most promising solutions
@@ -172,31 +185,70 @@ static void compute_knn_lists(int k) {
 
 
 void input(string filepath){
-        // Open the file
-        ifstream fin(filepath);
-        if (!fin) {
-            cerr << "Error: Cannot open " << filepath << endl;
-            exit(1);
+    // Open the file
+    ifstream fin(filepath);
+    if (!fin) {
+        cerr << "Error: Cannot open " << filepath << endl;
+        exit(1);
+    }
+    string line;
+    n = h = d = -1;
+
+    // Default params (if not in file)
+    vmax = 30.0;
+    v_fly_drone = 40.0;
+    Dd = 2.27;
+    Dh = 1300.0;
+    E = 0.6;
+
+    // Read headers (Key,Value) until a line starts with a digit (data)
+    vector<string> data_lines;
+    bool reading_data = false;
+
+    while (getline(fin, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        
+        // Check if this line is data (starts with digit)
+        if (isdigit(line[0])) {
+            reading_data = true;
+            data_lines.push_back(line); // First data line
+            continue; 
         }
-        string line;
-        n = h = d = -1;
-        // Read trucks_count, drones_count, customers
-        while (getline(fin, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            stringstream ss(line);
-            string key;
-            ss >> key;
-            if (key == "trucks_count") ss >> h;
-            else if (key == "drones_count") ss >> d;
-            else if (key == "customers") ss >> n;
-            else if (key == "depot") break;
+
+        if (reading_data) {
+            data_lines.push_back(line);
+            continue;
         }
-        // Read depot location
-        double depot_x = 0, depot_y = 0;
-        stringstream ss_depot(line);
-        string depot_key;
-        ss_depot >> depot_key >> depot_x >> depot_y;
-    // Prepare storage (use assign to ensure inner dimensions reset, avoiding stale sizes across batch runs)
+
+        // Header parsing
+        size_t comma_pos = line.find(',');
+        if (comma_pos != string::npos) {
+            string key = line.substr(0, comma_pos);
+            string val_str = line.substr(comma_pos + 1);
+            double val = 0.0;
+            try { val = stod(val_str); } catch(...) {}
+
+            if (key == "NUM DRONES") d = (int)val;
+            else if (key == "NUM TRUCKS") h = (int)val;
+            else if (key == "TRUCK CAP") Dh = val;
+            else if (key == "DRONE CAP") Dd = val;
+            else if (key == "TRUCK SPEED") vmax = val;
+            else if (key == "DRONE SPEED") v_fly_drone = val;
+            else if (key == "DRONE ENDURANCE") E = val;
+            else if (key == "DRONE TIME LIMIT") drone_limit = val;
+            else if (key == "TRUCK TIME LIMIT") truck_limit = val;
+            else if (key == "TRUCK UNIT COST") COST_TRUCK_KM = val;
+            else if (key == "DRONE UNIT COST") COST_DRONE_KM = val;
+            else if (key == "NUM CUSTOMERS") n = (int)val;
+        }
+    }
+
+    // Process data lines
+    // If 'NUM CUSTOMERS' key was missing, infer n from data lines
+    // Assumption: data_lines[0] is depot (ID 0), others are customers. n = size - 1.
+    if (n == -1) n = (int)data_lines.size() - 1;
+
+    // Resize globals
     served_by_drone.assign(n+1, 0);
     serve_truck.assign(n+1, 0.0);
     serve_drone.assign(n+1, 0.0);
@@ -204,26 +256,45 @@ void input(string filepath){
     demand.assign(n+1, 0.0);
     loc.assign(n+1, Point());
     distance_matrix.assign(n+1, vd(n+1, 0.0));
-    loc[0] = {depot_x, depot_y, 0};
-    // Skip headers until data lines
-    int header_skips = 0;
-    while (header_skips < 2 && getline(fin, line)) {
-        if (!line.empty() && line[0] != '#') ++header_skips;
-    }
-    // Read customer data
-    int cust = 1;
-    while (cust <= n && getline(fin, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        stringstream ss(line);
-        double x, y, dronable, demand_val, drone_service, truck_service, deadline_val;
-        ss >> x >> y >> dronable >> demand_val >> drone_service >> truck_service >> deadline_val;
-        loc[cust] = {x, y, cust};
-        served_by_drone[cust] = (int)dronable;
-        demand[cust] = demand_val;
-        serve_drone[cust] = drone_service;
-        serve_truck[cust] = truck_service;
-        deadline[cust] = deadline_val;
-        ++cust;
+    distance_matrix_euclid.assign(n+1, vd(n+1, 0.0));
+    distance_matrix_manhattan.assign(n+1, vd(n+1, 0.0));
+
+    double depot_x = 0, depot_y = 0;
+    
+    // Parse data
+    for (const string& dline : data_lines) {
+        stringstream ss(dline);
+        int id;
+        double x_km, y_km, dem;
+        ss >> id >> x_km >> y_km >> dem;
+        
+        // Coords kept in km to match km/h speeds and E in hours
+        loc[id] = {x_km, y_km, id};
+        demand[id] = dem;
+        
+        if (id == 0) {
+            depot_x = x_km;
+            depot_y = y_km;
+        } else {
+            // Determine Dronable
+            // 1. Demand <= Drone Cap
+            bool dem_ok = (dem <= Dd);
+            
+            // 2. Distance <= Endurance/2 * Speed
+            // E in hours, Speed in km/h -> Range in km
+            double dist_to_depot = sqrt(pow(x_km - depot_x, 2) + pow(y_km - depot_y, 2));
+            double max_radius = (v_fly_drone * E) / 2.0;
+
+            if (dem_ok && dist_to_depot <= max_radius) {
+                served_by_drone[id] = 1;
+            } else {
+                served_by_drone[id] = 0;
+            }
+            
+            // Service times set to 0 as per paper
+            serve_truck[id] = 0.0;
+            serve_drone[id] = 0.0;
+        }
     }
 }
 
@@ -252,8 +323,9 @@ void compute_distance_matrices(const vector<Point>& loc) {
     int n = loc.size() - 1; // assuming loc[0] is depot
     for (int i = 0; i <= n; ++i) {
         for (int j = 0; j <= n; ++j) {
-            distance_matrix[i][j] = sqrt((loc[i].x - loc[j].x) * (loc[i].x - loc[j].x)
+            distance_matrix_euclid[i][j] = sqrt((loc[i].x - loc[j].x) * (loc[i].x - loc[j].x)
                                          + (loc[i].y - loc[j].y) * (loc[i].y - loc[j].y)); // Euclidean
+            distance_matrix_manhattan[i][j] = abs(loc[i].x - loc[j].x) + abs(loc[i].y - loc[j].y); // Manhattan
         }
     }
 }
@@ -276,138 +348,57 @@ int get_time_segment(double t) {
 }
 
 pair<double, double> compute_truck_route_time(const vi& route, double start=0) {
-    double time = start; // seconds
-    double deadline_feasible = 0.0;
-    // Index by customer id (0..n), not by position in route, to avoid out-of-bounds writes
-    vector<double> visit_times(n+1, 0.0); // visit_times[id]: time when node id is last visited
-    vector<int> customers_since_last_depot;
+    double time = start; // Hours
+    
     for (int k = 1; k < (int)route.size(); ++k) {
         int from = route[k-1], to = route[k];
-        double dist_left = distance_matrix[from][to]; // meters
-        // Defensive: cap number of segment steps to avoid infinite loops due to numeric edge cases
-        int guard_steps = 0;
-        while (dist_left > 1e-8) {
-            if (++guard_steps > 1000000) {
-                // Fallback: assume constant speed and finish remaining distance
-                double v_safe = vmax > 1e-6 ? vmax : 1.0;
-                time += dist_left / v_safe;
-                dist_left = 0.0;
-                break;
-            }
-            // Convert time to hours for segment lookup
-            double t_hr = time / 3600.0;
-            int seg = get_time_segment(t_hr); // 0-based index into time_segments_sigma
-            double v = vmax * (seg < (int)time_segments_sigma.size() ? time_segments_sigma[seg] : 1.0); // m/s
-            if (v <= 1e-8) v = vmax;
-            // Time left in this custom segment (seconds to next boundary)
-            double next_boundary_hr = (seg + 1 < (int)time_segment.size()) ? time_segment[seg + 1] : std::numeric_limits<double>::infinity();
-            double segment_end_time_sec;
-            if (std::isinf(next_boundary_hr)) segment_end_time_sec = time + 1e18; // effectively no boundary ahead
-            else segment_end_time_sec = next_boundary_hr * 3600.0;
-            double t_seg_end = segment_end_time_sec - time; // seconds remaining in this segment
-            if (t_seg_end < 1e-8) t_seg_end = 1e-6; // minimal progress to avoid stalling
-            double max_dist_this_seg = v * t_seg_end;
-            if (max_dist_this_seg <= 1e-12) {
-                // Make minimal forward progress to avoid stalling due to underflow
-                max_dist_this_seg = std::max(1e-6, v * 1e-6);
-            }
-            if (dist_left <= max_dist_this_seg) {
-                double t_needed = dist_left / v;
-                time += t_needed;
-                dist_left = 0;
-            } else {
-                time += t_seg_end;
-                dist_left -= max_dist_this_seg;
-            }
-        }
+        double dist = distance_matrix_manhattan[from][to]; // km
+        double v = vmax; // km/h
+        if (v < 1e-6) v = 1.0;
+
+        time += dist / v;
+
         if (to != 0) {
-            time += serve_truck[to]; // in seconds
-            customers_since_last_depot.push_back(to);
-        }
-        visit_times[to] = time; // record departure from node 'to'
-        // If we reach depot (except at start), check duration from leaving each customer to depot
-        if (to == 0 && k != 1) {
-            for (int cust : customers_since_last_depot) {
-                // Duration from leaving customer to returning to depot
-                double duration = time - visit_times[cust];
-                if (duration > deadline[cust] + 1e-8) {
-                    double deadline_norm = (deadline[cust] > 1e-6) ? deadline[cust] : 1.0;
-                    deadline_feasible += (duration - deadline[cust]) / deadline_norm;
-                }
-            }
-            // After returning to depot, reset visit times for customers
-            for (int cust : customers_since_last_depot) {
-                visit_times[cust] = time;
-            }
-            customers_since_last_depot.clear();
+            // serve_truck is 0.0 in input(), so this is safe. 
+            // If non-zero, ensure it's in Hours.
+            time += serve_truck[to];
         }
     }
-    return {time - start, deadline_feasible};
+    double runtime = time - start;
+    double violation = max(0.0, (runtime - truck_limit) / truck_limit);
+    return {runtime, violation};
 }
 
 pair<double, double> compute_drone_route_energy(const vi& route) {
-    double total_energy = 0, current_weight = 0;
-    double energy_used = 0;
-    double feasible = 0;
+    double time = 0.0, energy_violation = 0.0;
+    // Check capacity (reset at depot)
+    double capacity_violation = 0.0;
+    double total_demand = 0.0;
     for (int k = 1; k < (int)route.size(); ++k) {
-        int from = route[k-1], to = route[k];
-        if (from == to) continue;
-        double dist = distance_matrix[from][to]; // meters
-        double v = v_fly_drone; // assume constant speed for simplicity
-        double time = dist / v; // seconds
-        time += height / v_take_off; // take-off time
-        time += height / v_landing; // landing time
-        // Energy consumption model: power = beta * weight + gamma
-        double power = power_beta * (current_weight) + power_gamma; // watts
-        energy_used += power * time; // energy in joules
-        total_energy += power * time;
-        if (energy_used > E + 1e-8) feasible += energy_used - E; // exceeded energy
-        if (to != 0) current_weight += demand[to]; // add payload when delivering
-        else {
-            current_weight = 0; // reset weight when returning to depot
-            energy_used = 0; // reset energy (charged at depot)
+        int customer = route[k];
+        if (customer == 0) {
+            total_demand = 0.0;
+        } else {
+            double distance = distance_matrix_euclid[0][customer] * 2.0;
+            time += distance / v_fly_drone;
+            if (distance / v_fly_drone > E){
+                energy_violation += (distance / v_fly_drone - E) / E; // normalized excess
+            }
         }
     }
-    return make_pair(total_energy, feasible);
+    return {time, energy_violation};
 }
 
 pair<double, double> compute_drone_route_time(const vi& route) {
-    double time = 0; // seconds
-    double deadline_feasible = 0.0;
-    // Index by customer id (0..n), not by position in route
-    vector<double> visit_times(n+1, 0.0); // visit_times[id]: time when node id is last visited
-    vector<int> customers_since_last_depot;
+    double time = 0.0; // Hours
+    
     for (int k = 1; k < (int)route.size(); ++k) {
-        int from = route[k-1], to = route[k];
-        if (from == to) continue;
-        double dist = distance_matrix[from][to]; // meters
-        double v = v_fly_drone; // assume constant speed for simplicity
-        if (v <= 1e-8) v = v_fly_drone;
-        double t = dist / v; // seconds
-        t += height / v_take_off; // take-off time
-        t += height / v_landing; // landing time
-        time += t;
-        if (to != 0) {
-            time += serve_drone[to]; // in seconds
-            customers_since_last_depot.push_back(to);
-        }
-        visit_times[to] = time;
-        // If we reach depot (except at start), check duration from leaving each customer to depot
-        if (to == 0 && k != 1) {
-            for (int cust : customers_since_last_depot) {
-                double duration = time - visit_times[cust];
-                if (duration > deadline[cust] + 1e-8) {
-                    double deadline_norm = (deadline[cust] > 1e-6) ? deadline[cust] : 1.0;
-                    deadline_feasible += (duration - deadline[cust]) / deadline_norm;
-                }
-            }
-            for (int cust : customers_since_last_depot) {
-                visit_times[cust] = time;
-            }
-            customers_since_last_depot.clear();
-        }
+        int customer = route[k];
+        double distance = distance_matrix_euclid[0][customer] * 2.0;
+        time += distance / v_fly_drone;
     }
-    return {time, deadline_feasible};
+    double violation = max(0.0, (time - drone_limit) / drone_limit);
+    return {time, violation};
 }
 
 
@@ -422,15 +413,14 @@ void update_served_by_drone() {
             continue;
         }
         // Energy: use compute_drone_route_energy for depot->customer->depot
-        vi route = {depot, customer, depot};
-        auto [total_energy, energy_violation] = compute_drone_route_energy(route);
-        if (energy_violation > 1e-8) {
+        double distance = distance_matrix_euclid[0][customer] * 2;
+        double route_energy = distance / v_fly_drone;
+        if (route_energy > E){
             served_by_drone[customer] = 0;
             continue;
         }
-        // Deadline: use compute_drone_route_time for depot->customer->depot
-        auto [total_time, feasible_deadline] = compute_drone_route_time(route);
-        if (feasible_deadline > 1e-8) {
+        // Deadline: check if round trip can be done within deadline
+        if (route_energy > drone_limit){
             served_by_drone[customer] = 0;
             continue;
         }
@@ -467,27 +457,29 @@ vector<double> check_truck_route_feasibility(const vi& route, double start=0) {
 // Returns: [route_time, deadline_violation, energy_violation, capacity_violation]
 vector<double> check_drone_route_feasibility(const vi& route) {
     // Check deadlines
-    auto [time, deadline_violation] = compute_drone_route_time(route);
-    
-    // Check capacity (reset at depot)
-    double capacity_violation = 0.0;
+    double time = 0.0, capacity_violation = 0.0, energy_violation = 0.0, deadline_violation = 0.0;
+    // Check capacity (reset at depot
     double total_demand = 0.0;
-    for (int k = 1; k < (int)route.size(); ++k) {
+    for (int k = 0; k < (int)route.size(); ++k) {
         int customer = route[k];
         if (customer == 0) {
             total_demand = 0.0;
         } else {
-            total_demand += demand[customer];
+            total_demand = demand[customer];
             if (total_demand > Dd + 1e-9) {
                 capacity_violation += (total_demand - Dd) / Dd; // normalized excess
             }
+            double distance = distance_matrix_euclid[0][customer] * 2;
+            time += distance / v_fly_drone;
+            if (distance / v_fly_drone > E){
+                energy_violation += (distance / v_fly_drone - E) / E; // normalized excess
+            }
         }
     }
-    
-    // Check energy
-    auto energy_metrics = compute_drone_route_energy(route);
-    double energy_violation = max(0.0, energy_metrics.second / E); // normalized excess beyond battery per sortie
-    
+
+    if (time > drone_limit){
+        deadline_violation += (time - drone_limit) / drone_limit; // normalized excess
+    }
     return {time, deadline_violation, energy_violation, capacity_violation};
 }
 
@@ -521,16 +513,14 @@ double solution_score_makespan(const Solution& sol) {
     return (sol.total_makespan) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
-double solution_score_total_time(const Solution& sol) {
+double solution_score_cost(const Solution& sol) {
     double penalty_multiplier = 1.0 + PENALTY_LAMBDA_CAPACITY * sol.capacity_violation
                                 + PENALTY_LAMBDA_ENERGY * sol.energy_violation
                                 + PENALTY_LAMBDA_DEADLINE * sol.deadline_violation;
-    double sum_sq = 0.0;
-    for (double t : sol.truck_route_times) sum_sq += t * t;
-    for (double t : sol.drone_route_times) sum_sq += t * t;
-    double l2_norm = std::sqrt(sum_sq);
+    
+    double cost = sol.total_distance_truck * COST_TRUCK_KM + sol.total_distance_drone * COST_DRONE_KM;
 
-    return (l2_norm) * pow(penalty_multiplier, PENALTY_EXPONENT);
+    return (cost) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
 void update_penalties(const Solution& sol) {
@@ -764,521 +754,6 @@ Solution greedy_insert_customer(Solution sol, int customer, bool minimize_delta)
     return best_sol;
 }
 
-Solution generate_initial_solution(){
-    Solution sol;
-    sol.truck_routes.resize(h);
-    sol.drone_routes.resize(h); // as many drone routes as truck routes
-    // Cluster customers into up to h groups (if h==0, nothing to do)
-    vector<bool> visited(n+1, false);
-    int num_of_visited_customers = 0;
-    vvi clusters = (h > 0) ? kmeans_clustering(h) : vvi{};
-    // Optional: shuffle each cluster to randomize the intra-cluster selection order
-    {
-        mt19937 rng(std::random_device{}());
-        for (auto& vec : clusters) {
-            shuffle(vec.begin(), vec.end(), rng);
-        }
-    }
-    vi cluster_assignment(n+1, -1);
-    for (int i = 0; i < (int)clusters.size(); ++i) {
-        for (int cust : clusters[i]) {
-            cluster_assignment[cust] = i;
-        }
-    }
-    vd service_times_truck(h, 0.0); // service times for each truck (and drone)
-    vd service_times_drone(h, 0.0); // service times for each drone
-    vd capacity_used_truck(h, 0); // capacity used by each truck
-    vd capacity_used_drone(h, 0); // capacity used by each drone
-    vd timebomb_truck(h, 1e18); // timebomb for each truck
-    vd timebomb_drone(h, 1e18); // timebomb for each drone
-    vd energy_used_drone(h, 0); // energy used by each drone
-    // Simple initializer: for each index i in [0..h-1], pick first unvisited feasible customer
-    // for truck, then pick first unvisited feasible customer for drone. Routes are {0, cust, 0}.
-    // If none available or infeasible, assign {0}.
-    for (int i = 0; i < h; ++i) {
-        const vector<int>* cluster_ptr = (i < (int)clusters.size()) ? &clusters[i] : nullptr;
-        bool assigned_truck = false;
-        if (cluster_ptr) {
-            for (int cust : *cluster_ptr) {
-                if (visited[cust]) continue;
-                vi r = {0, cust, 0};
-                vd t_route = check_truck_route_feasibility(r, 0.0);
-                double t = t_route[0];
-                bool feas = (t_route[1] < 1e-8) && (t_route[3] < 1e-9); // deadline and capacity
-                if (feas) {
-                    r = {0, cust};
-                    auto [t, feas] = compute_truck_route_time(r, 0.0);
-                    sol.truck_routes[i] = r;
-                    visited[cust] = true;
-                    assigned_truck = true;
-                    service_times_truck[i] += t;
-                    num_of_visited_customers++;
-                    capacity_used_truck[i] += demand[cust];
-                    // Timebomb should be tied to the selected customer's deadline, not the truck index
-                    timebomb_truck[i] = deadline[cust];
-                    break;
-                }
-            }
-        }
-
-        if (!assigned_truck) {
-            sol.truck_routes[i] = {0};
-        }
-        bool assigned_drone = false;
-        if (cluster_ptr) {
-            for (int cust : *cluster_ptr) {
-                if (visited[cust]) continue;
-                if (!served_by_drone[cust]) continue;
-                vi r = {0, cust, 0};
-                vd d_route = check_drone_route_feasibility(r);
-                double t = d_route[0];
-                bool feas = (d_route[1] < 1e-8) && (d_route[2] < 1e-8) && (d_route[3] < 1e-9); // deadline, energy, capacity
-                if (feas) {
-                    r = {0, cust};
-                    auto [t, feas] = compute_drone_route_time(r);
-                    service_times_drone[i] += t;
-                    energy_used_drone[i] += compute_drone_route_energy(r).first;
-                    // Timebomb should be tied to the selected customer's deadline, not the drone index
-                    timebomb_drone[i] = deadline[cust];
-                    capacity_used_drone[i] += demand[cust];
-                    sol.drone_routes[i] = r;
-                    visited[cust] = true;
-                    assigned_drone = true;
-                    num_of_visited_customers++;
-                    break;
-                }
-            }
-        }
-        if (!assigned_drone) {
-            sol.drone_routes[i] = {0};
-        }
-    }
-
-    //loop until all customers are visited:
-    int iter = 2000; // max iterations
-    int stall_count = 0; // number of consecutive iterations without meaningful progress
-    // Track whether each vehicle (truck/drone) is still active (eligible for selection)
-    vector<char> active_truck(h, 1), active_drone(h, 1);
-    while (num_of_visited_customers < n && iter > 0) {
-        iter--;
-        bool made_progress = false;
-        // Select the vehicle (truck or drone) with the smallest current service time
-        if (h <= 0) break; // no vehicles available
-        int best_vehicle = -1; // 0..h-1 trucks, h..2h-1 drones
-        double best_time_val = 1e100;
-        int active_count = 0;
-        for (int i = 0; i < h; ++i) {
-            if (!active_truck[i]) continue;
-            ++active_count;
-            if (service_times_truck[i] < best_time_val) {
-                best_time_val = service_times_truck[i];
-                best_vehicle = i; // truck i
-            }
-        }
-        for (int i = 0; i < h; ++i) { // consider paired drone index i
-            if (!active_drone[i]) continue;
-            ++active_count;
-            if (service_times_drone[i] < best_time_val) {
-                best_time_val = service_times_drone[i];
-                best_vehicle = h + i; // drone i
-            }
-        }
-        if (active_count == 0 || best_vehicle == -1) break; // no active vehicles remaining
-        bool is_truck = (best_vehicle < h);
-        // if it's a truck:
-        if (is_truck) {
-            int truck_idx = best_vehicle;
-            bool assigned = false;
-            double best_score = 1e18;
-            vi current_route = sol.truck_routes[truck_idx];
-            int current_node = current_route.empty() ? 0 : current_route.back();
-            // Try to assign a new customer to this truck
-            // Loop all customers in cluster[truck_idx] first
-            // Find the best candidate customer based on a scoring function
-            struct Candidate {
-                int cust;
-                double urgency_score;
-                double capacity_ratio;
-                double change_in_return_time;
-                bool same_cluster;
-                Candidate(int c, double u, double cr, double crt, bool sc)
-                    : cust(c), urgency_score(u), capacity_ratio(cr), change_in_return_time(crt), same_cluster(sc) {}
-            };
-            Candidate* best_candidate = nullptr;
-            vector<Candidate> candidates;
-            double max_change_in_return_time = -1e18;
-            double min_change_in_return_time = 1e18;
-            double direct_return_time = compute_truck_route_time({current_node, 0}, service_times_truck[truck_idx]).first;  
-            for (int cust = 1; cust <= n; ++cust) {
-                if (visited[cust]) continue;
-                if (capacity_used_truck[truck_idx] + demand[cust] > (double)Dh + 1e-9) continue; // capacity prune
-                vi r = sol.truck_routes[truck_idx];
-                // calculate a score for inserting cust into r
-                // Note: compute_truck_route_time adds serve_truck[cust] for non-depot arrivals; subtract it to get pure travel
-                double to_with_service = compute_truck_route_time({current_node, cust}, service_times_truck[truck_idx]).first;
-                double travel_to_cust = max(0.0, to_with_service);
-                double depart_time = service_times_truck[truck_idx] + travel_to_cust;
-                double time_back_to_depot = compute_truck_route_time({cust, 0}, depart_time).first;
-                double time_bomb_at_cust = min(timebomb_truck[truck_idx] - to_with_service, deadline[cust]);
-                if (time_bomb_at_cust <= 0) continue; // cannot reach customer before its deadline
-                double urgency_score = time_back_to_depot / time_bomb_at_cust;
-                // Urgency check: must be able to serve customer and come back to depot before their deadline
-                if (urgency_score > 1.0 + 1e-8) continue;
-                if (urgency_score < 0) continue;
-                double change_in_return_time = to_with_service + time_back_to_depot - direct_return_time;
-                double capacity_ratio = (capacity_used_truck[truck_idx] + demand[cust]) / (double)Dh;
-                if (capacity_ratio > 1.0 + 1e-8) continue; // capacity prune
-                max_change_in_return_time = max(max_change_in_return_time, change_in_return_time);
-                min_change_in_return_time = min(min_change_in_return_time, change_in_return_time);
-                // check if same cluster with truck position
-                bool same_cluster = (cluster_assignment[cust] == cluster_assignment[current_node]);
-                candidates.emplace_back(cust, urgency_score, capacity_ratio, change_in_return_time, same_cluster);
-            }
-            // Select the best candidate based on a weighted scoring function
-            //First calculate weights based on MAD:
-            double mean_urgency = 0.0, mean_capacity = 0.0;
-            for (auto& cand : candidates) {
-                mean_urgency += cand.urgency_score;
-                mean_capacity += cand.capacity_ratio;
-            }
-            mean_urgency /= candidates.size();
-            mean_capacity /= candidates.size();
-            double mad_urgency = 0.0, mad_capacity = 0.0;
-            for (auto& cand : candidates) {
-                mad_urgency += fabs(cand.urgency_score - mean_urgency);
-                mad_capacity += fabs(cand.capacity_ratio - mean_capacity);
-            }
-            mad_urgency /= candidates.size();
-            mad_capacity /= candidates.size();
-            // Avoid zero MAD
-            if (mad_urgency < 1e-8) mad_urgency = 1.0;
-            if (mad_capacity < 1e-8) mad_capacity = 1.0;
-            // Now score candidates and pick the best
-            for (auto& cand : candidates) {
-                double w1 = 1.0 / mad_urgency, w2 = 1.0 / mad_capacity; // weights for urgency, capacity, change in return time, same cluster
-                // Normalize weights
-                double w_sum = w1 + w2;
-                w1 /= w_sum; w2 /= w_sum;
-                // Normalize change_in_return_time to [0,1] based on min/max in candidates
-                double norm_change = (max_change_in_return_time - min_change_in_return_time < 1e-8)
-                                     ? 0.0
-                                     : (cand.change_in_return_time - min_change_in_return_time) / (max_change_in_return_time - min_change_in_return_time);
-                // test different scoring formulas here
-                //double score = norm_change + (cand.same_cluster ? 0.0 : 1.0);
-                double score = w1 * cand.urgency_score * cand.urgency_score + w2 * cand.capacity_ratio * cand.capacity_ratio + norm_change + (cand.same_cluster ? 0.0 : w1 + w2 + 1.0);
-                if (score < best_score) {
-                    best_score = score;
-                    best_candidate = &cand;
-                }
-            }
-            if (best_candidate) {
-                int cust = best_candidate->cust;
-                vi r = sol.truck_routes[truck_idx];
-                r.push_back(cust);
-                double time_to_cust = compute_truck_route_time({current_node, cust}, service_times_truck[truck_idx]).first;
-                service_times_truck[truck_idx] += time_to_cust;
-                capacity_used_truck[truck_idx] += demand[cust];
-                timebomb_truck[truck_idx] = min(timebomb_truck[truck_idx] - time_to_cust, deadline[cust]);
-                sol.truck_routes[truck_idx] = r;
-                visited[cust] = true;
-                assigned = true;
-                num_of_visited_customers++;
-                made_progress = true;
-            }
-            if (!assigned) {
-                // No feasible customer found.
-                int current_node2 = current_route.empty() ? 0 : current_route.back();
-                if (current_node2 != 0) {
-                    // Force return to depot
-                    vi r = sol.truck_routes[truck_idx];
-                    double time_to_depot = compute_truck_route_time({current_node2, 0}, service_times_truck[truck_idx]).first;
-                    service_times_truck[truck_idx] += time_to_depot;
-                    r.push_back(0);
-                    sol.truck_routes[truck_idx] = r;
-                    timebomb_truck[truck_idx] = 1e18; // reset timebomb after returning to depot
-                    // Reset capacity after completing a tour at the depot
-                    capacity_used_truck[truck_idx] = 0.0;
-                    made_progress = true;
-                }
-                else {
-                    active_truck[truck_idx] = 0;
-                    made_progress = true;
-                }
-            }
-        } else {
-            int drone_idx = best_vehicle - h;
-            bool assigned = false;
-            vi current_route = sol.drone_routes[drone_idx];
-            int current_node = current_route.empty() ? 0 : current_route.back();
-            double best_score = 1e18;
-            // Try to assign a new customer to this drone
-            struct Candidate {
-                int cust;
-                double urgency_score;
-                double capacity_ratio;
-                double energy_ratio;
-                double change_in_return_time;
-                bool same_cluster;
-                Candidate(int c, double u, double cr, double er, double crt, bool sc)
-                    : cust(c), urgency_score(u), capacity_ratio(cr), energy_ratio(er), change_in_return_time(crt), same_cluster(sc) {}
-            };
-            Candidate* best_candidate = nullptr;
-            vector<Candidate> candidates;
-            double max_change_in_return_time = -1e18;
-            double min_change_in_return_time = 1e18;
-            double direct_return_time = compute_drone_route_time({current_node, 0}).first;  
-
-            for (int cust = 1; cust <= n; ++cust) {
-                if (visited[cust]) continue;
-                if (!served_by_drone[cust]) continue;
-                if (capacity_used_drone[drone_idx] + demand[cust] > Dd + 1e-9) continue; // capacity prune
-                double to_with_service = compute_drone_route_time({current_node, cust}).first;
-                double time_back_to_depot = compute_drone_route_time({cust, 0}).first;
-                double time_bomb_at_cust = min(timebomb_drone[drone_idx] - to_with_service, deadline[cust]);
-                if (time_bomb_at_cust <= 0) continue; // cannot reach customer before its deadline
-                double urgency_score = time_back_to_depot / time_bomb_at_cust;
-                if (urgency_score > 1.0 + 1e-8) continue;
-                if (urgency_score < -1e-12) continue;
-                double change_in_return_time = to_with_service + time_back_to_depot - direct_return_time;
-                double capacity_ratio = (capacity_used_drone[drone_idx] + demand[cust]) / Dd;
-                if (capacity_ratio > 1.0 + 1e-8) continue; // capacity prune
-                // Estimate energy for sortie current_node -> cust -> depot at current payload
-                double total_energy = (to_with_service - serve_drone[cust]) * (power_beta * capacity_used_drone[drone_idx] + power_gamma)
-                                      + (time_back_to_depot) * (power_beta * (capacity_used_drone[drone_idx] + demand[cust]) + power_gamma);
-                double energy_ratio = (energy_used_drone[drone_idx] + total_energy) / E;
-                if (energy_ratio > 1.0 + 1e-8) continue; // energy prune
-                max_change_in_return_time = max(max_change_in_return_time, change_in_return_time);
-                min_change_in_return_time = min(min_change_in_return_time, change_in_return_time);
-                bool same_cluster = (cluster_assignment[cust] == cluster_assignment[current_node]);
-                candidates.emplace_back(cust, urgency_score, capacity_ratio, energy_ratio, change_in_return_time, same_cluster);
-            }
-            // Select the best candidate based on a weighted scoring function
-            //First calculate weights based on MAD:
-            double mean_urgency = 0.0, mean_capacity = 0.0, mean_energy = 0.0;
-            for (auto& cand : candidates) {
-                mean_urgency += cand.urgency_score;
-                mean_capacity += cand.capacity_ratio;
-                mean_energy += cand.energy_ratio;
-            }
-            mean_urgency /= candidates.size();
-            mean_capacity /= candidates.size();
-            mean_energy /= candidates.size();
-            double mad_urgency = 0.0, mad_capacity = 0.0, mad_energy = 0.0;
-            for (auto& cand : candidates) {
-                mad_urgency += fabs(cand.urgency_score - mean_urgency);
-                mad_capacity += fabs(cand.capacity_ratio - mean_capacity);
-                mad_energy += fabs(cand.energy_ratio - mean_energy);
-            }
-            mad_urgency /= candidates.size();
-            mad_capacity /= candidates.size();
-            mad_energy /= candidates.size();
-            // Avoid zero MAD
-            if (mad_urgency < 1e-8) mad_urgency = 1.0;
-            if (mad_capacity < 1e-8) mad_capacity = 1.0;
-            if (mad_energy < 1e-8) mad_energy = 1.0;
-            // Now score candidates and pick the best   
-
-            for (auto& cand : candidates) {
-                double w1 = 1.0 / mad_urgency, w2 = 1.0 / mad_capacity, w3 = 1.0 / mad_energy; // weights for urgency, capacity, energy, change in return time, same cluster
-                // Normalize weights
-                double w_sum = w1 + w2 + w3;
-                w1 /= w_sum; w2 /= w_sum; w3 /= w_sum;
-                // Normalize change_in_return_time to [0,1] based on min/max in candidates
-                double norm_change = (max_change_in_return_time - min_change_in_return_time < 1e-8)
-                                     ? 0.0
-                                     : (cand.change_in_return_time - min_change_in_return_time) / (max_change_in_return_time - min_change_in_return_time);
-                // Score: lower is better
-                // Formula 1: remove capacity_ratio and energy_ratio
-                //double score = norm_change + (cand.same_cluster ? 0.0 : 1.0);
-                double score = w1 * cand.urgency_score * cand.urgency_score + w2 * cand.capacity_ratio * cand.capacity_ratio + w3 * cand.energy_ratio * cand.energy_ratio + norm_change + (cand.same_cluster ? 0.0 : w1 + w2 + w3 + 1.0);
-                if (score < best_score) {
-                    best_score = score;
-                    best_candidate = &cand;
-                }
-            }
-            if (best_candidate) {
-                int cust = best_candidate->cust;
-                vi r = sol.drone_routes[drone_idx];
-                r.push_back(cust);
-                double time_to_cust = compute_drone_route_time({current_node, cust}).first;
-                service_times_drone[drone_idx] += time_to_cust;
-                // Reserve energy for forward leg and the eventual return to depot
-                double total_energy = (time_to_cust - serve_drone[cust]) * (power_beta * capacity_used_drone[drone_idx] + power_gamma);
-                energy_used_drone[drone_idx] += total_energy;
-                capacity_used_drone[drone_idx] += demand[cust];
-                timebomb_drone[drone_idx] = min(timebomb_drone[drone_idx] - time_to_cust, deadline[cust]);
-                sol.drone_routes[drone_idx] = r;
-                visited[cust] = true;
-                assigned = true;
-                num_of_visited_customers++;
-                made_progress = true;
-            }
-            if (!assigned) {
-                int current_node2 = current_route.empty() ? 0 : current_route.back();
-                if (current_node2 != 0) {
-                    vi r = sol.drone_routes[drone_idx];
-                    double time_to_depot = compute_drone_route_time({current_node2, 0}).first;
-                    service_times_drone[drone_idx] += time_to_depot;
-                    r.push_back(0);
-                    sol.drone_routes[drone_idx] = r;
-                    timebomb_drone[drone_idx] = 1e18; // reset timebomb after returning to depot
-                    capacity_used_drone[drone_idx] = 0.0;
-                    energy_used_drone[drone_idx] = 0.0;
-                    made_progress = true;
-                }
-                else {
-                    
-                    active_drone[drone_idx] = 0; // deactivate drone
-                    made_progress = true;
-                }
-            }
-        }
-        // Stall detection: if no progress this iteration, count and break after a threshold
-        if (!made_progress) {
-            if (++stall_count > max(100, 2*h + 2*d)) {
-                cerr << "Warning: construction stalled; breaking after repeated no-progress iterations.\n";
-                break;
-            }
-        } else {
-            stall_count = 0;
-        }
-    }
-    // Reallocate drone sorties (depot-to-depot) across d drones using LPT to minimize makespan
-    {
-        // Extract sorties from current drone routes
-        struct Sortie { vi route; double duration; };
-        vector<Sortie> sorties;
-        sorties.reserve(n); // rough upper bound
-        for (const auto &r : sol.drone_routes) {
-            if (r.size() <= 1) continue;
-            vi cur; cur.push_back(0);
-            for (size_t i = 1; i < r.size(); ++i) {
-                int node = r[i];
-                if (node == 0) {
-                    // close current sortie
-                    if (cur.back() != 0) cur.push_back(0);
-                    double dur = compute_drone_route_time(cur).first;
-                    if (cur.size() > 2) sorties.push_back({cur, dur}); // non-empty sortie
-                    cur.clear(); cur.push_back(0);
-                } else {
-                    cur.push_back(node);
-                }
-            }
-            // If route ended without a closing depot, close it
-            if (cur.size() > 1) {
-                if (cur.back() != 0) cur.push_back(0);
-                double dur = compute_drone_route_time(cur).first;
-                if (cur.size() > 2) sorties.push_back({cur, dur});
-            }
-        }
-
-        // Prepare target number of drones
-        if (d <= 0) {
-            sol.drone_routes.clear();
-        } else {
-            // LPT: sort sorties by duration descending
-            vector<int> idx(sorties.size());
-            iota(idx.begin(), idx.end(), 0);
-            sort(idx.begin(), idx.end(), [&](int a, int b){ return sorties[a].duration > sorties[b].duration; });
-
-            // Min-heap of (load, drone_id)
-            struct Load { double t; int id; };
-            struct Cmp { bool operator()(const Load &a, const Load &b) const { return a.t > b.t; } };
-            priority_queue<Load, vector<Load>, Cmp> pq;
-            for (int k = 0; k < d; ++k) pq.push({0.0, k});
-
-            vector<vector<int>> assigned(d); // store concatenated routes per drone as sequences of nodes
-            vector<double> loads(d, 0.0);
-            // Assign each sortie to the least-loaded drone
-            for (int id : idx) {
-                Load cur = pq.top(); pq.pop();
-                int k = cur.id;
-                // Append sortie to drone k's sequence (avoid duplicating initial depot)
-                const vi &s = sorties[id].route; // s is [0, ..., 0]
-                if (assigned[k].empty()) assigned[k].push_back(0);
-                // remove trailing 0 if present to avoid double depot before appending
-                if (!assigned[k].empty() && assigned[k].back() == 0) {
-                    // keep it; we'll append from s.begin()+1
-                }
-                assigned[k].insert(assigned[k].end(), s.begin() + 1, s.end());
-                loads[k] = cur.t + sorties[id].duration;
-                pq.push({loads[k], k});
-            }
-
-            // Build sol.drone_routes from assigned sequences
-            sol.drone_routes.clear();
-            sol.drone_routes.resize(d);
-            for (int k = 0; k < d; ++k) {
-                if (assigned[k].empty()) {
-                    sol.drone_routes[k] = {0};
-                } else {
-                    sol.drone_routes[k] = std::move(assigned[k]);
-                    // Ensure ends at depot
-                    if (sol.drone_routes[k].back() != 0) sol.drone_routes[k].push_back(0);
-                }
-            }
-        }
-    }
-
-    // Finally, ensure all routes end at depot
-    for (int i = 0; i < h; ++i) {
-        if (sol.truck_routes[i].empty() || sol.truck_routes[i].back() != 0) {
-            int current_node = sol.truck_routes[i].empty() ? 0 : sol.truck_routes[i].back();
-            if (current_node != 0) sol.truck_routes[i].push_back(0);
-        }
-    }
-    // Drone routes may have size d (could be < h). Safely finalize only existing routes.
-    for (int i = 0; i < (int)sol.drone_routes.size(); ++i) {
-        if (sol.drone_routes[i].empty() || sol.drone_routes[i].back() != 0) {
-            int current_node = sol.drone_routes[i].empty() ? 0 : sol.drone_routes[i].back();
-            if (current_node != 0) sol.drone_routes[i].push_back(0);
-        }
-    }
-    // Compute makespan and per-vehicle times (indexed vectors)
-    double makespan = 0.0;
-    sol.truck_route_times.assign(h, 0.0);
-    for (int i = 0; i < h; ++i) {
-        double t = 0.0;
-        if (sol.truck_routes[i].size() > 1) {
-            t = compute_truck_route_time(sol.truck_routes[i], 0.0).first;
-        }
-        sol.truck_route_times[i] = t;
-        makespan = max(makespan, t);
-    }
-    sol.drone_route_times.assign((int)sol.drone_routes.size(), 0.0);
-    for (int i = 0; i < (int)sol.drone_routes.size(); ++i) {
-        double t = 0.0;
-        if (sol.drone_routes[i].size() > 1) {
-            t = compute_drone_route_time(sol.drone_routes[i]).first;
-        }
-        sol.drone_route_times[i] = t;
-        makespan = max(makespan, t);
-    }
-    sol.total_makespan = makespan;
-    // forced feasibility for now
-    sol.capacity_violation = 0.0;
-    sol.energy_violation = 0.0;
-    sol.deadline_violation = 0.0;
-    for (int i = 0; i < h; ++i) {
-        vd metrics = check_truck_route_feasibility(sol.truck_routes[i], 0.0);
-        sol.deadline_violation += metrics[1];
-        sol.capacity_violation += metrics[3];
-    }
-    for (int i = 0; i < (int)sol.drone_routes.size(); ++i) {
-        vd metrics = check_drone_route_feasibility(sol.drone_routes[i]);
-        sol.deadline_violation += metrics[1];
-        sol.energy_violation += metrics[2];
-        sol.capacity_violation += metrics[3];
-    }
-        // if there are still unvisited customers, assign them greedily with smallest delta increase
-    for (int cust = 1; cust <= n; ++cust) {
-        if (visited[cust]) continue;
-        cout << "Warning: customer " << cust << " unvisited after initial solution construction; assigning greedily.\n";
-        sol = greedy_insert_customer(sol, cust, true);
-    }
-    return sol;
-}
-
 void print_solution(const Solution& sol) {
     cout << "Truck Routes:\n";
     for (int i = 0; i < h; ++i) {
@@ -1298,10 +773,195 @@ void print_solution(const Solution& sol) {
     }
 }
 
+Solution recalculate_solution(Solution sol) {
+    sol.deadline_violation = 0.0;
+    sol.energy_violation = 0.0;
+    sol.capacity_violation = 0.0;
+    sol.total_distance_truck = 0.0;
+    sol.total_distance_drone = 0.0;
+    sol.truck_route_times.resize(h, 0.0);
+    sol.drone_route_times.resize(d, 0.0);
+
+    for (size_t i = 0; i < sol.truck_routes.size(); ++i) {
+        vd metrics = check_route_feasibility(sol.truck_routes[i], 0.0, true);
+        sol.truck_route_times[i] = metrics[0];
+        sol.deadline_violation += metrics[1];
+        sol.energy_violation += metrics[2];
+        sol.capacity_violation += metrics[3];
+
+        // Track truck distance
+        const vi& route = sol.truck_routes[i];
+        for (size_t j = 0; j + 1 < route.size(); ++j) {
+            sol.total_distance_truck += distance_matrix_manhattan[route[j]][route[j+1]];
+        }
+    }
+    for (size_t i = 0; i < sol.drone_routes.size(); ++i) {
+        vd metrics = check_route_feasibility(sol.drone_routes[i], 0.0, false);
+        sol.drone_route_times[i] = metrics[0];
+        sol.deadline_violation += metrics[1];
+        sol.energy_violation += metrics[2];
+        sol.capacity_violation += metrics[3];
+
+        // Track drone distance (sum of sorties)
+        const vi& route = sol.drone_routes[i];
+        for (int c : route) {
+            sol.total_distance_drone += (2 * distance_matrix_euclid[0][c]);
+        }
+    }
+
+    sol.total_time = 0.0;
+    for (size_t t = 0; t < sol.truck_route_times.size(); ++t) sol.total_time += sol.truck_route_times[t];
+    for (size_t t = 0; t < sol.drone_route_times.size(); ++t) sol.total_time += sol.drone_route_times[t];
+    
+    return sol;
+}
+
+
+Solution generate_initial_solution(){
+    Solution sol;
+    sol.truck_routes.assign(h, {0, 0});
+    sol.drone_routes.assign(d, {0});
+    sol.truck_route_times.assign(h, 0.0);
+    sol.drone_route_times.assign(d, 0.0);
+    sol.truck_route_cap.assign(h, 0.0);
+    sol.drone_route_cap.assign(d, 0.0);
+    sol.capacity_violation = 0.0;
+    sol.energy_violation = 0.0;
+    sol.deadline_violation = 0.0;
+    sol.total_makespan = 0.0;
+    sol.total_distance_truck = 0.0;
+    sol.total_distance_drone = 0.0;
+
+    vi customers_to_insert(n);
+    iota(customers_to_insert.begin(), customers_to_insert.end(), 1);
+    
+    // Randomize customer insertion order for variety in solutions
+    mt19937 rng(std::random_device{}());
+    shuffle(customers_to_insert.begin(), customers_to_insert.end(), rng);
+
+    for (int cust : customers_to_insert) {
+        double best_insertion_cost = 1e18;
+        int best_vehicle_type = -1; // 0 for truck, 1 for drone
+        int best_vehicle_idx = -1;
+        int best_insertion_pos = -1;
+
+        // Find best insertion for 'cust' in truck routes
+        for (int i = 0; i < h; ++i) {
+            for (size_t j = 1; j < sol.truck_routes[i].size(); ++j) {
+                vi temp_route = sol.truck_routes[i];
+                temp_route.insert(temp_route.begin() + j, cust);
+                if (temp_route.back() != 0) temp_route.push_back(0);
+                if (temp_route.size() > 2 && temp_route[0] == 0 && temp_route[1] == 0) temp_route.erase(temp_route.begin());
+                int u = sol.truck_routes[i][j-1];
+                int v = (j == sol.truck_routes[i].size()) ? 0 : sol.truck_routes[i][j];
+                double cost_delta = (distance_matrix_manhattan[u][cust] + distance_matrix_manhattan[cust][v] - distance_matrix_manhattan[u][v]) * COST_TRUCK_KM;
+                double new_cost = sol.total_distance_truck * COST_TRUCK_KM + sol.total_distance_drone * COST_DRONE_KM + cost_delta;
+                double time_delta = (distance_matrix_manhattan[u][cust] + distance_matrix_manhattan[cust][v] - distance_matrix_manhattan[u][v]) / vmax;
+                double new_time = time_delta + sol.truck_route_times[i];
+                double tmp_deadline_violation = max(0.0, (new_time - truck_limit) / truck_limit);
+                double tmp_capacity_violation = 0.0; // fix later
+                double tmp_energy_violation = 0.0;
+                double score = new_cost * pow((1.0 + tmp_deadline_violation * 1e6 + tmp_capacity_violation * 1e6 + tmp_energy_violation * 1e6), PENALTY_EXPONENT);
+                if (score < best_insertion_cost) {
+                    best_insertion_cost = score;
+                    best_vehicle_type = 0;
+                    best_vehicle_idx = i;
+                    best_insertion_pos = j;
+                }
+            }
+        }
+
+        for (int i = 0; i < d; ++i) {
+            // just push it in the back for drones
+            vi temp_route = sol.drone_routes[i];
+            temp_route.push_back(cust);
+            double dist = distance_matrix_euclid[0][cust] * 2;
+            double cost_delta = dist * COST_DRONE_KM;
+            double new_cost = sol.total_distance_truck * COST_TRUCK_KM + sol.total_distance_drone * COST_DRONE_KM + cost_delta;
+            double time_delta = dist / v_fly_drone;
+            double new_time = time_delta + sol.drone_route_times[i];
+            double tmp_deadline_violation = max(0.0, (new_time - drone_limit) / drone_limit);
+            double tmp_capacity_violation = max(0.0, (demand[cust] - Dd) / Dd);
+            double tmp_energy_violation = max(0.0, (dist / v_fly_drone - E) / E);
+            double score = new_cost * pow((1.0 + tmp_deadline_violation * 1e6 + tmp_capacity_violation * 1e6 + tmp_energy_violation * 1e6), PENALTY_EXPONENT);
+            if (score < best_insertion_cost) {
+                best_insertion_cost = score;
+                best_vehicle_type = 1;
+                best_vehicle_idx = i;
+                best_insertion_pos = sol.drone_routes[i].size(); // at the end
+            }
+        }
+
+        if (best_vehicle_type != -1) {
+            if (best_vehicle_type == 0) { // Truck
+                vi& route = sol.truck_routes[best_vehicle_idx];
+                route.insert(route.begin() + best_insertion_pos, cust);
+                vd metrics = check_truck_route_feasibility(route, 0.0);
+                sol.truck_route_times[best_vehicle_idx] = metrics[0];
+                sol.total_distance_truck += (distance_matrix_manhattan[route[best_insertion_pos - 1]][cust] + distance_matrix_manhattan[cust][route[best_insertion_pos + 1]] - distance_matrix_manhattan[route[best_insertion_pos - 1]][route[best_insertion_pos + 1]]);
+                sol.capacity_violation += metrics[3];
+                sol.deadline_violation += metrics[1];
+            } else { // Drone
+                vi& route = sol.drone_routes[best_vehicle_idx];
+                route.insert(route.begin() + best_insertion_pos, cust);
+                vd metrics = check_drone_route_feasibility(route);
+                sol.drone_route_times[best_vehicle_idx] = metrics[0];
+                sol.total_distance_drone += (distance_matrix_euclid[0][cust] * 2);
+                sol.capacity_violation += metrics[3];
+                sol.energy_violation += metrics[2];
+                sol.deadline_violation += metrics[1];
+            }
+        } else {
+            cerr << "Warning: No feasible insertion found for customer " << cust << ". It will be left unserved." << endl;
+        }
+    }
+
+    // Finalize routes and calculate total cost
+    sol.deadline_violation = 0;
+    sol.capacity_violation = 0;
+    sol.energy_violation = 0;
+    sol.total_time = 0.0;
+    double total_truck_dist = 0.0;
+    double total_drone_dist = 0.0;
+
+    for (int i = 0; i < h; ++i) {
+        if (sol.truck_routes[i].back() != 0) sol.truck_routes[i].push_back(0);
+        if (sol.truck_routes[i].size() <= 2) sol.truck_routes[i] = {0}; // Standardize empty routes
+        
+        vd metrics = check_truck_route_feasibility(sol.truck_routes[i]);
+        sol.truck_route_times[i] = metrics[0];
+        sol.deadline_violation += metrics[1];
+        sol.energy_violation += metrics[2];
+        sol.capacity_violation += metrics[3];
+        sol.total_time += metrics[0];
+        for(size_t k = 0; k < sol.truck_routes[i].size() - 1; ++k) {
+            total_truck_dist += distance_matrix_manhattan[sol.truck_routes[i][k]][sol.truck_routes[i][k+1]];
+            sol.truck_route_cap[i] += demand[sol.truck_routes[i][k]];
+        }
+    }
+
+    for (int i = 0; i < d; ++i) {
+        if (sol.drone_routes[i].size() == 0) sol.drone_routes[i] = {0};
+        vd metrics = check_drone_route_feasibility(sol.drone_routes[i]);
+        sol.drone_route_times[i] = metrics[0];
+        sol.deadline_violation += metrics[1];
+        sol.energy_violation += metrics[2];
+        sol.capacity_violation += metrics[3];
+        sol.total_time += metrics[0];
+        for(size_t k = 0; k < sol.drone_routes[i].size() - 1; ++k) {
+            total_drone_dist += distance_matrix_euclid[0][sol.drone_routes[i][k]] * 2;
+            sol.drone_route_cap[i] += demand[sol.drone_routes[i][k]];
+        }
+    }
+    sol.total_distance_drone = total_drone_dist;
+    sol.total_distance_truck = total_truck_dist;
+    return sol;
+}
+
 // Stream-based printer to avoid duplicating formatting on stdout/file
 static void print_solution_stream(const Solution& sol, std::ostream& os) {
     os << "Truck Routes:\n";
-    for (int i = 0; i < h; ++i) {
+    for (size_t i = 0; i < sol.truck_routes.size(); ++i) {
         os << "Truck " << i+1 << ": ";
         for (int node : sol.truck_routes[i]) {
             os << node << " ";
@@ -1311,7 +971,7 @@ static void print_solution_stream(const Solution& sol, std::ostream& os) {
         os << "\n";
     }
     os << "Drone Routes:\n";
-    for (int i = 0; i < d; ++i) {
+    for (size_t i = 0; i < sol.drone_routes.size(); ++i) {
         os << "Drone " << i+1 << ": ";
         for (int node : sol.drone_routes[i]) {
             os << node << " ";
@@ -1320,13 +980,16 @@ static void print_solution_stream(const Solution& sol, std::ostream& os) {
         os << "|Drone Time: " << sol.drone_route_times[i] << "|" << drone_metric[0] << "," << drone_metric[1] << "," << drone_metric[2] << "," << drone_metric[3];
         os << "\n";
     }
-    os << "Total validation:" 
-       << " Makespan=" << sol.total_makespan
+    os << "Total truck distance: " << sol.total_distance_truck << " km\n";
+    os << "Total drone distance: " << sol.total_distance_drone << " km\n";
+    os
+       << " Total cost=" << solution_score_cost(sol)
        << ", Deadline violation=" << sol.deadline_violation
        << ", Energy violation=" << sol.energy_violation
        << ", Capacity violation=" << sol.capacity_violation
        << "\n";
 }
+
 
 pair<int, bool> critical_solution_index(const Solution& sol) {
     // Identify the vehicle (truck or drone) that contributes most to the penalized objective.
@@ -1388,1920 +1051,58 @@ pair<int, bool> critical_solution_index(const Solution& sol) {
     return {best_idx, is_truck};
 }
 
-Solution local_search(const Solution& initial_solution, int neighbor_id, int current_iter, double best_cost, double (*solution_cost)(const Solution&)) {
-    Solution best_neighbor = initial_solution;
-    double best_neighbor_cost = 1e10;
-    // Depending on neighbor_id, implement different neighborhood structures
-    if (neighbor_id == 0) {
-        // Relocate 1 customer from the critical (longest-time) vehicle route to another route of the same mode
-        // 1) Identify critical vehicle (truck or drone) using precomputed times
-        auto [critical_idx, crit_is_truck] = critical_solution_index(initial_solution);
-
-         // Ensure tabu list is sized to (n+1) x (h+d)
-        int veh_count = h + d;
-        if ((int)tabu_list_10.size() != n + 1 || (veh_count > 0 && (int)tabu_list_10[0].size() != veh_count)) {
-            tabu_list_10.assign(n + 1, vector<int>(max(0, veh_count), 0));
-        }
-
-        // Prepare neighborhood best tracking
-        int best_target = -1; // vehicle index in unified space (0..h-1 trucks, h..h+d-1 drones)
-        int best_cust = -1;   // moved customer id
-        Solution best_candidate_neighbor = best_neighbor;
-        double best_neighbor_cost_local = 1e10;
-
-        // Precompute metrics for delta evaluation
-        double current_total_time_sq = 0.0;
-        double second_max_makespan = 0.0;
-        
-        // Calculate current total time squared and find the second highest makespan (excluding the critical vehicle)
-        for (int i = 0; i < h; ++i) {
-            double t = initial_solution.truck_route_times[i];
-            current_total_time_sq += t * t;
-            if (!crit_is_truck || i != critical_idx) {
-                second_max_makespan = max(second_max_makespan, t);
-            }
-        }
-        for (int i = 0; i < d; ++i) {
-            double t = initial_solution.drone_route_times[i];
-            current_total_time_sq += t * t;
-            if (crit_is_truck || i != critical_idx) {
-                second_max_makespan = max(second_max_makespan, t);
-            }
-        }
-
-        auto consider_relocate = [&](const vi& base_route, bool is_truck_mode, int critical_vehicle_id) {
-            // Lambda to normalize routes for comparison (detect no-ops)
-            auto normalize_route = []( vi& route) -> vi {
-                if (!route.empty() && route.front() != 0) 
-                    route.insert(route.begin(), 0);
-                if (!route.empty() && route.back() != 0) 
-                    route.push_back(0);
-                return route;
-            };
-
-            vd crit_route_time_feas = is_truck_mode
-                ? check_route_feasibility(base_route, 0.0, true)
-                : check_route_feasibility(base_route, 0.0, false);
-
-            double l2_weight = 0.0;
-                if (solution_cost == solution_score_l2_norm) l2_weight = 1e-3;
-
-            // Collect positions of customers (exclude depots)
-            vector<int> pos;
-            for (int i = 0; i < (int)base_route.size(); ++i) if (base_route[i] != 0) pos.push_back(i);
-            
-            for (int idx = 0; idx < (int)pos.size(); ++idx) {
-                int p = pos[idx];
-                int cust = base_route[p];
-
-                // Pre-calculate the base route with customer removed (for inter-route moves)
-                vi base_route_removed = base_route;
-                base_route_removed.erase(base_route_removed.begin() + p);
-                
-                vd base_route_removed_feas = is_truck_mode
-                    ? check_route_feasibility(base_route_removed, 0.0, true)
-                    : check_route_feasibility(base_route_removed, 0.0, false);
-
-                // Try relocating cust to other vehicles
-                for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                    //if (served_by_drone[cust] == 0 && target_veh >= h) continue; // cannot assign to drone
-                    bool is_tabu = (tabu_list_10[cust][target_veh] > current_iter);
-                    
-                    if (target_veh == critical_vehicle_id) {
-                        // --- INTRA-ROUTE RELOCATION (Same Vehicle) ---
-                        auto evaluate_intra = [&](int p2) {
-                            vi new_route = base_route;
-                            new_route.erase(new_route.begin() + p);
-                            int insert_idx = p2 - (p2 > p ? 1 : 0);
-                            new_route.insert(new_route.begin() + insert_idx, cust);
-                            vi new_norm = normalize_route(new_route);
-                            
-                            vd new_feas = is_truck_mode
-                                ? check_route_feasibility(new_norm, 0.0, true)
-                                : check_route_feasibility(new_norm, 0.0, false);
-
-                            // Delta Eval
-                            double new_deadline = initial_solution.deadline_violation + new_feas[1] - crit_route_time_feas[1];
-                            double new_capacity = initial_solution.capacity_violation + new_feas[3] - crit_route_time_feas[3];
-                            double new_energy = initial_solution.energy_violation + new_feas[2] - crit_route_time_feas[2];
-                            
-                            double new_makespan = max(second_max_makespan, new_feas[0]);
-                            double new_total_sq = current_total_time_sq - (crit_route_time_feas[0]*crit_route_time_feas[0]) + (new_feas[0]*new_feas[0]);
-                            
-                            double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            // check score cost function: if it's solution_score_makespan, * 0, else * 1e-3
-                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * l2_weight) * pow(pen, PENALTY_EXPONENT);
-                            
-                            bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
-                            
-                            if (is_tabu && !(score + 1e-8 < best_cost && feasible)) return;
-                            
-                            if (score + 1e-8 < best_neighbor_cost_local) {
-                                best_neighbor_cost_local = score;
-                                best_target = target_veh;
-                                best_cust = cust;
-                                best_candidate_neighbor = initial_solution;
-                                if (is_truck_mode) {
-                                    best_candidate_neighbor.truck_routes[critical_vehicle_id] = new_norm;
-                                    best_candidate_neighbor.truck_route_times[critical_vehicle_id] = new_feas[0];
-                                } else {
-                                    best_candidate_neighbor.drone_routes[critical_vehicle_id - h] = new_norm;
-                                    best_candidate_neighbor.drone_route_times[critical_vehicle_id - h] = new_feas[0];
-                                }
-                                best_candidate_neighbor.deadline_violation = new_deadline;
-                                best_candidate_neighbor.capacity_violation = new_capacity;
-                                best_candidate_neighbor.energy_violation = new_energy;
-                                best_candidate_neighbor.total_makespan = new_makespan;
-                            }
-                        };
-
-                        for (int p2 = 1; p2 < (int)base_route.size(); ++p2) {
-                            if (p2 == p) continue;
-                            evaluate_intra(p2);
-                        }
-                        // End of route
-                        evaluate_intra(base_route.size());
-                    } else {
-                        // --- INTER-ROUTE RELOCATION (Different Vehicle) ---
-                        const vi& target_route = (target_veh < h) ? initial_solution.truck_routes[target_veh] : initial_solution.drone_routes[target_veh - h];
-                        
-                        vd target_route_feas = (target_veh < h)
-                            ? check_route_feasibility(target_route, 0.0, true)
-                            : check_route_feasibility(target_route, 0.0, false);
-
-                        auto evaluate_inter = [&](int insert_pos) {
-                            vi new_target = target_route;
-                            if (insert_pos >= (int)new_target.size()) {
-                                new_target.push_back(cust);
-                                new_target.push_back(0);
-                            } else {
-                                new_target.insert(new_target.begin() + insert_pos, cust);
-                            }
-                            
-                            vd new_target_feas = (target_veh < h)
-                                ? check_route_feasibility(new_target, 0.0, true)
-                                : check_route_feasibility(new_target, 0.0, false);
-                            
-                            double new_deadline = initial_solution.deadline_violation 
-                                + (base_route_removed_feas[1] - crit_route_time_feas[1]) 
-                                + (new_target_feas[1] - target_route_feas[1]);
-                            double new_capacity = initial_solution.capacity_violation 
-                                + (base_route_removed_feas[3] - crit_route_time_feas[3]) 
-                                + (new_target_feas[3] - target_route_feas[3]);
-                            double new_energy = initial_solution.energy_violation 
-                                + (base_route_removed_feas[2] - crit_route_time_feas[2]) 
-                                + (new_target_feas[2] - target_route_feas[2]);
-                            
-                            double new_makespan = max({second_max_makespan, base_route_removed_feas[0], new_target_feas[0]});
-                            double new_total_sq = current_total_time_sq 
-                                - (crit_route_time_feas[0]*crit_route_time_feas[0]) + (base_route_removed_feas[0]*base_route_removed_feas[0])
-                                - (target_route_feas[0]*target_route_feas[0]) + (new_target_feas[0]*new_target_feas[0]);
-                            
-                            double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + l2_weight * (std::sqrt(new_total_sq) / (h + d))) * pow(pen, PENALTY_EXPONENT);
-                            
-                            bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
-                            
-                            if (is_tabu && !(score + 1e-8 < best_cost && feasible)){
-                                //cout << "Tabu move skipped: cust " << cust << " to vehicle " << target_veh << " until iter " << tabu_list_10[cust][target_veh] << "\n";
-                                return;
-                            }
-                            
-                            if (score + 1e-8 < best_neighbor_cost_local) {
-                                best_neighbor_cost_local = score;
-                                best_target = target_veh;
-                                best_cust = cust;
-                                best_candidate_neighbor = initial_solution;
-                                if (is_truck_mode) {
-                                    best_candidate_neighbor.truck_routes[critical_vehicle_id] = base_route_removed;
-                                    best_candidate_neighbor.truck_route_times[critical_vehicle_id] = base_route_removed_feas[0];
-                                } else {
-                                    best_candidate_neighbor.drone_routes[critical_vehicle_id - h] = base_route_removed;
-                                    best_candidate_neighbor.drone_route_times[critical_vehicle_id - h] = base_route_removed_feas[0];
-                                }
-                                if (target_veh < h) {
-                                    best_candidate_neighbor.truck_routes[target_veh] = new_target;
-                                    best_candidate_neighbor.truck_route_times[target_veh] = new_target_feas[0];
-                                } else {
-                                    best_candidate_neighbor.drone_routes[target_veh - h] = new_target;
-                                    best_candidate_neighbor.drone_route_times[target_veh - h] = new_target_feas[0];
-                                }
-                                best_candidate_neighbor.deadline_violation = new_deadline;
-                                best_candidate_neighbor.capacity_violation = new_capacity;
-                                best_candidate_neighbor.energy_violation = new_energy;
-                                best_candidate_neighbor.total_makespan = new_makespan;
-                            }
-                        };
-
-                        for (int insert_pos = 1; insert_pos < (int)target_route.size(); ++insert_pos) {
-                            evaluate_inter(insert_pos);
-                        }
-                        evaluate_inter(target_route.size());
-                    }
-                }
-            }
-        };
-        if (crit_is_truck) {
-            consider_relocate(initial_solution.truck_routes[critical_idx], true, critical_idx);
-        } else {
-            consider_relocate(initial_solution.drone_routes[critical_idx], false, critical_idx + h);
-        }
-
-        // After evaluating all candidates, update tabu list if we found an improving move
-        if (best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            // Update tabu list
-            tabu_list_10[best_cust][best_target] = current_iter + TABU_TENURE_10;
-        }
-        return best_neighbor;
-    } else if (neighbor_id == 1) {
-        // Neighborhood 1: swap two customers, allowing cross-mode exchanges
-        auto [critical_idx, crit_is_truck] = critical_solution_index(initial_solution);
-
-        if ((int)tabu_list_11.size() != n + 1 || (n + 1 > 0 && (int)tabu_list_11[0].size() != n + 1)) {
-            tabu_list_11.assign(n + 1, vector<int>(n + 1, 0));
-        }
-
-        int best_cust_a = -1, best_cust_b = -1;
-        int best_pos_a = -1, best_pos_b = -1;
-        int best_veh_a = -1, best_veh_b = -1;
-        Solution best_candidate_neighbor = best_neighbor;
-        double best_neighbor_cost_local = 1e10;
-
-        //calculate sum of squares of current route times
-        double current_sum_squares = 0.0;
-        for (int veh = 0; veh < h + d; ++veh) {
-            const double& route_times = (veh < h) ? initial_solution.truck_route_times[veh] : initial_solution.drone_route_times[veh - h];
-            current_sum_squares += route_times * route_times;
-        }
-
-        auto consider_swap = [&](const vi& base_route, bool is_truck_mode, int critical_vehicle_id) {
-            if (base_route.size() <= 2) return; // nothing to swap
-            double l2_weight = 0.0;
-                if (solution_cost == solution_score_l2_norm) l2_weight = 1e-3;
-            vd crit_metrics = is_truck_mode
-                ? check_route_feasibility(base_route, 0.0, true)
-                : check_route_feasibility(base_route, 0.0, false);
-
-            vector<int> crit_positions;
-            for (int i = 0; i < (int)base_route.size(); ++i) {
-                if (base_route[i] != 0) crit_positions.push_back(i);
-            }
-            if (crit_positions.empty()) return;
-
-            for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                if (target_veh == critical_vehicle_id) {
-                    // Calculate second makespan excluding critical vehicle
-                    double second_max_makespan = 0.0;
-                    for (int v = 0; v < h + d; ++v) {
-                        if (v != critical_vehicle_id) {
-                            double t = (v < h) ? initial_solution.truck_route_times[v] : initial_solution.drone_route_times[v - h];
-                            second_max_makespan = max(second_max_makespan, t);
-                        }
-                    }
-                    for (int idx_a = 0; idx_a < (int)crit_positions.size(); ++idx_a) {
-                        int pos_a = crit_positions[idx_a];
-                        int cust_a = base_route[pos_a];
-
-                        for (int idx_b = idx_a + 1; idx_b < (int)crit_positions.size(); ++idx_b) {
-                            int pos_b = crit_positions[idx_b];
-                            int cust_b = base_route[pos_b];
-
-                            if (cust_a == cust_b) continue;
-
-                            // Check tabu status
-                            int u = min(cust_a, cust_b);
-                            int v = max(cust_a, cust_b);
-                            bool is_tabu = (tabu_list_11[u][v] > current_iter);
-
-                            // Generate new route with swapped customers
-                            vi new_crit_route = base_route;
-                            new_crit_route[pos_a] = cust_b;
-                            new_crit_route[pos_b] = cust_a;
-
-                            vd new_crit_metrics = is_truck_mode
-                                ? check_route_feasibility(new_crit_route, 0.0, true)
-                                : check_route_feasibility(new_crit_route, 0.0, false);
-
-                            // Delta evaluation
-                            double new_deadline = initial_solution.deadline_violation
-                                + (new_crit_metrics[1] - crit_metrics[1]);
-                            double new_capacity = initial_solution.capacity_violation
-                                + (new_crit_metrics[3] - crit_metrics[3]);
-                            double new_energy = initial_solution.energy_violation
-                                + (new_crit_metrics[2] - crit_metrics[2]);
-                            double new_makespan = max(second_max_makespan, new_crit_metrics[0]);
-                            double new_sum_squares = current_sum_squares
-                                - (crit_metrics[0] * crit_metrics[0]) + (new_crit_metrics[0] * new_crit_metrics[0]);
-                            double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + std::sqrt(new_sum_squares) / (h + d) * l2_weight) * pow(pen, PENALTY_EXPONENT);
-                            bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
-                            if (is_tabu && !(score + 1e-8 < best_cost && feasible)) continue;
-                            if (score + 1e-8 < best_neighbor_cost_local) {
-                                best_neighbor_cost_local = score;
-                                best_cust_a = cust_a;
-                                best_cust_b = cust_b;
-                                best_pos_a = pos_a;
-                                best_pos_b = pos_b;
-                                best_veh_a = critical_vehicle_id;
-                                best_veh_b = critical_vehicle_id;
-                            }
-                        }
-                    }
-                }
-
-                if (target_veh == critical_vehicle_id) continue;
-
-                const vi& target_route = (target_veh < h) ? initial_solution.truck_routes[target_veh] : initial_solution.drone_routes[target_veh - h];
-                if (target_route.size() <= 2) continue;
-
-                // Calculate third makespan excluding critical and target vehicles
-                double third_max_makespan = 0.0;
-                for (int v = 0; v < h + d; ++v) {
-                    if (v != critical_vehicle_id && v != target_veh) {
-                        double t = (v < h) ? initial_solution.truck_route_times[v] : initial_solution.drone_route_times[v - h];
-                        third_max_makespan = max(third_max_makespan, t);
-                    }
-                }
-
-                vd target_metrics = (target_veh < h)
-                    ? check_route_feasibility(target_route, 0.0, true)
-                    : check_route_feasibility(target_route, 0.0, false);
-
-                vector<int> target_positions;
-                for (int i = 0; i < (int)target_route.size(); ++i) {
-                    if (target_route[i] != 0) target_positions.push_back(i);
-                }
-                if (target_positions.empty()) continue;
-
-                for (int idx_a = 0; idx_a < (int)crit_positions.size(); ++idx_a) {
-                    int pos_a = crit_positions[idx_a];
-                    int cust_a = base_route[pos_a];
-
-                    for (int idx_b = 0; idx_b < (int)target_positions.size(); ++idx_b) {
-                        int pos_b = target_positions[idx_b];
-                        int cust_b = target_route[pos_b];
-
-                        if (cust_a == cust_b) continue;
-
-                        if (served_by_drone[cust_a] == 0 && target_veh >= h) continue; // cannot assign cust_a to drone
-                        if (served_by_drone[cust_b] == 0 && critical_vehicle_id >= h) continue; // cannot assign cust_b to drone
-
-                        // Check tabu status
-                        int u = min(cust_a, cust_b);
-                        int v = max(cust_a, cust_b);
-                        bool is_tabu = (tabu_list_11[u][v] > current_iter);
-
-                        // Generate new routes with swapped customers
-                        vi new_crit_route = base_route;
-                        vi new_target_route = target_route;
-                        new_crit_route[pos_a] = cust_b;
-                        new_target_route[pos_b] = cust_a;
-
-                        vd new_crit_metrics = is_truck_mode
-                            ? check_route_feasibility(new_crit_route, 0.0, true)
-                            : check_route_feasibility(new_crit_route, 0.0, false);
-                        vd new_target_metrics = (target_veh < h)
-                            ? check_route_feasibility(new_target_route, 0.0, true)
-                            : check_route_feasibility(new_target_route, 0.0, false);
-
-                        // Delta evaluation
-                        double new_deadline = initial_solution.deadline_violation
-                            + (new_crit_metrics[1] - crit_metrics[1])
-                            + (new_target_metrics[1] - target_metrics[1]);
-                        double new_capacity = initial_solution.capacity_violation
-                            + (new_crit_metrics[3] - crit_metrics[3])
-                            + (new_target_metrics[3] - target_metrics[3]);
-                        double new_energy = initial_solution.energy_violation
-                            + (new_crit_metrics[2] - crit_metrics[2])
-                            + (new_target_metrics[2] - target_metrics[2]);
-                        double new_makespan = max({third_max_makespan, new_crit_metrics[0], new_target_metrics[0]});
-                        double new_sum_squares = current_sum_squares
-                            - (crit_metrics[0] * crit_metrics[0]) + (new_crit_metrics[0] * new_crit_metrics[0])
-                            - (target_metrics[0] * target_metrics[0]) + (new_target_metrics[0] * new_target_metrics[0]);
-                        double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                        double score = (new_makespan + std::sqrt(new_sum_squares) / (h + d) * l2_weight) * pow(pen, PENALTY_EXPONENT);
-                        bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
-                        if (is_tabu && !(score + 1e-8 < best_cost && feasible)) continue;
-                        if (score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = score;
-                            best_cust_a = cust_a;
-                            best_cust_b = cust_b;
-                            best_pos_a = pos_a;
-                            best_pos_b = pos_b;
-                            best_veh_a = critical_vehicle_id;
-                            best_veh_b = target_veh;
-                        }
-                    }
-                }
-            }
-        };
-
-        for (int veh = 0; veh < h + d; ++veh) {
-            bool is_truck = veh < h;
-            const vi& route = is_truck ? initial_solution.truck_routes[veh]
-                                       : initial_solution.drone_routes[veh - h];
-            // only consider the critical vehicle for swaps
-            if (veh == (crit_is_truck ? critical_idx : critical_idx + h)) {
-                consider_swap(route, is_truck, veh);
-            }
-        }
-
-        // Construct best neighbor if found
-        if (best_cust_a != -1 && best_cust_b != -1) {
-            Solution candidate = initial_solution;
-            vd old_metric_a = (best_veh_a < h)
-                ? check_route_feasibility(initial_solution.truck_routes[best_veh_a], 0.0, true)
-                : check_route_feasibility(initial_solution.drone_routes[best_veh_a - h], 0.0, false);
-            vd old_metric_b = (best_veh_b < h)
-                ? check_route_feasibility(initial_solution.truck_routes[best_veh_b], 0.0, true)
-                : check_route_feasibility(initial_solution.drone_routes[best_veh_b - h], 0.0, false);
-            if (best_veh_a == best_veh_b) {
-                // Same vehicle swap
-                bool is_truck = best_veh_a < h;
-                vi new_route = is_truck ? candidate.truck_routes[best_veh_a]
-                                        : candidate.drone_routes[best_veh_a - h];
-                new_route[best_pos_a] = best_cust_b;
-                new_route[best_pos_b] = best_cust_a;
-                vd new_metrics = is_truck
-                    ? check_route_feasibility(new_route, 0.0, true)
-                    : check_route_feasibility(new_route, 0.0, false);
-                if (is_truck) {
-                    candidate.truck_routes[best_veh_a] = new_route;
-                    candidate.truck_route_times[best_veh_a] = new_metrics[0];
-                } else {
-                    candidate.drone_routes[best_veh_a - h] = new_route;
-                    candidate.drone_route_times[best_veh_a - h] = new_metrics[0];
-                }
-                candidate.deadline_violation += (new_metrics[1] - old_metric_a[1]);
-                candidate.capacity_violation += (new_metrics[3] - old_metric_a[3]);
-                candidate.energy_violation += (new_metrics[2] - old_metric_a[2]);
-                candidate.total_makespan = 0.0;
-                for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-            } else {
-                // Different vehicle swap
-                bool is_truck_a = best_veh_a < h;
-                bool is_truck_b = best_veh_b < h;
-
-                vi route_a = is_truck_a ? candidate.truck_routes[best_veh_a]
-                                        : candidate.drone_routes[best_veh_a - h];
-                vi route_b = is_truck_b ? candidate.truck_routes[best_veh_b]
-                                        : candidate.drone_routes[best_veh_b - h];
-                route_a[best_pos_a] = best_cust_b;
-                route_b[best_pos_b] = best_cust_a;
-                vd new_metrics_a = is_truck_a
-                    ? check_route_feasibility(route_a, 0.0, true)
-                    : check_route_feasibility(route_a, 0.0, false);
-                vd new_metrics_b = is_truck_b
-                    ? check_route_feasibility(route_b, 0.0, true)
-                    : check_route_feasibility(route_b, 0.0, false);
-                if (is_truck_a) {
-                    candidate.truck_routes[best_veh_a] = route_a;
-                    candidate.truck_route_times[best_veh_a] = new_metrics_a[0];
-                } else {
-                    candidate.drone_routes[best_veh_a - h] = route_a;
-                    candidate.drone_route_times[best_veh_a - h] = new_metrics_a[0];
-                }
-                if (is_truck_b) {
-                    candidate.truck_routes[best_veh_b] = route_b;
-                    candidate.truck_route_times[best_veh_b] = new_metrics_b[0];
-                } else {
-                    candidate.drone_routes[best_veh_b - h] = route_b;
-                    candidate.drone_route_times[best_veh_b - h] = new_metrics_b[0];
-                }
-                candidate.deadline_violation += (new_metrics_a[1] - old_metric_a[1]) + (new_metrics_b[1] - old_metric_b[1]);
-                candidate.capacity_violation += (new_metrics_a[3] - old_metric_a[3]) + (new_metrics_b[3] - old_metric_b[3]);
-                candidate.energy_violation += (new_metrics_a[2] - old_metric_a[2]) + (new_metrics_b[2] - old_metric_b[2]);
-                candidate.total_makespan = 0.0;
-                for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-            }
-            best_candidate_neighbor = candidate;
-        }
-
-        if (best_cust_a != -1 && best_cust_b != -1 && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            int u = min(best_cust_a, best_cust_b);
-            int v = max(best_cust_a, best_cust_b);
-            tabu_list_11[u][v] = current_iter + TABU_TENURE_11;
-
-            // Debug: print swap info
-            /*  cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            cout << "[N1] swap " << best_cust_a << " and " << best_cust_b
-                 << ", score: " << solution_score(initial_solution)
-                 << " -> " << best_neighbor_cost_local
-                 << ", iter " << current_iter << "\n"; */
-
-            return best_neighbor;
-        }
-        return initial_solution;
-
-    } else if (neighbor_id == 2) {
-        // Neighborhood 2: relocate a consecutive pair (2,0)-move from the critical vehicle to another vehicle
-        // Structure mirrors neighborhood 0: identify critical vehicle, enumerate candidate relocations,
-        // respect tabu_list_20 keyed by (min(c1,c2), max(c1,c2), target_vehicle).
-        auto [critical_idx, crit_is_truck] = critical_solution_index(initial_solution);
-
-        // Prepare best tracking
-        Solution best_candidate_neighbor = initial_solution;
-        double best_neighbor_cost_local = 1e10;
-        int best_c1 = -1, best_c2 = -1;
-        int best_target_vehicle = -1;
-        int best_src_pos = -1, best_target_pos = -1;
-
-        auto consider_relocate_pair = [&](const vi& base_route, bool is_truck_mode, int critical_vehicle_id) {
-            if (base_route.size() <= 3) return; // nothing to do if fewer than two customers
-
-            auto normalize_route = [](const vi& route) -> vi {
-                vi normalized;
-                for (int node : route) {
-                    if (normalized.empty() || node != 0 || normalized.back() != 0) normalized.push_back(node);
-                }
-                if (normalized.empty()) return vi{0};
-                if (normalized.front() != 0) normalized.insert(normalized.begin(), 0);
-                if (normalized.back() != 0) normalized.push_back(0);
-                return normalized;
-            };
-
-            vi orig = normalize_route(base_route);
-            if (orig.size() <= 3) return;
-            vd orig_metrics = is_truck_mode
-                ? check_route_feasibility(orig, 0.0, true)
-                : check_route_feasibility(orig, 0.0, false);
-
-            vector<int> pos;
-            for (int i = 0; i + 1 < (int)orig.size(); ++i) {
-                if (orig[i] != 0 && orig[i + 1] != 0) pos.push_back(i);
-            }
-            if (pos.empty()) return;
-
-            auto apply_candidate = [&](const vi& crit_route, const vd& crit_metrics_local,
-                                      const optional<pair<int, vi>>& target_change) {
-                Solution candidate = initial_solution;
-                candidate.deadline_violation += crit_metrics_local[1] - orig_metrics[1];
-                candidate.capacity_violation += crit_metrics_local[3] - orig_metrics[3];
-                candidate.energy_violation += crit_metrics_local[2] - orig_metrics[2];
-                if (is_truck_mode) {
-                    candidate.truck_routes[critical_vehicle_id] = crit_route;
-                    candidate.truck_route_times[critical_vehicle_id] = (crit_route.size() > 1) ? crit_metrics_local[0] : 0.0;
-                } else {
-                    candidate.drone_routes[critical_vehicle_id - h] = crit_route;
-                    candidate.drone_route_times[critical_vehicle_id - h] = (crit_route.size() > 1) ? crit_metrics_local[0] : 0.0;
-                }
-
-                if (target_change.has_value()) {
-                    int target_vehicle = target_change->first;
-                    const vi& new_target_route = target_change->second;
-                    bool target_is_truck = target_vehicle < h;
-                    vd target_metrics_before = target_is_truck
-                        ? check_route_feasibility(target_is_truck ? initial_solution.truck_routes[target_vehicle]
-                                                                 : initial_solution.drone_routes[target_vehicle - h], 0.0, target_is_truck)
-                        : check_route_feasibility(initial_solution.drone_routes[target_vehicle - h], 0.0, false);
-                    vd target_metrics_after = target_is_truck
-                        ? check_route_feasibility(new_target_route, 0.0, true)
-                        : check_route_feasibility(new_target_route, 0.0, false);
-                    candidate.deadline_violation += target_metrics_after[1] - target_metrics_before[1];
-                    candidate.capacity_violation += target_metrics_after[3] - target_metrics_before[3];
-                    candidate.energy_violation += target_metrics_after[2] - target_metrics_before[2];
-                    if (target_is_truck) {
-                        candidate.truck_routes[target_vehicle] = new_target_route;
-                        candidate.truck_route_times[target_vehicle] = (new_target_route.size() > 1) ? target_metrics_after[0] : 0.0;
-                    } else {
-                        candidate.drone_routes[target_vehicle - h] = new_target_route;
-                        candidate.drone_route_times[target_vehicle - h] = (new_target_route.size() > 1) ? target_metrics_after[0] : 0.0;
-                    }
-                }
-
-                candidate.total_makespan = 0.0;
-                for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                for (double tt : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, tt);
-                return candidate;
-            };
-
-            for (int p : pos) {
-                int c1 = orig[p];
-                int c2 = orig[p + 1];
-
-                vi reduced = orig;
-                reduced.erase(reduced.begin() + p, reduced.begin() + p + 2);
-                reduced = normalize_route(reduced);
-                vd reduced_metrics = is_truck_mode
-                    ? check_route_feasibility(reduced, 0.0, true)
-                    : check_route_feasibility(reduced, 0.0, false);
-
-                for (int ip = 1; ip <= (int)reduced.size(); ++ip) {
-                    vi r = reduced;
-                    r.insert(r.begin() + ip, c1);
-                    r.insert(r.begin() + ip + 1, c2);
-                    vi r_norm = normalize_route(r);
-                    if (r_norm == orig) continue;
-
-                    vd new_metrics = is_truck_mode
-                        ? check_route_feasibility(r_norm, 0.0, true)
-                        : check_route_feasibility(r_norm, 0.0, false);
-                    Solution candidate = apply_candidate(r_norm, new_metrics, nullopt);
-
-                    vector<int> key = { min(c1, c2), max(c1, c2), critical_vehicle_id };
-                    auto it = tabu_list_20.find(key);
-                    bool is_tabu = (it != tabu_list_20.end() && it->second > current_iter);
-                    double candidate_score = solution_cost(candidate);
-                    bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
-                                               candidate.capacity_violation <= 1e-8 &&
-                                               candidate.energy_violation <= 1e-8;
-                    if (is_tabu && !(candidate_score + 1e-8 < best_cost && candidate_feasible)) continue;
-
-                    if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                        best_neighbor_cost_local = candidate_score;
-                        best_candidate_neighbor = candidate;
-                        best_c1 = c1; best_c2 = c2;
-                        best_target_vehicle = critical_vehicle_id;
-                        best_src_pos = p;
-                        best_target_pos = ip;
-                    }
-                }
-
-                for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                    if (target_veh == critical_vehicle_id) continue;
-                    if ((served_by_drone[c1] == 0 || served_by_drone[c2] == 0) && target_veh >= h) continue;
-                    bool target_is_truck = target_veh < h;
-                    vi target_route = target_is_truck
-                        ? initial_solution.truck_routes[target_veh]
-                        : initial_solution.drone_routes[target_veh - h];
-                    target_route = normalize_route(target_route);
-
-                    for (int insert_pos = 1; insert_pos <= (int)target_route.size(); ++insert_pos) {
-                        vi new_target = target_route;
-                        new_target.insert(new_target.begin() + insert_pos, c1);
-                        new_target.insert(new_target.begin() + insert_pos + 1, c2);
-                        new_target = normalize_route(new_target);
-
-                        Solution candidate = initial_solution;
-                        candidate.deadline_violation = initial_solution.deadline_violation;
-                        candidate.capacity_violation = initial_solution.capacity_violation;
-                        candidate.energy_violation = initial_solution.energy_violation;
-
-                        // build candidate with reduced critical route + modified target route
-                        vd crit_metrics_ready = reduced_metrics;
-                        vd target_metrics_new = target_is_truck
-                            ? check_route_feasibility(new_target, 0.0, true)
-                            : check_route_feasibility(new_target, 0.0, false);
-                        vd target_metrics_old = target_is_truck
-                            ? check_route_feasibility(target_route, 0.0, true)
-                            : check_route_feasibility(target_route, 0.0, false);
-
-                        candidate.deadline_violation += crit_metrics_ready[1] - orig_metrics[1];
-                        candidate.deadline_violation += target_metrics_new[1] - target_metrics_old[1];
-                        candidate.capacity_violation += crit_metrics_ready[3] - orig_metrics[3];
-                        candidate.capacity_violation += target_metrics_new[3] - target_metrics_old[3];
-                        candidate.energy_violation += crit_metrics_ready[2] - orig_metrics[2];
-                        candidate.energy_violation += target_metrics_new[2] - target_metrics_old[2];
-
-                        if (is_truck_mode) {
-                            candidate.truck_routes[critical_vehicle_id] = reduced;
-                            candidate.truck_route_times[critical_vehicle_id] = (reduced.size() > 1) ? crit_metrics_ready[0] : 0.0;
-                        } else {
-                            candidate.drone_routes[critical_vehicle_id - h] = reduced;
-                            candidate.drone_route_times[critical_vehicle_id - h] = (reduced.size() > 1) ? crit_metrics_ready[0] : 0.0;
-                        }
-                        if (target_is_truck) {
-                            candidate.truck_routes[target_veh] = new_target;
-                            candidate.truck_route_times[target_veh] = (new_target.size() > 1) ? target_metrics_new[0] : 0.0;
-                        } else {
-                            candidate.drone_routes[target_veh - h] = new_target;
-                            candidate.drone_route_times[target_veh - h] = (new_target.size() > 1) ? target_metrics_new[0] : 0.0;
-                        }
-
-                        candidate.total_makespan = 0.0;
-                        for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                        for (double tt : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, tt);
-
-                        vector<int> key = { min(c1, c2), max(c1, c2), target_veh };
-                        auto it = tabu_list_20.find(key);
-                        bool is_tabu = (it != tabu_list_20.end() && it->second > current_iter);
-                        double candidate_score = solution_cost(candidate);
-                        bool feasible = candidate.deadline_violation <= 1e-8 &&
-                                         candidate.capacity_violation <= 1e-8 &&
-                                         candidate.energy_violation <= 1e-8;
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost && feasible)) continue;
-
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_c1 = c1; best_c2 = c2;
-                            best_target_vehicle = target_veh;
-                            best_src_pos = p;
-                            best_target_pos = insert_pos;
-                        }
-                    }
-                }
-            }
-        };
-
-        if (crit_is_truck) {
-            consider_relocate_pair(initial_solution.truck_routes[critical_idx], true, critical_idx);
-        } else {
-            consider_relocate_pair(initial_solution.drone_routes[critical_idx], false, h + critical_idx);
-        }
-
-        // apply best move if found
-        if (best_c1 != -1 && best_c2 != -1 && best_target_vehicle != -1 && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            // update tabu
-            vector<int> key = { min(best_c1, best_c2), max(best_c1, best_c2), best_target_vehicle };
-            tabu_list_20[key] = current_iter + TABU_TENURE_20;
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            // Debug:
-            /*  cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            cout << "[N2] relocate pair (" << best_c1 << "," << best_c2 << ") to vehicle " << best_target_vehicle
-                 << ", score: " << solution_score(initial_solution)
-                 << " -> " << solution_score(best_candidate_neighbor)
-                 << ", iter " << current_iter << "\n"; */
-            // return the chosen neighbor (already fully assembled in best_candidate_neighbor)*/
-            return best_neighbor;
-        }
-        return initial_solution;
-
-    } else if (neighbor_id == 3) {
-        // Neighborhood 3: 2-opt within each subroute (between depot nodes) for trucks or drones.
-        // Finds the best 2-opt move across all routes that yields the largest local time drop.
-
-        if ((int)tabu_list_2opt.size() != n + 1 || ((int)tabu_list_2opt.size() > 0 && (int)tabu_list_2opt[0].size() != n + 1)) {
-            tabu_list_2opt.assign(n + 1, vector<int>(n + 1, 0));
-        }
-
-        auto [critical_idx, crit_is_truck] = critical_solution_index(initial_solution);
-
-        Solution best_candidate_neighbor = best_neighbor;
-        double best_neighbor_cost_local = 1e10;
-        int best_edge_u = -1, best_edge_v = -1;
-        int best_i = -1, best_j = -1;
-        bool best_is_truck = crit_is_truck;
-
-        auto normalize_route = [](vi r) -> vi {
-            if (r.empty()) return r;
-            if (r.front() != 0) r.insert(r.begin(), 0);
-            if (r.back() != 0) r.push_back(0);
-            vi cleaned; cleaned.reserve(r.size());
-            for (int node : r) {
-                if (!cleaned.empty() && cleaned.back() == 0 && node == 0) continue;
-                cleaned.push_back(node);
-            }
-            return cleaned;
-        };
-
-        auto consider_2opt = [&](const vi& base_route, bool is_truck_mode, int route_idx) {
-            if (base_route.size() <= 3) return;
-
-            vd route_metrics = check_route_feasibility(base_route, 0.0, is_truck_mode);
-            int m = (int)base_route.size();
-            int start = 0;
-            while (start < m) {
-                while (start < m && base_route[start] == 0) ++start;
-                if (start >= m) break;
-                int seg_end = start;
-                while (seg_end + 1 < m && base_route[seg_end + 1] != 0) ++seg_end;
-
-                for (int i = start; i < seg_end; ++i) {
-                    for (int j = i + 1; j <= seg_end; ++j) {
-                        vi new_route = base_route;
-                        reverse(new_route.begin() + i, new_route.begin() + j + 1);
-                        if (new_route == base_route) continue;
-
-                        new_route = normalize_route(new_route);
-                        vd new_metrics = check_route_feasibility(new_route, 0.0, is_truck_mode);
-                        int u = min(base_route[i], base_route[j]);
-                        int v = max(base_route[i], base_route[j]);
-                        if (u < 0 || v < 0) continue;
-                        bool is_tabu = (tabu_list_2opt.size() > (size_t)u &&
-                                        tabu_list_2opt[u].size() > (size_t)v &&
-                                        tabu_list_2opt[u][v] > current_iter);
-
-                        Solution candidate = initial_solution;
-                        candidate.deadline_violation += new_metrics[1] - route_metrics[1];
-                        candidate.capacity_violation += new_metrics[3] - route_metrics[3];
-                        candidate.energy_violation += new_metrics[2] - route_metrics[2];
-                        if (is_truck_mode) {
-                            candidate.truck_routes[route_idx] = new_route;
-                            candidate.truck_route_times[route_idx] = (new_route.size() > 1) ? new_metrics[0] : 0.0;
-                        } else {
-                            int drone_route_idx = route_idx - h;
-                            if (drone_route_idx >= 0 && drone_route_idx < (int)candidate.drone_routes.size()) {
-                                candidate.drone_routes[drone_route_idx] = new_route;
-                                candidate.drone_route_times[drone_route_idx] = (new_route.size() > 1) ? new_metrics[0] : 0.0;
-                            }
-                        }
-                        candidate.total_makespan = 0.0;
-                        for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                        for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-                        double candidate_score = solution_cost(candidate);
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
-                                         candidate.deadline_violation <= 1e-8 &&
-                                         candidate.capacity_violation <= 1e-8 &&
-                                         candidate.energy_violation <= 1e-8)) continue;
-
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_edge_u = u;
-                            best_edge_v = v;
-                            best_i = i;
-                            best_j = j;
-                            best_is_truck = is_truck_mode;
-                        }
-                    }
-                }
-                start = seg_end + 1;
-            }
-        };
-
-        if (crit_is_truck) {
-            consider_2opt(initial_solution.truck_routes[critical_idx], true, critical_idx);
-        } else {
-            consider_2opt(initial_solution.drone_routes[critical_idx], false, critical_idx + h);
-        }
-
-        if (best_edge_u != -1 && best_edge_v != -1 && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            tabu_list_2opt[best_edge_u][best_edge_v] = current_iter + TABU_TENURE_2OPT;
-
-            // Debug N3
-            /* cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            cout << "[N3] 2-opt on " << (best_is_truck ? "truck" : "drone") << " #"
-                 << (crit_is_truck ? critical_idx + 1 : critical_idx + 1)
-                 << " between positions " << best_i << " and " << best_j
-                 << ", score: " << solution_score(initial_solution)
-                 << " -> " << solution_score(best_candidate_neighbor)
-                 << ", iter " << current_iter << "\n"; */
-
-            return best_neighbor;
-        }
-        return initial_solution;
-
-    } else if (neighbor_id == 4) {
-        if ((int)tabu_list_2opt_star.size() != n + 1 || ((int)tabu_list_2opt_star.size() > 0 && (int)tabu_list_2opt_star[0].size() != n + 1)) {
-            tabu_list_2opt_star.assign(n + 1, vector<int>(n + 1, 0));
-        }
-
-        auto [critical_idx, crit_is_truck] = critical_solution_index(initial_solution);
-
-        auto normalize_route = [](vi route) {
-            if (route.empty()) return route;
-            if (route.front() != 0) route.insert(route.begin(), 0);
-            if (route.back() != 0) route.push_back(0);
-            vi cleaned;
-            cleaned.reserve(route.size());
-            for (int node : route) {
-                if (!cleaned.empty() && cleaned.back() == node) continue;
-                cleaned.push_back(node);
-            }
-            return cleaned;
-        };
-
-        Solution best_candidate_neighbor = best_neighbor;
-        double best_neighbor_cost_local = 1e18;
-        int best_ua = -1, best_va = -1, best_ub = -1, best_vb = -1;
-
-        auto enumerate_segments = [](const vi& route) {
-            vector<pair<int,int>> segs;
-            int m = (int)route.size();
-            int start = 0;
-            while (start < m) {
-                while (start < m && route[start] == 0) ++start;
-                if (start >= m) break;
-                int end = start;
-                while (end + 1 < m && route[end + 1] != 0) ++end;
-                segs.emplace_back(start, end);
-                start = end + 1;
-            }
-            return segs;
-        };
-
-        vi crit_route_raw = crit_is_truck
-            ? initial_solution.truck_routes[critical_idx]
-            : initial_solution.drone_routes[critical_idx];
-        vi crit_route = normalize_route(crit_route_raw);
-        vd crit_metrics = check_route_feasibility(crit_route_raw, 0.0, crit_is_truck);
-        auto crit_segs = enumerate_segments(crit_route);
-
-        auto evaluate_two_opt_star = [&](const vi& other_route_raw, bool other_is_truck, int other_idx) {
-            vi other_route = normalize_route(other_route_raw);
-            if (other_route.size() <= 3) return;
-            vd other_metrics = check_route_feasibility(other_route_raw, 0.0, other_is_truck);
-            auto other_segs = enumerate_segments(other_route);
-
-            for (const auto& segA : crit_segs) {
-                for (int i = segA.first; i < segA.second; ++i) {
-                    int a1 = crit_route[i], a2 = crit_route[i + 1];
-                    int ua = min(a1, a2), va = max(a1, a2);
-                    if (a1 == 0 || a2 == 0) continue;
-
-                    for (const auto& segB : other_segs) {
-                        for (int j = segB.first; j < segB.second; ++j) {
-                            int b1 = other_route[j], b2 = other_route[j + 1];
-                            int ub = min(b1, b2), vb = max(b1, b2);
-                            if (b1 == 0 || b2 == 0) continue;
-
-                            bool is_tabu = (tabu_list_2opt_star[ua][va] > current_iter) ||
-                                           (tabu_list_2opt_star[ub][vb] > current_iter);
-
-                            vi crit_new = crit_route;
-                            vi other_new = other_route;
-
-                            vi tailA(crit_new.begin() + i + 1, crit_new.begin() + segA.second + 1);
-                            vi tailB(other_new.begin() + j + 1, other_new.begin() + segB.second + 1);
-
-                            crit_new.erase(crit_new.begin() + i + 1, crit_new.begin() + segA.second + 1);
-                            other_new.erase(other_new.begin() + j + 1, other_new.begin() + segB.second + 1);
-
-                            crit_new.insert(crit_new.begin() + i + 1, tailB.begin(), tailB.end());
-                            other_new.insert(other_new.begin() + j + 1, tailA.begin(), tailA.end());
-
-                            crit_new = normalize_route(crit_new);
-                            other_new = normalize_route(other_new);
-                            if (crit_new == crit_route && other_new == other_route) continue;
-
-                            vd crit_metrics_new = check_route_feasibility(crit_new, 0.0, crit_is_truck);
-                            vd other_metrics_new = check_route_feasibility(other_new, 0.0, other_is_truck);
-
-                            Solution candidate = initial_solution;
-                            candidate.deadline_violation += crit_metrics_new[1] - crit_metrics[1];
-                            candidate.capacity_violation += crit_metrics_new[3] - crit_metrics[3];
-                            candidate.energy_violation += crit_metrics_new[2] - crit_metrics[2];
-                            candidate.deadline_violation += other_metrics_new[1] - other_metrics[1];
-                            candidate.capacity_violation += other_metrics_new[3] - other_metrics[3];
-                            candidate.energy_violation += other_metrics_new[2] - other_metrics[2];
-
-                            if (crit_is_truck) {
-                                candidate.truck_routes[critical_idx] = crit_new;
-                                candidate.truck_route_times[critical_idx] = (crit_new.size() > 1) ? crit_metrics_new[0] : 0.0;
-                            } else {
-                                int crit_drone_idx = critical_idx;
-                                if (crit_drone_idx >= 0 && crit_drone_idx < (int)candidate.drone_routes.size()) {
-                                    candidate.drone_routes[crit_drone_idx] = crit_new;
-                                    candidate.drone_route_times[crit_drone_idx] = (crit_new.size() > 1) ? crit_metrics_new[0] : 0.0;
-                                }
-                            }
-
-                            if (other_is_truck) {
-                                candidate.truck_routes[other_idx] = other_new;
-                                candidate.truck_route_times[other_idx] = (other_new.size() > 1) ? other_metrics_new[0] : 0.0;
-                            } else {
-                                int other_drone_idx = other_idx;
-                                if (other_drone_idx >= 0 && other_drone_idx < (int)candidate.drone_routes.size()) {
-                                    candidate.drone_routes[other_drone_idx] = other_new;
-                                    candidate.drone_route_times[other_drone_idx] = (other_new.size() > 1) ? other_metrics_new[0] : 0.0;
-                                }
-                            }
-
-                            candidate.total_makespan = 0.0;
-                            for (int i = 0; i < h; ++i) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[i]);
-                            for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-                            double candidate_score = solution_cost(candidate);
-                            if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
-                                             candidate.deadline_violation <= 1e-8 &&
-                                             candidate.capacity_violation <= 1e-8 &&
-                                             candidate.energy_violation <= 1e-8)) {
-                                continue;
-                            }
-
-                            if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                                best_neighbor_cost_local = candidate_score;
-                                best_candidate_neighbor = candidate;
-                                best_ua = ua; best_va = va;
-                                best_ub = ub; best_vb = vb;
-                            }
-                        }
-                    }
-                }
-            }
-        };
-
-        if (crit_is_truck) {
-            for (int j = 0; j < h; ++j) {
-                if (j == critical_idx) continue;
-                evaluate_two_opt_star(initial_solution.truck_routes[j], true, j);
-            }
-        } else {
-            for (int j = 0; j < (int)initial_solution.drone_routes.size(); ++j) {
-                if (j == critical_idx) continue;
-                evaluate_two_opt_star(initial_solution.drone_routes[j], false, j);
-            }
-        }
-
-        if (best_ua != -1 && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            tabu_list_2opt_star[best_ua][best_va] = current_iter + TABU_TENURE_2OPT_STAR;
-            tabu_list_2opt_star[best_ub][best_vb] = current_iter + TABU_TENURE_2OPT_STAR;
-
-            //Debug N4
-/*              cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            cout << "[N4] 2-opt* cuts (" << best_ua << "," << best_va << ") & (" << best_ub << "," << best_vb << ")"
-                 << ", score: " << solution_score(initial_solution)
-                 << " -> " << solution_score(best_candidate_neighbor)
-                 << ", iter " << current_iter << "\n"; */
-
-            return best_neighbor;
-        }
-        return initial_solution;
-    } else if (neighbor_id == 5) {
-       auto [critical_idx, crit_is_truck] = critical_solution_index(initial_solution);
-
-        Solution best_candidate_neighbor = best_neighbor;
-        double best_neighbor_cost_local = 1e18;
-        vector<int> best_tabu_triple;
-        int best_pair_a = -1, best_pair_b = -1, best_single = -1;
-        bool best_pair_from_critical = true;
-        int best_other_vehicle = -1;
-        bool best_other_is_truck = true;
-
-        auto normalize_route = [](vi route) {
-            if (route.empty()) return route;
-            if (route.front() != 0) route.insert(route.begin(), 0);
-            if (route.back() != 0) route.push_back(0);
-            vi cleaned;
-            cleaned.reserve(route.size());
-            for (int node : route) {
-                if (!cleaned.empty() && cleaned.back() == node) continue;
-                cleaned.push_back(node);
-            }
-            return cleaned;
-        };
-
-        auto consider_pair_vs_single = [&](const vi& crit_route, bool crit_mode_truck, int crit_global_idx, int crit_route_idx) {
-            if (crit_route.size() <= 3) return;
-
-            vd crit_metrics = check_route_feasibility(crit_route, 0.0, crit_mode_truck);
-            vector<int> pair_positions;
-            for (int i = 0; i + 1 < (int)crit_route.size(); ++i)
-                if (crit_route[i] != 0 && crit_route[i + 1] != 0) pair_positions.push_back(i);
-            if (pair_positions.empty()) return;
-
-            auto near_enough = [&](int u, int v) {
-                return !KNN_ADJ.empty() && KNN_ADJ.size() > (size_t)u && KNN_ADJ[u].size() > (size_t)v && KNN_ADJ[u][v];
-            };
-
-            for (int pair_idx : pair_positions) {
-                int c1 = crit_route[pair_idx];
-                int c2 = crit_route[pair_idx + 1];
-
-                for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                    if (target_veh == (crit_mode_truck ? crit_route_idx : h + crit_route_idx)) continue;
-                    bool target_is_truck = target_veh < h;
-                    if (!target_is_truck && (!served_by_drone[c1] || !served_by_drone[c2])) continue;
-
-                    int target_idx = target_is_truck ? target_veh : target_veh - h;
-                    const vi& target_route = target_is_truck
-                        ? initial_solution.truck_routes[target_idx]
-                        : initial_solution.drone_routes[target_idx];
-                    if (target_route.size() <= 2) continue;
-
-                    vector<int> target_positions;
-                    for (int j = 0; j < (int)target_route.size(); ++j)
-                        if (target_route[j] != 0) target_positions.push_back(j);
-                    if (target_positions.empty()) continue;
-
-                    vd target_metrics = check_route_feasibility(target_route, 0.0, target_is_truck);
-
-                    for (int pos_single : target_positions) {
-                        int single = target_route[pos_single];
-                        if (!crit_mode_truck && !served_by_drone[single]) continue;
-
-                        if (!KNN_ADJ.empty()) {
-                            bool ok = near_enough(c1, single) || near_enough(single, c1) ||
-                                      near_enough(c2, single) || near_enough(single, c2);
-                            if (!ok) continue;
-                        }
-
-                        vi crit_new = crit_route;
-                        crit_new.erase(crit_new.begin() + pair_idx);
-                        crit_new.erase(crit_new.begin() + pair_idx);
-                        crit_new.insert(crit_new.begin() + pair_idx, single);
-                        crit_new = normalize_route(crit_new);
-
-                        vi target_new = target_route;
-                        target_new.erase(target_new.begin() + pos_single);
-                        target_new.insert(target_new.begin() + pos_single, c1);
-                        target_new.insert(target_new.begin() + pos_single + 1, c2);
-                        target_new = normalize_route(target_new);
-
-                        vd crit_new_metrics = check_route_feasibility(crit_new, 0.0, crit_mode_truck);
-                        vd target_new_metrics = check_route_feasibility(target_new, 0.0, target_is_truck);
-
-                        Solution candidate = initial_solution;
-                        candidate.deadline_violation += crit_new_metrics[1] - crit_metrics[1];
-                        candidate.capacity_violation += crit_new_metrics[3] - crit_metrics[3];
-                        candidate.energy_violation += crit_new_metrics[2] - crit_metrics[2];
-                        candidate.deadline_violation += target_new_metrics[1] - target_metrics[1];
-                        candidate.capacity_violation += target_new_metrics[3] - target_metrics[3];
-                        candidate.energy_violation += target_new_metrics[2] - target_metrics[2];
-
-                        if (crit_mode_truck) {
-                            candidate.truck_routes[crit_route_idx] = crit_new;
-                            candidate.truck_route_times[crit_route_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
-                        } else {
-                            int crit_drone_idx = crit_route_idx;
-                            if (crit_drone_idx >= 0 && crit_drone_idx < (int)candidate.drone_routes.size()) {
-                                candidate.drone_routes[crit_drone_idx] = crit_new;
-                                candidate.drone_route_times[crit_drone_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
-                            }
-                        }
-                        if (target_is_truck) {
-                            candidate.truck_routes[target_idx] = target_new;
-                            candidate.truck_route_times[target_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
-                        } else {
-                            int target_drone_idx = target_idx;
-                            if (target_drone_idx >= 0 && target_drone_idx < (int)candidate.drone_routes.size()) {
-                                candidate.drone_routes[target_drone_idx] = target_new;
-                                candidate.drone_route_times[target_drone_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
-                            }
-                        }
-
-                        candidate.total_makespan = 0.0;
-                        for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                        for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-
-                        vector<int> key = { min(c1, c2), max(c1, c2), single };
-                        auto it = tabu_list_21.find(key);
-                        bool is_tabu = (it != tabu_list_21.end() && it->second > current_iter);
-                        double candidate_score = solution_cost(candidate);
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
-                                         candidate.deadline_violation <= 1e-8 &&
-                                         candidate.capacity_violation <= 1e-8 &&
-                                         candidate.energy_violation <= 1e-8)) {
-                            continue;
-                        }
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_tabu_triple = key;
-                            best_pair_a = c1;
-                            best_pair_b = c2;
-                            best_single = single;
-                            best_pair_from_critical = true;
-                            best_other_vehicle = target_veh;
-                            best_other_is_truck = target_is_truck;
-                        }
-                    }
-                }
-            }
-        };
-
-        auto consider_single_vs_pair = [&](const vi& crit_route, bool crit_mode_truck, int crit_route_idx) {
-            if (crit_route.size() <= 2) return;
-
-            vd crit_metrics = check_route_feasibility(crit_route, 0.0, crit_mode_truck);
-            vector<int> single_positions;
-            for (int i = 0; i < (int)crit_route.size(); ++i)
-                if (crit_route[i] != 0) single_positions.push_back(i);
-            if (single_positions.empty()) return;
-
-            auto near_enough = [&](int u, int v) {
-                return !KNN_ADJ.empty() && KNN_ADJ.size() > (size_t)u && KNN_ADJ[u].size() > (size_t)v && KNN_ADJ[u][v];
-            };
-
-            for (int single_idx : single_positions) {
-                int single = crit_route[single_idx];
-
-                for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                    if (target_veh == (crit_mode_truck ? crit_route_idx : h + crit_route_idx)) continue;
-                    bool target_is_truck = target_veh < h;
-                    if (!target_is_truck && !served_by_drone[single]) continue;
-
-                    int target_idx = target_is_truck ? target_veh : target_veh - h;
-                    const vi& target_route = target_is_truck
-                        ? initial_solution.truck_routes[target_idx]
-                        : initial_solution.drone_routes[target_idx];
-                    if (target_route.size() <= 3) continue;
-
-                    vector<int> pair_positions;
-                    for (int j = 0; j + 1 < (int)target_route.size(); ++j)
-                        if (target_route[j] != 0 && target_route[j + 1] != 0) pair_positions.push_back(j);
-                    if (pair_positions.empty()) continue;
-
-                    vd target_metrics = check_route_feasibility(target_route, 0.0, target_is_truck);
-
-                    for (int pair_idx : pair_positions) {
-                        int b1 = target_route[pair_idx];
-                        int b2 = target_route[pair_idx + 1];
-                        if (!crit_mode_truck && (!served_by_drone[b1] || !served_by_drone[b2])) continue;
-
-                        if (!KNN_ADJ.empty()) {
-                            bool ok = near_enough(single, b1) || near_enough(b1, single) ||
-                                      near_enough(single, b2) || near_enough(b2, single);
-                            if (!ok) continue;
-                        }
-
-                        vi crit_new = crit_route;
-                        crit_new.erase(crit_new.begin() + single_idx);
-                        crit_new.insert(crit_new.begin() + single_idx, b1);
-                        crit_new.insert(crit_new.begin() + single_idx + 1, b2);
-                        crit_new = normalize_route(crit_new);
-
-                        vi target_new = target_route;
-                        target_new.erase(target_new.begin() + pair_idx);
-                        target_new.erase(target_new.begin() + pair_idx);
-                        target_new.insert(target_new.begin() + pair_idx, single);
-                        target_new = normalize_route(target_new);
-
-                        vd crit_new_metrics = check_route_feasibility(crit_new, 0.0, crit_mode_truck);
-                        vd target_new_metrics = check_route_feasibility(target_new, 0.0, target_is_truck);
-
-                        Solution candidate = initial_solution;
-                        candidate.deadline_violation += crit_new_metrics[1] - crit_metrics[1];
-                        candidate.capacity_violation += crit_new_metrics[3] - crit_metrics[3];
-                        candidate.energy_violation += crit_new_metrics[2] - crit_metrics[2];
-                        candidate.deadline_violation += target_new_metrics[1] - target_metrics[1];
-                        candidate.capacity_violation += target_new_metrics[3] - target_metrics[3];
-                        candidate.energy_violation += target_new_metrics[2] - target_metrics[2];
-
-                        if (crit_mode_truck) {
-                            candidate.truck_routes[crit_route_idx] = crit_new;
-                            candidate.truck_route_times[crit_route_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
-                        } else {
-                            int crit_drone_idx = crit_route_idx;
-                            if (crit_drone_idx >= 0 && crit_drone_idx < (int)candidate.drone_routes.size()) {
-                                candidate.drone_routes[crit_drone_idx] = crit_new;
-                                candidate.drone_route_times[crit_drone_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
-                            }
-                        }
-                        if (target_is_truck) {
-                            candidate.truck_routes[target_idx] = target_new;
-                            candidate.truck_route_times[target_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
-                        } else {
-                            int target_drone_idx = target_idx;
-                            if (target_drone_idx >= 0 && target_drone_idx < (int)candidate.drone_routes.size()) {
-                                candidate.drone_routes[target_drone_idx] = target_new;
-                                candidate.drone_route_times[target_drone_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
-                            }
-                        }
-
-                        candidate.total_makespan = 0.0;
-                        for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                        for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-
-                        vector<int> key = { min(b1, b2), max(b1, b2), single };
-                        auto it = tabu_list_21.find(key);
-                        bool is_tabu = (it != tabu_list_21.end() && it->second > current_iter);
-                        double candidate_score = solution_cost(candidate);
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
-                                         candidate.deadline_violation <= 1e-8 &&
-                                         candidate.capacity_violation <= 1e-8 &&
-                                         candidate.energy_violation <= 1e-8)) {
-                            continue;
-                        }
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_tabu_triple = key;
-                            best_pair_a = b1;
-                            best_pair_b = b2;
-                            best_single = single;
-                            best_pair_from_critical = false;
-                            best_other_vehicle = target_veh;
-                            best_other_is_truck = target_is_truck;
-                        }
-                    }
-                }
-            }
-        };
-
-        if (crit_is_truck) {
-            consider_pair_vs_single(initial_solution.truck_routes[critical_idx], true, critical_idx, critical_idx);
-            consider_single_vs_pair(initial_solution.truck_routes[critical_idx], true, critical_idx);
-        } else {
-            consider_pair_vs_single(initial_solution.drone_routes[critical_idx], false, h + critical_idx, critical_idx);
-            consider_single_vs_pair(initial_solution.drone_routes[critical_idx], false, critical_idx);
-        }
-
-        if (!best_tabu_triple.empty() && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            tabu_list_21[best_tabu_triple] = current_iter + TABU_TENURE_21;
-
-            // Debug N5
-            /* cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            bool other_is_truck = best_other_is_truck;
-            int other_idx = other_is_truck ? best_other_vehicle : best_other_vehicle - h;
-            cout << "[N5] (" << (best_pair_from_critical ? "2,1" : "1,2") << ") swap pair ("
-                 << best_pair_a << "," << best_pair_b << ") with customer " << best_single
-                 << " between " << (crit_is_truck ? "truck" : "drone") << " #" << (critical_idx + 1)
-                 << " and " << (other_is_truck ? "truck" : "drone") << " #" << (other_idx + 1)
-                 << ", score: " << solution_score(initial_solution)
-                 << " -> " << solution_score(best_candidate_neighbor)
-                 << ", iter " << current_iter << "\n"; */
-
-            return best_neighbor;
-        }
-        return initial_solution;
-    } else if (neighbor_id == 6) {
-        // Neighborhood 6: Swap two pairs of customers between routes
-        auto [critical_idx, crit_is_truck] = critical_solution_index(initial_solution);
-
-        Solution best_candidate_neighbor = best_neighbor;
-        double best_neighbor_cost_local = 1e18;
-        vector<int> best_tabu_key;
-        int best_pair_a1 = -1, best_pair_a2 = -1;
-        int best_pair_b1 = -1, best_pair_b2 = -1;
-        int best_other_vehicle = -1;
-        bool best_other_is_truck = true;
-        bool best_same_route = false;
-
-        auto enumerate_pairs = [](const vi& route) {
-            vector<int> starts;
-            for (int i = 0; i + 1 < (int)route.size(); ++i) {
-                if (route[i] != 0 && route[i + 1] != 0) starts.push_back(i);
-            }
-            return starts;
-        };
-
-        auto normalize_route = [](vi route) {
-            if (route.empty()) return route;
-            if (route.front() != 0) route.insert(route.begin(), 0);
-            if (route.back() != 0) route.push_back(0);
-            vi cleaned;
-            cleaned.reserve(route.size());
-            for (int node : route) {
-                if (!cleaned.empty() && cleaned.back() == node) continue;
-                cleaned.push_back(node);
-            }
-            return cleaned;
-        };
-
-        auto near_enough = [&](int u, int v) {
-            return !KNN_ADJ.empty() && KNN_ADJ.size() > (size_t)u &&
-                   KNN_ADJ[u].size() > (size_t)v && KNN_ADJ[u][v];
-        };
-
-        auto consider_swap_pairs = [&](const vi& base_route, bool base_is_truck, int base_route_idx) {
-            if (base_route.size() <= 3) return;
-
-            vd base_metrics = check_route_feasibility(base_route, 0.0, base_is_truck);
-            auto base_pairs = enumerate_pairs(base_route);
-            if (base_pairs.empty()) return;
-
-            for (int p : base_pairs) {
-                int a1 = base_route[p];
-                int a2 = base_route[p + 1];
-
-                for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                    bool target_is_truck = target_veh < h;
-                    int target_idx = target_is_truck ? target_veh : target_veh - h;
-                    bool same_route = (target_veh == (base_is_truck ? base_route_idx : base_route_idx + h));
-                    const vi& target_route = same_route
-                        ? base_route
-                        : (target_is_truck
-                               ? initial_solution.truck_routes[target_idx]
-                               : initial_solution.drone_routes[target_idx]);
-
-                    if (target_route.size() <= 3) continue;
-                    auto target_pairs = enumerate_pairs(target_route);
-                    if (target_pairs.empty()) continue;
-
-                    vd target_metrics;
-                    if (!same_route) {
-                        target_metrics = check_route_feasibility(target_route, 0.0, target_is_truck);
-                    }
-
-                    for (int q : target_pairs) {
-                        if (same_route && (q == p || q == p + 1 || p == q + 1)) continue;
-
-                        int b1 = target_route[q];
-                        int b2 = target_route[q + 1];
-
-                        if (!target_is_truck && (!served_by_drone[a1] || !served_by_drone[a2])) continue;
-                        if (!base_is_truck && (!served_by_drone[b1] || !served_by_drone[b2])) continue;
-
-                        if (!KNN_ADJ.empty()) {
-                            bool ok = near_enough(a1, b1) || near_enough(a1, b2) ||
-                                      near_enough(a2, b1) || near_enough(a2, b2) ||
-                                      near_enough(b1, a1) || near_enough(b2, a1) ||
-                                      near_enough(b1, a2) || near_enough(b2, a2);
-                            if (!ok) continue;
-                        }
-
-                        vector<int> tabu_key = {a1, a2, b1, b2};
-                        sort(tabu_key.begin(), tabu_key.end());
-                        auto it_tabu = tabu_list_22.find(tabu_key);
-                        bool is_tabu = (it_tabu != tabu_list_22.end() && it_tabu->second > current_iter);
-
-                        vi base_new = base_route;
-                        vi target_new = target_route;
-
-                        if (same_route) {
-                            swap(base_new[p], base_new[q]);
-                            swap(base_new[p + 1], base_new[q + 1]);
-                        } else {
-                            base_new[p] = b1;
-                            base_new[p + 1] = b2;
-                            target_new[q] = a1;
-                            target_new[q + 1] = a2;
-                        }
-                        base_new = normalize_route(base_new);
-                        target_new = normalize_route(target_new);
-
-                        vd base_new_metrics = check_route_feasibility(base_new, 0.0, base_is_truck);
-                        vd target_new_metrics;
-                        if (!same_route) {
-                            target_new_metrics = check_route_feasibility(target_new, 0.0, target_is_truck);
-                        }
-
-                        Solution candidate = initial_solution;
-                        candidate.deadline_violation += base_new_metrics[1] - base_metrics[1];
-                        candidate.capacity_violation += base_new_metrics[3] - base_metrics[3];
-                        candidate.energy_violation += base_new_metrics[2] - base_metrics[2];
-
-                        if (base_is_truck) {
-                            candidate.truck_routes[base_route_idx] = base_new;
-                            candidate.truck_route_times[base_route_idx] = (base_new.size() > 1) ? base_new_metrics[0] : 0.0;
-                        } else {
-                            candidate.drone_routes[base_route_idx] = base_new;
-                            candidate.drone_route_times[base_route_idx] = (base_new.size() > 1) ? base_new_metrics[0] : 0.0;
-                        }
-
-                        if (!same_route) {
-                            candidate.deadline_violation += target_new_metrics[1] - target_metrics[1];
-                            candidate.capacity_violation += target_new_metrics[3] - target_metrics[3];
-                            candidate.energy_violation += target_new_metrics[2] - target_metrics[2];
-
-                            if (target_is_truck) {
-                                candidate.truck_routes[target_idx] = target_new;
-                                candidate.truck_route_times[target_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
-                            } else {
-                                candidate.drone_routes[target_idx] = target_new;
-                                candidate.drone_route_times[target_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
-                            }
-                        }
-
-                        candidate.total_makespan = 0.0;
-                        for (double t : candidate.truck_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-                        for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-
-                        double candidate_score = solution_cost(candidate);
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
-                                         candidate.deadline_violation <= 1e-8 &&
-                                         candidate.capacity_violation <= 1e-8 &&
-                                         candidate.energy_violation <= 1e-8)) {
-                            continue;
-                        }
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_tabu_key = tabu_key;
-                            best_pair_a1 = a1;
-                            best_pair_a2 = a2;
-                            best_pair_b1 = b1;
-                            best_pair_b2 = b2;
-                            best_other_vehicle = target_veh;
-                            best_other_is_truck = target_is_truck;
-                            best_same_route = same_route;
-                        }
-                    }
-                }
-            }
-        };
-
-        if (crit_is_truck) {
-            consider_swap_pairs(initial_solution.truck_routes[critical_idx], true, critical_idx);
-        } else {
-            consider_swap_pairs(initial_solution.drone_routes[critical_idx], false, critical_idx);
-        }
-
-        if (!best_tabu_key.empty() && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            tabu_list_22[best_tabu_key] = current_iter + TABU_TENURE_22;
-
-            // Debug N6
-            /* cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            if (best_same_route) {
-                cout << "[N6] (2,2) swap within " << (crit_is_truck ? "truck" : "drone") << " #"
-                     << (critical_idx + 1) << ": (" << best_pair_a1 << "," << best_pair_a2
-                     << ") ↔ (" << best_pair_b1 << "," << best_pair_b2 << "), makespan: "
-                     << ", score: " << solution_score(initial_solution)
-                     << " -> " << solution_score(best_candidate_neighbor)
-                     << ", iter " << current_iter << "\n";
-            } else {
-                int other_idx = best_other_is_truck ? best_other_vehicle : best_other_vehicle - h;
-                cout << "[N6] (2,2) swap pairs (" << best_pair_a1 << "," << best_pair_a2 << ") ↔ ("
-                     << best_pair_b1 << "," << best_pair_b2 << ") between "
-                     << (crit_is_truck ? "truck" : "drone") << " #" << (critical_idx + 1)
-                     << " and " << (best_other_is_truck ? "truck" : "drone") << " #" << (other_idx + 1)
-                     << ", makespan: " << initial_solution.total_makespan << " -> "
-                     << best_neighbor.total_makespan << ", iter " << current_iter << "\n";
-            } */
-
-            return best_neighbor;
-        }
-        return initial_solution;
-
-    }  else if (neighbor_id == 7) {
-        // Neighborhood 7: depth-2 ejection chain (i -> j -> k)
-        Solution best_candidate_neighbor = best_neighbor;
-        double best_neighbor_cost_local = 1e18;
-        vector<int> best_tabu_key;
-        int best_veh_i = -1, best_veh_j = -1, best_veh_k = -1;
-        int best_cust_removed = -1, best_cust_ejected = -1;
-
-        auto normalize_route = [](vi route) {
-            if (route.empty()) return route;
-            if (route.front() != 0) route.insert(route.begin(), 0);
-            if (route.back() != 0) route.push_back(0);
-            vi cleaned;
-            cleaned.reserve(route.size());
-            for (int node : route) {
-                if (!cleaned.empty() && cleaned.back() == node) continue;
-                cleaned.push_back(node);
-            }
-            return cleaned;
-        };
-
-        auto is_truck_vehicle = [&](int veh_id) { return veh_id < h; };
-        auto fetch_route = [&](int veh_id) -> const vi& {
-            return (veh_id < h) ? initial_solution.truck_routes[veh_id]
-                                : initial_solution.drone_routes[veh_id - h];
-        };
-
-        auto get_metrics = [&](const vi& route, bool truck_mode) {
-            return check_route_feasibility(route, 0.0, truck_mode);
-        };
-
-        auto is_near = [&](int u, int v) {
-            if (KNN_ADJ.empty()) return true;
-            if (u < 0 || v < 0) return false;
-            if (u >= (int)KNN_ADJ.size()) return false;
-            if (v >= (int)KNN_ADJ[u].size()) return false;
-            return (KNN_ADJ[u][v] == 1);
-        };
-
-        const int MAX_ROUTE_TRIPLETS = min(50, (h + d) * max(0, h + d - 1) * max(0, h + d - 2) / 6);
-        int triplets_evaluated = 0;
-        bool stop_search = false;
-
-        for (int veh_i = 0; veh_i < h + d && !stop_search; ++veh_i) {
-            const vi& route_i_raw = fetch_route(veh_i);
-            if (route_i_raw.size() <= 2) continue;
-            vi route_i = normalize_route(route_i_raw);
-            vd metrics_i = get_metrics(route_i, is_truck_vehicle(veh_i));
-
-            vector<int> pos_i;
-            for (int idx = 0; idx < (int)route_i.size(); ++idx)
-                if (route_i[idx] != 0) pos_i.push_back(idx);
-            if (pos_i.empty()) continue;
-
-            for (int veh_j = 0; veh_j < h + d && !stop_search; ++veh_j) {
-                if (veh_j == veh_i) continue;
-                const vi& route_j_raw = fetch_route(veh_j);
-                if (route_j_raw.size() <= 2) continue;
-                vi route_j = normalize_route(route_j_raw);
-                vd metrics_j = get_metrics(route_j, is_truck_vehicle(veh_j));
-
-                vector<int> pos_j;
-                vector<int> customers_j;
-                for (int idx = 0; idx < (int)route_j.size(); ++idx) {
-                    if (route_j[idx] != 0) {
-                        pos_j.push_back(idx);
-                        customers_j.push_back(route_j[idx]);
-                    }
-                }
-                if (pos_j.empty()) continue;
-
-                for (int veh_k = 0; veh_k < h + d; ++veh_k) {
-                    if (veh_k == veh_i || veh_k == veh_j) continue;
-                    if (triplets_evaluated >= MAX_ROUTE_TRIPLETS) { stop_search = true; break; }
-                    ++triplets_evaluated;
-
-                    const vi& route_k_raw = fetch_route(veh_k);
-                    vi route_k = normalize_route(route_k_raw);
-                    vd metrics_k = get_metrics(route_k, is_truck_vehicle(veh_k));
-
-                    vector<int> pos_k_candidates;
-                    for (int idx = 1; idx <= (int)route_k.size(); ++idx)
-                        pos_k_candidates.push_back(idx);
-
-                    if (pos_k_candidates.empty()) continue;
-
-                    for (int pos_idx_i : pos_i) {
-                        int cust_removed = route_i[pos_idx_i];
-                        vi route_i_new = route_i;
-                        route_i_new.erase(route_i_new.begin() + pos_idx_i);
-                        route_i_new = normalize_route(route_i_new);
-                        vd metrics_i_new = get_metrics(route_i_new, is_truck_vehicle(veh_i));
-
-                        if (!KNN_ADJ.empty()) {
-                            bool near_some = false;
-                            for (int c : customers_j) {
-                                if (is_near(cust_removed, c) || is_near(c, cust_removed)) { near_some = true; break; }
-                            }
-                            if (!customers_j.empty() && !near_some) continue;
-                        }
-                        if (!is_truck_vehicle(veh_j) && !served_by_drone[cust_removed]) continue;
-
-                        for (int pos_idx_j : pos_j) {
-                            int cust_ejected = route_j[pos_idx_j];
-                            if (cust_removed == cust_ejected) continue;
-                            if (!is_truck_vehicle(veh_k) && !served_by_drone[cust_ejected]) continue;
-
-                            if (!KNN_ADJ.empty()) {
-                                if (!(is_near(cust_removed, cust_ejected) || is_near(cust_ejected, cust_removed))) continue;
-                            }
-
-                            vi route_j_new = route_j;
-                            route_j_new[pos_idx_j] = cust_removed;
-                            route_j_new = normalize_route(route_j_new);
-                            vd metrics_j_new = get_metrics(route_j_new, is_truck_vehicle(veh_j));
-
-                            for (int insert_pos_k : pos_k_candidates) {
-                                vi route_k_new = route_k;
-                                if (find(route_k_new.begin(), route_k_new.end(), cust_ejected) != route_k_new.end()) continue;
-                                int insert_index = min(insert_pos_k, (int)route_k_new.size());
-                                route_k_new.insert(route_k_new.begin() + insert_index, cust_ejected);
-                                route_k_new = normalize_route(route_k_new);
-                                vd metrics_k_new = get_metrics(route_k_new, is_truck_vehicle(veh_k));
-
-                                if (!KNN_ADJ.empty()) {
-                                    int idx_new = -1;
-                                    for (int idx = 0; idx < (int)route_k_new.size(); ++idx) {
-                                        if (route_k_new[idx] == cust_ejected) { idx_new = idx; break; }
-                                    }
-                                    if (idx_new != -1 && idx_new > 0 && idx_new + 1 < (int)route_k_new.size()) {
-                                        int prev = route_k_new[idx_new - 1];
-                                        int next = route_k_new[idx_new + 1];
-                                        if (!(is_near(cust_ejected, prev) || is_near(prev, cust_ejected) ||
-                                              is_near(cust_ejected, next) || is_near(next, cust_ejected))) {
-                                            continue;
-                                        }
-                                    }
-                                }
-
-                                Solution candidate = initial_solution;
-
-                                candidate.deadline_violation += metrics_i_new[1] - metrics_i[1];
-                                candidate.capacity_violation += metrics_i_new[3] - metrics_i[3];
-                                candidate.energy_violation += metrics_i_new[2] - metrics_i[2];
-
-                                candidate.deadline_violation += metrics_j_new[1] - metrics_j[1];
-                                candidate.capacity_violation += metrics_j_new[3] - metrics_j[3];
-                                candidate.energy_violation += metrics_j_new[2] - metrics_j[2];
-
-                                candidate.deadline_violation += metrics_k_new[1] - metrics_k[1];
-                                candidate.capacity_violation += metrics_k_new[3] - metrics_k[3];
-                                candidate.energy_violation += metrics_k_new[2] - metrics_k[2];
-
-                                if (is_truck_vehicle(veh_i)) {
-                                    candidate.truck_routes[veh_i] = route_i_new;
-                                    candidate.truck_route_times[veh_i] = (route_i_new.size() > 1) ? metrics_i_new[0] : 0.0;
-                                } else {
-                                    candidate.drone_routes[veh_i - h] = route_i_new;
-                                    candidate.drone_route_times[veh_i - h] = (route_i_new.size() > 1) ? metrics_i_new[0] : 0.0;
-                                }
-
-                                if (is_truck_vehicle(veh_j)) {
-                                    candidate.truck_routes[veh_j] = route_j_new;
-                                    candidate.truck_route_times[veh_j] = (route_j_new.size() > 1) ? metrics_j_new[0] : 0.0;
-                                } else {
-                                    candidate.drone_routes[veh_j - h] = route_j_new;
-                                    candidate.drone_route_times[veh_j - h] = (route_j_new.size() > 1) ? metrics_j_new[0] : 0.0;
-                                }
-
-                                if (is_truck_vehicle(veh_k)) {
-                                    candidate.truck_routes[veh_k] = route_k_new;
-                                    candidate.truck_route_times[veh_k] = (route_k_new.size() > 1) ? metrics_k_new[0] : 0.0;
-                                } else {
-                                    candidate.drone_routes[veh_k - h] = route_k_new;
-                                    candidate.drone_route_times[veh_k - h] = (route_k_new.size() > 1) ? metrics_k_new[0] : 0.0;
-                                }
-
-                                candidate.total_makespan = 0.0;
-                                for (double t : candidate.truck_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-                                for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-
-                                vector<int> tabu_key = {min(cust_removed, cust_ejected), max(cust_removed, cust_ejected)};
-                                bool is_tabu = (tabu_list_ejection.count(tabu_key) &&
-                                                tabu_list_ejection[tabu_key] > current_iter);
-
-                                double candidate_score = solution_cost(candidate);
-                                if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
-                                                candidate.deadline_violation <= 1e-8 &&
-                                                candidate.capacity_violation <= 1e-8 &&
-                                                candidate.energy_violation <= 1e-8)) {
-                                    continue;
-                                }
-                                if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                                    best_neighbor_cost_local = candidate_score;
-                                    best_candidate_neighbor = candidate;
-                                    best_tabu_key = tabu_key;
-                                    best_veh_i = veh_i;
-                                    best_veh_j = veh_j;
-                                    best_veh_k = veh_k;
-                                    best_cust_removed = cust_removed;
-                                    best_cust_ejected = cust_ejected;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!best_tabu_key.empty()) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            tabu_list_ejection[best_tabu_key] = current_iter + TABU_TENURE_EJECTION;
-
-            cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            auto print_vehicle = [&](int v) {
-                return (is_truck_vehicle(v) ? string("truck #") + to_string(v + 1)
-                                            : string("drone #") + to_string(v - h + 1));
-            };
-            // Debug N7
-            /* cout << "[N7] ejection chain: move " << best_cust_removed << " from " << print_vehicle(best_veh_i)
-                 << ", replace " << best_cust_ejected << " on " << print_vehicle(best_veh_j)
-                 << ", insert into " << print_vehicle(best_veh_k)
-                 << ", score: " << solution_score(initial_solution)
-                 << " -> " << solution_score(best_candidate_neighbor)
-                 << ", iter " << current_iter << "\n"; */
-
-            return best_neighbor;
-        }
-        return initial_solution;
-    } else if (neighbor_id == 8) {
-        //Depot pruning with flip
-        Solution best_candidate_neighbor = best_neighbor;
-        double best_neighbor_cost_local = 1e18;
-
-        for (int veh = 0; veh < h + d; ++veh) {
-            bool is_truck = veh < h;
-            const vi& route = is_truck ? initial_solution.truck_routes[veh] 
-                                       : initial_solution.drone_routes[veh - h];
-            if (route.size() < 3) continue;
-
-            vector<int> zeros;
-            for(int i=0; i<route.size(); ++i) if(route[i] == 0) zeros.push_back(i);
-
-            // Iterate over intermediate depots
-            for (size_t z = 1; z < zeros.size() - 1; ++z) {
-                int prev_idx = zeros[z-1];
-                int curr_idx = zeros[z];
-                int next_idx = zeros[z+1];
-
-                // Optimization: Check capacity feasibility before generating routes
-                double total_demand = 0.0;
-                for(int k=prev_idx+1; k<next_idx; ++k) {
-                    if(route[k] != 0) total_demand += demand[route[k]];
-                }
-                if (is_truck) {
-                    if (total_demand > Dh + 1e-9) continue;
-                } else {
-                    if (total_demand > Dd + 1e-9) continue;
-                }
-
-                // 4 configurations:
-                // 0: No flip
-                // 1: Flip Left (prev->curr)
-                // 2: Flip Right (curr->next)
-                // 3: Flip Both
-                for (int opt = 0; opt < 4; ++opt) {
-                    vi new_route;
-                    // Prefix: 0 .. prev_idx
-                    for(int k=0; k<=prev_idx; ++k) new_route.push_back(route[k]);
-                    
-                    // Left Segment
-                    if (opt == 1 || opt == 3) {
-                        for(int k=curr_idx-1; k>prev_idx; --k) new_route.push_back(route[k]);
-                    } else {
-                        for(int k=prev_idx+1; k<curr_idx; ++k) new_route.push_back(route[k]);
-                    }
-                    
-                    // Right Segment
-                    if (opt == 2 || opt == 3) {
-                        for(int k=next_idx-1; k>curr_idx; --k) new_route.push_back(route[k]);
-                    } else {
-                        for(int k=curr_idx+1; k<next_idx; ++k) new_route.push_back(route[k]);
-                    }
-                    
-                    // Suffix: next_idx .. end
-                    for(int k=next_idx; k<route.size(); ++k) new_route.push_back(route[k]);
-                    
-                    // Clean up double zeros
-                    vi cleaned;
-                    for(int node : new_route) {
-                        if(!cleaned.empty() && cleaned.back() == 0 && node == 0) continue;
-                        cleaned.push_back(node);
-                    }
-                    new_route = cleaned;
-
-                    vd new_metrics = check_route_feasibility(new_route, 0.0, is_truck);
-                    
-                    // Strict feasibility check to ensure quality
-                    if (new_metrics[1] > 1e-8 || new_metrics[2] > 1e-8 || new_metrics[3] > 1e-8) continue;
-
-                    vd old_metrics = check_route_feasibility(route, 0.0, is_truck);
-
-                    Solution candidate = initial_solution;
-                    candidate.deadline_violation += new_metrics[1] - old_metrics[1];
-                    candidate.capacity_violation += new_metrics[3] - old_metrics[3];
-                    candidate.energy_violation += new_metrics[2] - old_metrics[2];
-
-                    if (is_truck) {
-                        candidate.truck_routes[veh] = new_route;
-                        candidate.truck_route_times[veh] = (new_route.size() > 1) ? new_metrics[0] : 0.0;
-                    } else {
-                        candidate.drone_routes[veh - h] = new_route;
-                        candidate.drone_route_times[veh - h] = (new_route.size() > 1) ? new_metrics[0] : 0.0;
-                    }
-
-                    candidate.total_makespan = 0.0;
-                    for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                    for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-
-                    double candidate_score = solution_cost(candidate);
-                    
-                    if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                        best_neighbor_cost_local = candidate_score;
-                        best_candidate_neighbor = candidate;
-                    }
-                }
-            }
-        }
-
-        if (best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            return best_candidate_neighbor;
-        }
-        return initial_solution;
-    }
-// ...existing code...
-return initial_solution;
-}
-
 Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor_id, int current_iter, double best_cost, double (*solution_cost)(const Solution&)) {
     Solution best_neighbor = initial_solution;
     double best_neighbor_cost = 1e10;
-    double l2_weight = 0.0;
-    if (solution_cost == solution_score_l2_norm) l2_weight = 1e-3;
+    double total_time_weight = 0.0;
     // Depending on neighbor_id, implement different neighborhood structures
     if (neighbor_id == 0) {
-        // Relocate 1 customer from the critical (longest-time) vehicle route to another route of the same mode
-        // 1) Identify critical vehicle (truck or drone) using precomputed times
-
-        // Ensure tabu list is sized to (n+1) x (h+d)
+        // Relocate 1 customer
+        // Ensure tabu list is sized
         int veh_count = h + d;
         if ((int)tabu_list_10.size() != n + 1 || (veh_count > 0 && (int)tabu_list_10[0].size() != veh_count)) {
             tabu_list_10.assign(n + 1, vector<int>(max(0, veh_count), 0));
         }
 
-        // Prepare neighborhood best tracking
-        int best_target = -1; // vehicle index in unified space (0..h-1 trucks, h..h+d-1 drones)
-        int best_cust = -1;   // moved customer id
+        int best_target = -1; 
+        int best_cust = -1;   
+        int best_pos = -1;    
         Solution best_candidate_neighbor = best_neighbor;
         double best_neighbor_cost_local = 1e10;
 
+        // Recompute baseline metrics from current routes (cached totals may be stale after perturbations)
+        double base_truck_dist = 0.0, base_drone_dist = 0.0;
+        double base_capacity_violation = 0.0, base_energy_violation = 0.0, base_deadline_violation = 0.0;
+        vector<double> base_truck_load(h, 0.0);
+        vector<double> base_truck_time(h, 0.0), base_drone_time(d, 0.0);
+
+        for (int v = 0; v < h; ++v) {
+            const vi& r = initial_solution.truck_routes[v];
+            vd metrics = check_route_feasibility(r, 0.0, true);
+            base_truck_time[v] = metrics[0];
+            base_deadline_violation += metrics[1];
+            base_energy_violation += metrics[2];
+            base_capacity_violation += metrics[3];
+            base_truck_load[v] = accumulate(r.begin(), r.end(), 0.0, [&](double sum, int c){ return sum + demand[c]; });
+            for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+        }
+        for (int v = 0; v < d; ++v) {
+            const vi& r = initial_solution.drone_routes[v];
+            vd metrics = check_route_feasibility(r, 0.0, false);
+            base_drone_time[v] = metrics[0];
+            base_deadline_violation += metrics[1];
+            base_energy_violation += metrics[2];
+            base_capacity_violation += metrics[3];
+            for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
+        }
+
         auto consider_relocate = [&](const vi& base_route, bool is_truck_mode, int critical_vehicle_id) {
-
-            // Precompute metrics for delta evaluation
-            double current_total_time_sq = 0.0;
-            double second_max_makespan = 0.0;
             
-            // Calculate current total time squared and find the second highest makespan (excluding the critical vehicle)
-            for (int i = 0; i < h; ++i) {
-                double t = initial_solution.truck_route_times[i];
-                current_total_time_sq += t * t;
-                if (!is_truck_mode || i != critical_vehicle_id) {
-                    second_max_makespan = max(second_max_makespan, t);
-                }
-            }
-            for (int i = 0; i < d; ++i) {
-                double t = initial_solution.drone_route_times[i];
-                current_total_time_sq += t * t;
-                if (is_truck_mode || i != critical_vehicle_id - h) {
-                    second_max_makespan = max(second_max_makespan, t);
-                }
-            }
-            // Lambda to normalize routes for comparison (detect no-ops)
-            auto normalize_route = []( vi& route) -> vi {
-                if (!route.empty() && route.front() != 0) 
-                    route.insert(route.begin(), 0);
-                if (!route.empty() && route.back() != 0) 
-                    route.push_back(0);
-                return route;
-            };
-
-            vd crit_route_time_feas = is_truck_mode
+            // Baseline Feasibility
+            vd crit_route_feas = is_truck_mode
                 ? check_route_feasibility(base_route, 0.0, true)
                 : check_route_feasibility(base_route, 0.0, false);
 
-            // Collect positions of customers (exclude depots)
             vector<int> pos;
             for (int i = 0; i < (int)base_route.size(); ++i) if (base_route[i] != 0) pos.push_back(i);
             
@@ -3309,7 +1110,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                 int p = pos[idx];
                 int cust = base_route[p];
 
-                // Pre-calculate the base route with customer removed (for inter-route moves)
+                // Prepare Route without Cust (for inter-route target simulation)
                 vi base_route_removed = base_route;
                 base_route_removed.erase(base_route_removed.begin() + p);
                 
@@ -3317,668 +1118,671 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                     ? check_route_feasibility(base_route_removed, 0.0, true)
                     : check_route_feasibility(base_route_removed, 0.0, false);
 
-                // Try relocating cust to other vehicles
+                // --- 1. Removal Delta ---
+                double removal_dist_delta = 0.0;
+                double removal_time_delta = 0.0;
+                
+                if (is_truck_mode) {
+                   int prev = base_route[p-1];
+                   int next = base_route[p+1]; // Truck routes always padded with 0
+                   removal_dist_delta = distance_matrix_manhattan[prev][next] 
+                                      - distance_matrix_manhattan[prev][cust]
+                                      - distance_matrix_manhattan[cust][next];
+                   removal_time_delta = removal_dist_delta / vmax;
+                } else {
+                   // Drone: Remove Sortie (0->C->0)
+                   double sortie_dist = distance_matrix_euclid[0][cust] * 2.0;
+                   removal_dist_delta = -sortie_dist;
+                   removal_time_delta = removal_dist_delta / v_fly_drone;
+                }
+
+                // Check Targets
                 for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                    if (served_by_drone[cust] == 0 && target_veh >= h) continue; // cannot assign to drone
+                    if (served_by_drone[cust] == 0 && target_veh >= h) continue;
+
+                    // [INTENTION] Explicitly PROHIBIT Intra-route moves for Drones
+                    if (!is_truck_mode && target_veh == critical_vehicle_id) continue;
+
                     bool is_tabu = (tabu_list_10[cust][target_veh] > current_iter);
+                    bool target_is_truck = (target_veh < h);
                     
-                    if (target_veh == critical_vehicle_id) {
-                        // --- INTRA-ROUTE RELOCATION (Same Vehicle) ---
-                        auto evaluate_intra = [&](int p2) {
-                            vi new_route = base_route;
-                            new_route.erase(new_route.begin() + p);
-                            int insert_idx = p2 - (p2 > p ? 1 : 0);
-                            new_route.insert(new_route.begin() + insert_idx, cust);
-                            vi new_norm = normalize_route(new_route);
-                            
-                            vd new_feas = is_truck_mode
-                                ? check_route_feasibility(new_norm, 0.0, true)
-                                : check_route_feasibility(new_norm, 0.0, false);
+                    // Identify Target Route
+                    const vi* target_route_ptr = (target_veh == critical_vehicle_id) 
+                         ? &base_route_removed // Inserting into self (minus cust)
+                         : (target_is_truck ? &initial_solution.truck_routes[target_veh] 
+                                            : &initial_solution.drone_routes[target_veh - h]);
+                    const vi& current_target_route = *target_route_ptr;
 
-                            // Delta Eval
-                            double new_deadline = initial_solution.deadline_violation + new_feas[1] - crit_route_time_feas[1];
-                            double new_capacity = initial_solution.capacity_violation + new_feas[3] - crit_route_time_feas[3];
-                            double new_energy = initial_solution.energy_violation + new_feas[2] - crit_route_time_feas[2];
-                            
-                            double new_makespan = max(second_max_makespan, new_feas[0]);
-                            double new_total_sq = current_total_time_sq - (crit_route_time_feas[0]*crit_route_time_feas[0]) + (new_feas[0]*new_feas[0]);
-                            
-                            double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (new_makespan + std::sqrt(new_total_sq) / (h + d) * l2_weight) * pow(pen, PENALTY_EXPONENT);
-                            
-                            bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
-                            
-                            if (is_tabu && !(score + 1e-8 < best_cost && feasible)) return;
-                            
-                            if (score + 1e-8 < best_neighbor_cost_local) {
-                                best_neighbor_cost_local = score;
-                                best_target = target_veh;
-                                best_cust = cust;
-                                best_candidate_neighbor = initial_solution;
-                                if (is_truck_mode) {
-                                    best_candidate_neighbor.truck_routes[critical_vehicle_id] = new_norm;
-                                    best_candidate_neighbor.truck_route_times[critical_vehicle_id] = new_feas[0];
-                                } else {
-                                    best_candidate_neighbor.drone_routes[critical_vehicle_id - h] = new_norm;
-                                    best_candidate_neighbor.drone_route_times[critical_vehicle_id - h] = new_feas[0];
-                                }
-                                best_candidate_neighbor.deadline_violation = new_deadline;
-                                best_candidate_neighbor.capacity_violation = new_capacity;
-                                best_candidate_neighbor.energy_violation = new_energy;
-                                best_candidate_neighbor.total_makespan = new_makespan;
-                            }
-                        };
+                    // Feasibility baseline for target (only needed for Inter-route)
+                    vd target_route_baseline; 
+                    if (target_veh != critical_vehicle_id) {
+                         target_route_baseline = target_is_truck
+                            ? check_route_feasibility(current_target_route, 0.0, true)
+                            : check_route_feasibility(current_target_route, 0.0, false);
+                    }
 
-                        for (int p2 = 1; p2 < (int)base_route.size(); ++p2) {
-                            if (p2 == p) continue;
-                            evaluate_intra(p2);
-                        }
-                        // End of route
-                        evaluate_intra(base_route.size());
-                    } else {
-                        // --- INTER-ROUTE RELOCATION (Different Vehicle) ---
-                        const vi& target_route = (target_veh < h) ? initial_solution.truck_routes[target_veh] : initial_solution.drone_routes[target_veh - h];
+                    // --- 2. Insertion Loop ---
+                    int loop_end = target_is_truck ? (int)current_target_route.size() : 1; 
+                    
+                    for (int p2 = 1; p2 <= loop_end; ++p2) {
                         
-                        vd target_route_feas = (target_veh < h)
-                            ? check_route_feasibility(target_route, 0.0, true)
-                            : check_route_feasibility(target_route, 0.0, false);
+                        // Safety check for empty routes (though padding usually prevents this for trucks)
+                        if (target_is_truck && p2 >= (int)current_target_route.size()) break;
 
-                        auto evaluate_inter = [&](int insert_pos) {
-                            vi new_target = target_route;
-                            if (insert_pos >= (int)new_target.size()) {
-                                new_target.push_back(cust);
-                                new_target.push_back(0);
-                            } else {
-                                new_target.insert(new_target.begin() + insert_pos, cust);
-                            }
-                            
-                            vd new_target_feas = (target_veh < h)
-                                ? check_route_feasibility(new_target, 0.0, true)
-                                : check_route_feasibility(new_target, 0.0, false);
-                            
-                            double new_deadline = initial_solution.deadline_violation 
-                                + (base_route_removed_feas[1] - crit_route_time_feas[1]) 
-                                + (new_target_feas[1] - target_route_feas[1]);
-                            double new_capacity = initial_solution.capacity_violation 
-                                + (base_route_removed_feas[3] - crit_route_time_feas[3]) 
-                                + (new_target_feas[3] - target_route_feas[3]);
-                            double new_energy = initial_solution.energy_violation 
-                                + (base_route_removed_feas[2] - crit_route_time_feas[2]) 
-                                + (new_target_feas[2] - target_route_feas[2]);
-                            
-                            double new_makespan = max({second_max_makespan, base_route_removed_feas[0], new_target_feas[0]});
-                            double new_total_sq = current_total_time_sq 
-                                - (crit_route_time_feas[0]*crit_route_time_feas[0]) + (base_route_removed_feas[0]*base_route_removed_feas[0])
-                                - (target_route_feas[0]*target_route_feas[0]) + (new_target_feas[0]*new_target_feas[0]);
-                            
-                            double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (std::sqrt(new_total_sq) / (h + d) * l2_weight) * pow(pen, PENALTY_EXPONENT);
-                            
-                            bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
-                            
-                            if (is_tabu && !(score + 1e-8 < best_cost && feasible)) return;
-                            
-                            if (score + 1e-8 < best_neighbor_cost_local) {
-                                best_neighbor_cost_local = score;
-                                best_target = target_veh;
-                                best_cust = cust;
-                                best_candidate_neighbor = initial_solution;
-                                if (is_truck_mode) {
-                                    best_candidate_neighbor.truck_routes[critical_vehicle_id] = base_route_removed;
-                                    best_candidate_neighbor.truck_route_times[critical_vehicle_id] = base_route_removed_feas[0];
-                                } else {
-                                    best_candidate_neighbor.drone_routes[critical_vehicle_id - h] = base_route_removed;
-                                    best_candidate_neighbor.drone_route_times[critical_vehicle_id - h] = base_route_removed_feas[0];
-                                }
-                                if (target_veh < h) {
-                                    best_candidate_neighbor.truck_routes[target_veh] = new_target;
-                                    best_candidate_neighbor.truck_route_times[target_veh] = new_target_feas[0];
-                                } else {
-                                    best_candidate_neighbor.drone_routes[target_veh - h] = new_target;
-                                    best_candidate_neighbor.drone_route_times[target_veh - h] = new_target_feas[0];
-                                }
-                                best_candidate_neighbor.deadline_violation = new_deadline;
-                                best_candidate_neighbor.capacity_violation = new_capacity;
-                                best_candidate_neighbor.energy_violation = new_energy;
-                                best_candidate_neighbor.total_makespan = new_makespan;
-                            }
-                        };
-
-                        for (int insert_pos = 1; insert_pos < (int)target_route.size(); ++insert_pos) {
-                            evaluate_inter(insert_pos);
+                        // Insertion Delta
+                        double insertion_dist_delta = 0.0;
+                        if (target_is_truck) {
+                             int prev = current_target_route[p2-1];
+                             int next = current_target_route[p2];
+                             insertion_dist_delta = distance_matrix_manhattan[prev][cust] 
+                                                  + distance_matrix_manhattan[cust][next]
+                                                  - distance_matrix_manhattan[prev][next];
+                        } else {
+                             // Drone: Add Sortie (0->C->0)
+                             insertion_dist_delta = distance_matrix_euclid[0][cust] * 2.0;
                         }
-                        evaluate_inter(target_route.size());
+                        
+                        double insertion_time_delta = insertion_dist_delta / (target_is_truck ? vmax : v_fly_drone);
+                        
+                        // --- 3. Compute New Totals ---
+                        double new_dist_truck = base_truck_dist;
+                        double new_dist_drone = base_drone_dist;
+                        
+                        // Apply Removal
+                        if (is_truck_mode) new_dist_truck += removal_dist_delta;
+                        else new_dist_drone += removal_dist_delta;
+                        
+                        // Apply Insertion
+                        if (target_is_truck) new_dist_truck += insertion_dist_delta;
+                        else new_dist_drone += insertion_dist_delta;
+                        
+                        // Penalties
+                        double cap_delta = 0.0; 
+                        double energy_delta = 0.0;
+                        double time_viol_delta = 0.0;
+
+                        // Capacity Delta
+                        cap_delta += (base_route_removed_feas[3] - crit_route_feas[3]);
+                        if (target_veh != critical_vehicle_id) {
+                            if (target_is_truck) {
+                                double limit = Dh;
+                                double current_load = base_truck_load[target_veh];
+                                double old_viol = max(0.0, (current_load - limit) / limit);
+                                double new_viol = max(0.0, (current_load + demand[cust] - limit) / limit);
+                                cap_delta += (new_viol - old_viol);
+                            } else {
+                                double old_viol = target_route_baseline[3];
+                                double added_viol = max(0.0, (demand[cust] - Dd) / Dd);
+                                double new_viol = old_viol + added_viol;
+                                cap_delta += (new_viol - old_viol);
+                            }
+                        }
+
+                        // Energy Delta (Drones only)
+                        energy_delta += (base_route_removed_feas[2] - crit_route_feas[2]);
+                        if (!target_is_truck) {
+                             double sortie_time = (distance_matrix_euclid[0][cust]*2.0)/v_fly_drone;
+                             double e_viol_add = (sortie_time > E) ? (sortie_time - E)/E : 0.0;
+                             energy_delta += e_viol_add;
+                        }
+
+                        // Time/Deadline Delta:
+                            double base_time_source = is_truck_mode 
+                               ? base_truck_time[critical_vehicle_id]
+                               : base_drone_time[critical_vehicle_id - h];
+                            double new_time_source = base_time_source + removal_time_delta;
+                        
+                            double new_time_target = 0;
+                            if (target_veh == critical_vehicle_id) {
+                                new_time_target = new_time_source + insertion_time_delta; 
+                            } else {
+                                double base_time_target = target_is_truck 
+                                  ? base_truck_time[target_veh]
+                                  : base_drone_time[target_veh - h];
+                                new_time_target = base_time_target + insertion_time_delta;
+                            }
+
+                        // Violations
+                        double src_lim = is_truck_mode ? truck_limit : drone_limit;
+                        double tgt_lim = target_is_truck ? truck_limit : drone_limit;
+                        
+                        // Subtract Old Violations
+                            time_viol_delta -= crit_route_feas[1];
+                            if (target_veh != critical_vehicle_id) {
+                                time_viol_delta -= target_route_baseline[1];
+                            }
+
+                        // Add New Violations
+                        if (target_veh == critical_vehicle_id) {
+                             time_viol_delta += max(0.0, (new_time_target - src_lim)/src_lim);
+                        } else {
+                             time_viol_delta += max(0.0, (new_time_source - src_lim)/src_lim); 
+                             time_viol_delta += max(0.0, (new_time_target - tgt_lim)/tgt_lim); 
+                        }
+
+                        double new_cap_violation = base_capacity_violation + cap_delta;
+                        double new_energy_violation = base_energy_violation + energy_delta;
+                        double new_deadline_violation = base_deadline_violation + time_viol_delta;
+
+                        double penalty = pow(1.0 
+                            + PENALTY_LAMBDA_CAPACITY * max(0.0, new_cap_violation)
+                            + PENALTY_LAMBDA_ENERGY * max(0.0, new_energy_violation)
+                            + PENALTY_LAMBDA_DEADLINE * max(0.0, new_deadline_violation),
+                            PENALTY_EXPONENT);
+
+                        // Pure Cost Score (Cost x Penalty)
+                        double new_score = (new_dist_truck * COST_TRUCK_KM + new_dist_drone * COST_DRONE_KM) * penalty;
+
+                        if (is_tabu && !(new_score + 1e-8 < best_cost && new_deadline_violation < 1e-8 && new_cap_violation < 1e-8)) {
+                            continue;
+                        }
+
+                        if (new_score < best_neighbor_cost_local) {
+                            best_neighbor_cost_local = new_score;
+                            best_cust = cust;
+                            best_target = target_veh;
+                            if (target_is_truck) best_pos = p2;
+                            else best_pos = current_target_route.size(); // Append for drones
+                        }
                     }
                 }
             }
-        };
+        }; 
+
         for (int veh = 0; veh < h + d; ++veh) {
             bool is_truck = veh < h;
-            const vi& route = is_truck ? initial_solution.truck_routes[veh]
-                                       : initial_solution.drone_routes[veh - h];
-            consider_relocate(route, is_truck, veh);
+            const vi& r = is_truck ? initial_solution.truck_routes[veh] : initial_solution.drone_routes[veh-h];
+            if(r.size() > 2 || (!is_truck && r.size() > 1)) // Drones need >1 (default {0}) to have customers
+                consider_relocate(r, is_truck, veh);
         }
 
-        // After evaluating all candidates, update tabu list if we found an improving move
+        if (best_cust != -1) {
+            Solution candidate = initial_solution;
+            // 1. Remove
+            bool found = false;
+            for(int v=0; v<h; ++v) {
+                auto& r = candidate.truck_routes[v];
+                auto it = find(r.begin(), r.end(), best_cust);
+                if(it!=r.end()){ r.erase(it); found=true; break; }
+            }
+            if(!found) {
+                for(int v=0; v<d; ++v) {
+                    auto& r = candidate.drone_routes[v];
+                    auto it = find(r.begin(), r.end(), best_cust);
+                    if(it!=r.end()){ r.erase(it); break; }
+                }
+            }
+
+            // 2. Insert
+            if (best_target < h) {
+                auto& r = candidate.truck_routes[best_target];
+                int pos = max(1, min((int)r.size(), best_pos));
+                r.insert(r.begin()+pos, best_cust);
+            } else {
+                auto& r = candidate.drone_routes[best_target-h];
+                r.push_back(best_cust);
+            }
+
+            // 3. Recalc All (Manually to ensure correctness)
+            candidate.total_distance_truck = 0.0;
+            candidate.total_distance_drone = 0.0;
+            candidate.capacity_violation = 0.0;
+            candidate.deadline_violation = 0.0;
+            candidate.energy_violation = 0.0;
+            candidate.total_time = 0.0;
+
+            for(int v=0; v<h; ++v) {
+            vd m = check_route_feasibility(candidate.truck_routes[v], 0.0, true);
+            candidate.truck_route_times[v] = m[0];
+            candidate.truck_route_cap[v] = accumulate(candidate.truck_routes[v].begin(), candidate.truck_routes[v].end(), 0.0, [&](double sum, int c){ return sum + demand[c]; });
+            candidate.deadline_violation += m[1];
+            candidate.energy_violation += m[2];
+            candidate.capacity_violation += m[3];
+            candidate.total_time += m[0];
+            const auto& r = candidate.truck_routes[v];
+            for(size_t i=0; i+1<r.size(); ++i) 
+                candidate.total_distance_truck += distance_matrix_manhattan[r[i]][r[i+1]];
+            }
+            for(int v=0; v<d; ++v) {
+                vd m = check_route_feasibility(candidate.drone_routes[v], 0.0, false);
+                candidate.drone_route_times[v] = m[0];
+                candidate.drone_route_cap[v] = accumulate(candidate.drone_routes[v].begin(), candidate.drone_routes[v].end(), 0.0, [&](double sum, int c){ return sum + demand[c]; });
+                candidate.deadline_violation += m[1];
+                candidate.energy_violation += m[2];
+                candidate.capacity_violation += m[3];
+                candidate.total_time += m[0];
+                const auto& r = candidate.drone_routes[v];
+                for(int cust_id : r) {
+                    if (cust_id > 0) // Ignore depot if it's in the list
+                        candidate.total_distance_drone += distance_matrix_euclid[0][cust_id] * 2.0;
+                }
+            }
+            best_candidate_neighbor = candidate;
+        }
+
         if (best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            // Update tabu list
-            tabu_list_10[best_cust][best_target] = current_iter + TABU_TENURE_10;
+             best_neighbor = best_candidate_neighbor;
+             best_neighbor_cost = best_neighbor_cost_local;
+             tabu_list_10[best_cust][best_target] = current_iter + TABU_TENURE_10;
         }
-        // Debug:
-        //cout << "[N0] relocate customer " << best_cust << " to vehicle " << best_target << " score: " << solution_score(initial_solution) << " -> " << solution_score(best_neighbor) << "\n";
         return best_neighbor;
-    } else if (neighbor_id == 1) {
-        // Neighborhood 1: swap two customers, allowing cross-mode exchanges
 
-        if ((int)tabu_list_11.size() != n + 1 || (n + 1 > 0 && (int)tabu_list_11[0].size() != n + 1)) {
-            tabu_list_11.assign(n + 1, vector<int>(n + 1, 0));
+    } else if (neighbor_id == 1) {
+        // Ensure tabu_list_10 is n+1 x n+1 (prior N0 may resize inner dim to vehicle count)
+        if ((int)tabu_list_10.size() != n + 1 || ((int)tabu_list_10.size() > 0 && (int)tabu_list_10[0].size() != n + 1)) {
+            tabu_list_10.assign(n + 1, vector<int>(n + 1, 0));
         }
 
         int best_cust_a = -1, best_cust_b = -1;
         int best_pos_a = -1, best_pos_b = -1;
         int best_veh_a = -1, best_veh_b = -1;
-        Solution best_candidate_neighbor = best_neighbor;
         double best_neighbor_cost_local = 1e10;
 
-        //calculate sum of squares of current route times
-        double current_sum_squares = 0.0;
-        for (int veh = 0; veh < h + d; ++veh) {
-            const double& route_times = (veh < h) ? initial_solution.truck_route_times[veh] : initial_solution.drone_route_times[veh - h];
-            current_sum_squares += route_times * route_times;
+        // 1. Pre-calculate metric vectors for all routes
+        vector<vd> route_metrics(h + d);
+        double base_truck_dist = 0.0, base_drone_dist = 0.0;
+        for (int i = 0; i < h; ++i) {
+            route_metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
+            const auto& r = initial_solution.truck_routes[i];
+            for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+        }
+        for (int i = 0; i < d; ++i) {
+            route_metrics[h + i] = check_drone_route_feasibility(initial_solution.drone_routes[i]);
+            const auto& r = initial_solution.drone_routes[i];
+            for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
         }
 
-        auto consider_swap = [&](const vi& base_route, bool is_truck_mode, int critical_vehicle_id) {
-            if (base_route.size() <= 2) return; // nothing to swap
+        // --- 2. Intra-route Swaps (Trucks only) ---
+        for (int v_idx = 0; v_idx < h; ++v_idx) {
+            const auto& route = initial_solution.truck_routes[v_idx];
+            if (route.size() <= 3) continue; // Not enough customers to swap
 
-            vd crit_metrics = is_truck_mode
-                ? check_route_feasibility(base_route, 0.0, true)
-                : check_route_feasibility(base_route, 0.0, false);
+            for (size_t i = 1; i < route.size() - 2; ++i) {
+                for (size_t j = i + 1; j < route.size() - 1; ++j) {
+                    int cust1 = route[i];
+                    int cust2 = route[j];
 
-            vector<int> crit_positions;
-            for (int i = 0; i < (int)base_route.size(); ++i) {
-                if (base_route[i] != 0) crit_positions.push_back(i);
-            }
-            if (crit_positions.empty()) return;
+                    bool is_tabu = tabu_list_10[min(cust1, cust2)][max(cust1, cust2)] > current_iter;
 
-            for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                if (target_veh == critical_vehicle_id) {
-                    // Calculate second makespan excluding critical vehicle
-                    double second_max_makespan = 0.0;
-                    for (int v = 0; v < h + d; ++v) {
-                        if (v != critical_vehicle_id) {
-                            double t = (v < h) ? initial_solution.truck_route_times[v] : initial_solution.drone_route_times[v - h];
-                            second_max_makespan = max(second_max_makespan, t);
-                        }
+                    double delta_dist;
+                    int prev1 = route[i - 1], next1 = route[i + 1];
+                    int prev2 = route[j - 1], next2 = route[j + 1];
+
+                    if (j == i + 1) { // Adjacent
+                        delta_dist = (distance_matrix_manhattan[prev1][cust2] + distance_matrix_manhattan[cust2][cust1] + distance_matrix_manhattan[cust1][next2]) -
+                                     (distance_matrix_manhattan[prev1][cust1] + distance_matrix_manhattan[cust1][cust2] + distance_matrix_manhattan[cust2][next2]);
+                    } else { // Non-adjacent
+                        delta_dist = (distance_matrix_manhattan[prev1][cust2] + distance_matrix_manhattan[cust2][next1] + distance_matrix_manhattan[prev2][cust1] + distance_matrix_manhattan[cust1][next2]) -
+                                     (distance_matrix_manhattan[prev1][cust1] + distance_matrix_manhattan[cust1][next1] + distance_matrix_manhattan[prev2][cust2] + distance_matrix_manhattan[cust2][next2]);
                     }
-                    for (int idx_a = 0; idx_a < (int)crit_positions.size(); ++idx_a) {
-                        int pos_a = crit_positions[idx_a];
-                        int cust_a = base_route[pos_a];
 
-                        for (int idx_b = idx_a + 1; idx_b < (int)crit_positions.size(); ++idx_b) {
-                            int pos_b = crit_positions[idx_b];
-                            int cust_b = base_route[pos_b];
+                    double delta_time = delta_dist / vmax;
+                    auto old_metrics = route_metrics[v_idx];
+                    double new_route_time = old_metrics[0] + delta_time;
+                    
+                    double old_route_viol = old_metrics[1];
+                    double new_route_viol = max(0.0, (new_route_time - truck_limit) / truck_limit);
+                    double total_deadline_viol = initial_solution.deadline_violation - old_route_viol + new_route_viol;
 
-                            if (cust_a == cust_b) continue;
+                    double total_cap_viol = initial_solution.capacity_violation; // No change
+                    double total_energy_viol = initial_solution.energy_violation; // No change
 
-                            // Check tabu status
-                            int u = min(cust_a, cust_b);
-                            int v = max(cust_a, cust_b);
-                            bool is_tabu = (tabu_list_11[u][v] > current_iter);
+                    double new_truck_dist = base_truck_dist + delta_dist;
+                    double penalty = pow(1.0 + PENALTY_LAMBDA_DEADLINE * total_deadline_viol + PENALTY_LAMBDA_CAPACITY * total_cap_viol + PENALTY_LAMBDA_ENERGY * total_energy_viol, PENALTY_EXPONENT);
+                    double cand_cost = (new_truck_dist * COST_TRUCK_KM + base_drone_dist * COST_DRONE_KM) * penalty;
 
-                            // Generate new route with swapped customers
-                            vi new_crit_route = base_route;
-                            new_crit_route[pos_a] = cust_b;
-                            new_crit_route[pos_b] = cust_a;
-
-                            vd new_crit_metrics = is_truck_mode
-                                ? check_route_feasibility(new_crit_route, 0.0, true)
-                                : check_route_feasibility(new_crit_route, 0.0, false);
-
-                            // Delta evaluation
-                            double new_deadline = initial_solution.deadline_violation
-                                + (new_crit_metrics[1] - crit_metrics[1]);
-                            double new_capacity = initial_solution.capacity_violation
-                                + (new_crit_metrics[3] - crit_metrics[3]);
-                            double new_energy = initial_solution.energy_violation
-                                + (new_crit_metrics[2] - crit_metrics[2]);
-                            double new_makespan = max(second_max_makespan, new_crit_metrics[0]);
-                            double new_sum_squares = current_sum_squares
-                                - (crit_metrics[0] * crit_metrics[0]) + (new_crit_metrics[0] * new_crit_metrics[0]);
-                            double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                            double score = (std::sqrt(new_sum_squares)) * pow(pen, PENALTY_EXPONENT);
-                            bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
-                            if (is_tabu && !(score + 1e-8 < best_cost && feasible)) continue;
-                            if (score + 1e-8 < best_neighbor_cost_local) {
-                                best_neighbor_cost_local = score;
-                                best_cust_a = cust_a;
-                                best_cust_b = cust_b;
-                                best_pos_a = pos_a;
-                                best_pos_b = pos_b;
-                                best_veh_a = critical_vehicle_id;
-                                best_veh_b = critical_vehicle_id;
-                            }
-                        }
-                    }
-                }
-
-                if (target_veh == critical_vehicle_id) continue;
-
-                const vi& target_route = (target_veh < h) ? initial_solution.truck_routes[target_veh] : initial_solution.drone_routes[target_veh - h];
-                if (target_route.size() <= 2) continue;
-
-                // Calculate third makespan excluding critical and target vehicles
-                double third_max_makespan = 0.0;
-                for (int v = 0; v < h + d; ++v) {
-                    if (v != critical_vehicle_id && v != target_veh) {
-                        double t = (v < h) ? initial_solution.truck_route_times[v] : initial_solution.drone_route_times[v - h];
-                        third_max_makespan = max(third_max_makespan, t);
-                    }
-                }
-
-                vd target_metrics = (target_veh < h)
-                    ? check_route_feasibility(target_route, 0.0, true)
-                    : check_route_feasibility(target_route, 0.0, false);
-
-                vector<int> target_positions;
-                for (int i = 0; i < (int)target_route.size(); ++i) {
-                    if (target_route[i] != 0) target_positions.push_back(i);
-                }
-                if (target_positions.empty()) continue;
-
-                for (int idx_a = 0; idx_a < (int)crit_positions.size(); ++idx_a) {
-                    int pos_a = crit_positions[idx_a];
-                    int cust_a = base_route[pos_a];
-
-                    for (int idx_b = 0; idx_b < (int)target_positions.size(); ++idx_b) {
-                        int pos_b = target_positions[idx_b];
-                        int cust_b = target_route[pos_b];
-
-                        if (cust_a == cust_b) continue;
-
-                        if (served_by_drone[cust_a] == 0 && target_veh >= h) continue; // cannot assign cust_a to drone
-                        if (served_by_drone[cust_b] == 0 && critical_vehicle_id >= h) continue; // cannot assign cust_b to drone
-
-                        // Check tabu status
-                        int u = min(cust_a, cust_b);
-                        int v = max(cust_a, cust_b);
-                        bool is_tabu = (tabu_list_11[u][v] > current_iter);
-
-                        // Generate new routes with swapped customers
-                        vi new_crit_route = base_route;
-                        vi new_target_route = target_route;
-                        new_crit_route[pos_a] = cust_b;
-                        new_target_route[pos_b] = cust_a;
-
-                        vd new_crit_metrics = is_truck_mode
-                            ? check_route_feasibility(new_crit_route, 0.0, true)
-                            : check_route_feasibility(new_crit_route, 0.0, false);
-                        vd new_target_metrics = (target_veh < h)
-                            ? check_route_feasibility(new_target_route, 0.0, true)
-                            : check_route_feasibility(new_target_route, 0.0, false);
-
-                        // Delta evaluation
-                        double new_deadline = initial_solution.deadline_violation
-                            + (new_crit_metrics[1] - crit_metrics[1])
-                            + (new_target_metrics[1] - target_metrics[1]);
-                        double new_capacity = initial_solution.capacity_violation
-                            + (new_crit_metrics[3] - crit_metrics[3])
-                            + (new_target_metrics[3] - target_metrics[3]);
-                        double new_energy = initial_solution.energy_violation
-                            + (new_crit_metrics[2] - crit_metrics[2])
-                            + (new_target_metrics[2] - target_metrics[2]);
-                        double new_makespan = max({third_max_makespan, new_crit_metrics[0], new_target_metrics[0]});
-                        double new_sum_squares = current_sum_squares
-                            - (crit_metrics[0] * crit_metrics[0]) + (new_crit_metrics[0] * new_crit_metrics[0])
-                            - (target_metrics[0] * target_metrics[0]) + (new_target_metrics[0] * new_target_metrics[0]);
-                        double pen = 1.0 + PENALTY_LAMBDA_CAPACITY * new_capacity + PENALTY_LAMBDA_ENERGY * new_energy + PENALTY_LAMBDA_DEADLINE * new_deadline;
-                        double score = (std::sqrt(new_sum_squares) / (h + d)) * pow(pen, PENALTY_EXPONENT);
-                        bool feasible = new_deadline <= 1e-8 && new_capacity <= 1e-8 && new_energy <= 1e-8;
-                        if (is_tabu && !(score + 1e-8 < best_cost && feasible)) continue;
-                        if (score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = score;
-                            best_cust_a = cust_a;
-                            best_cust_b = cust_b;
-                            best_pos_a = pos_a;
-                            best_pos_b = pos_b;
-                            best_veh_a = critical_vehicle_id;
-                            best_veh_b = target_veh;
-                        }
+                    if (is_tabu && !(cand_cost + 1e-8 < best_cost && total_deadline_viol < 1e-8 && total_cap_viol < 1e-8)) continue;
+                    
+                    if (cand_cost < best_neighbor_cost_local) {
+                        best_neighbor_cost_local = cand_cost;
+                        best_cust_a = cust1; best_cust_b = cust2;
+                        best_pos_a = i; best_pos_b = j;
+                        best_veh_a = v_idx; best_veh_b = v_idx;
                     }
                 }
             }
-        };
-
-        for (int veh = 0; veh < h + d; ++veh) {
-            bool is_truck = veh < h;
-            const vi& route = is_truck ? initial_solution.truck_routes[veh]
-                                       : initial_solution.drone_routes[veh - h];
-            consider_swap(route, is_truck, veh);
         }
 
-        // Construct best neighbor if found
-        if (best_cust_a != -1 && best_cust_b != -1) {
-            Solution candidate = initial_solution;
-            vd old_metric_a = (best_veh_a < h)
-                ? check_route_feasibility(initial_solution.truck_routes[best_veh_a], 0.0, true)
-                : check_route_feasibility(initial_solution.drone_routes[best_veh_a - h], 0.0, false);
-            vd old_metric_b = (best_veh_b < h)
-                ? check_route_feasibility(initial_solution.truck_routes[best_veh_b], 0.0, true)
-                : check_route_feasibility(initial_solution.drone_routes[best_veh_b - h], 0.0, false);
-            if (best_veh_a == best_veh_b) {
-                // Same vehicle swap
-                bool is_truck = best_veh_a < h;
-                vi new_route = is_truck ? candidate.truck_routes[best_veh_a]
-                                        : candidate.drone_routes[best_veh_a - h];
-                new_route[best_pos_a] = best_cust_b;
-                new_route[best_pos_b] = best_cust_a;
-                vd new_metrics = is_truck
-                    ? check_route_feasibility(new_route, 0.0, true)
-                    : check_route_feasibility(new_route, 0.0, false);
-                if (is_truck) {
-                    candidate.truck_routes[best_veh_a] = new_route;
-                    candidate.truck_route_times[best_veh_a] = new_metrics[0];
-                } else {
-                    candidate.drone_routes[best_veh_a - h] = new_route;
-                    candidate.drone_route_times[best_veh_a - h] = new_metrics[0];
-                }
-                candidate.deadline_violation += (new_metrics[1] - old_metric_a[1]);
-                candidate.capacity_violation += (new_metrics[3] - old_metric_a[3]);
-                candidate.energy_violation += (new_metrics[2] - old_metric_a[2]);
-                candidate.total_makespan = 0.0;
-                for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-            } else {
-                // Different vehicle swap
-                bool is_truck_a = best_veh_a < h;
-                bool is_truck_b = best_veh_b < h;
+        // --- 3. Inter-route Swaps ---
+        for (int v_idx_a = 0; v_idx_a < h + d; ++v_idx_a) {
+            bool is_truck_a = v_idx_a < h;
+            const auto& route_a = is_truck_a ? initial_solution.truck_routes[v_idx_a] : initial_solution.drone_routes[v_idx_a - h];
+            if (route_a.empty() || (is_truck_a && route_a.size() <= 2)) continue;
 
-                vi route_a = is_truck_a ? candidate.truck_routes[best_veh_a]
-                                        : candidate.drone_routes[best_veh_a - h];
-                vi route_b = is_truck_b ? candidate.truck_routes[best_veh_b]
-                                        : candidate.drone_routes[best_veh_b - h];
-                route_a[best_pos_a] = best_cust_b;
-                route_b[best_pos_b] = best_cust_a;
-                vd new_metrics_a = is_truck_a
-                    ? check_route_feasibility(route_a, 0.0, true)
-                    : check_route_feasibility(route_a, 0.0, false);
-                vd new_metrics_b = is_truck_b
-                    ? check_route_feasibility(route_b, 0.0, true)
-                    : check_route_feasibility(route_b, 0.0, false);
-                if (is_truck_a) {
-                    candidate.truck_routes[best_veh_a] = route_a;
-                    candidate.truck_route_times[best_veh_a] = new_metrics_a[0];
-                } else {
-                    candidate.drone_routes[best_veh_a - h] = route_a;
-                    candidate.drone_route_times[best_veh_a - h] = new_metrics_a[0];
+            for (int v_idx_b = v_idx_a + 1; v_idx_b < h + d; ++v_idx_b) {
+                bool is_truck_b = v_idx_b < h;
+                const auto& route_b = is_truck_b ? initial_solution.truck_routes[v_idx_b] : initial_solution.drone_routes[v_idx_b - h];
+                if (route_b.empty() || (is_truck_b && route_b.size() <= 2)) continue;
+
+                for (size_t i = (is_truck_a ? 1 : 0); i < (is_truck_a ? route_a.size() - 1 : route_a.size()); ++i) {
+                    for (size_t j = (is_truck_b ? 1 : 0); j < (is_truck_b ? route_b.size() - 1 : route_b.size()); ++j) {
+                        int cust1 = route_a[i];
+                        int cust2 = route_b[j];
+
+                        if (cust1 == 0 || cust2 == 0) continue;
+                        bool is_tabu = tabu_list_10[min(cust1, cust2)][max(cust1, cust2)] > current_iter;
+                        if (!is_truck_a && served_by_drone[cust2] == 0) continue;
+                        if (!is_truck_b && served_by_drone[cust1] == 0) continue;
+
+                        double delta_truck_dist = 0.0, delta_drone_dist = 0.0;
+                        double delta_time_a = 0.0, delta_time_b = 0.0;
+                        double delta_cap_viol = 0.0, delta_energy_viol = 0.0;
+
+                        // --- Distance & Time Deltas ---
+                        if (is_truck_a) {
+                            double dist_change = (distance_matrix_manhattan[route_a[i-1]][cust2] + distance_matrix_manhattan[cust2][route_a[i+1]])
+                                               - (distance_matrix_manhattan[route_a[i-1]][cust1] + distance_matrix_manhattan[cust1][route_a[i+1]]);
+                            delta_truck_dist += dist_change; delta_time_a = dist_change / vmax;
+                        } else {
+                            double dist_change = (distance_matrix_euclid[0][cust2] * 2.0) - (distance_matrix_euclid[0][cust1] * 2.0);
+                            delta_drone_dist += dist_change; delta_time_a = dist_change / v_fly_drone;
+                        }
+                        if (is_truck_b) {
+                            double dist_change = (distance_matrix_manhattan[route_b[j-1]][cust1] + distance_matrix_manhattan[cust1][route_b[j+1]])
+                                               - (distance_matrix_manhattan[route_b[j-1]][cust2] + distance_matrix_manhattan[cust2][route_b[j+1]]);
+                            delta_truck_dist += dist_change; delta_time_b = dist_change / vmax;
+                        } else {
+                            double dist_change = (distance_matrix_euclid[0][cust1] * 2.0) - (distance_matrix_euclid[0][cust2] * 2.0);
+                            delta_drone_dist += dist_change; delta_time_b = dist_change / v_fly_drone;
+                        }
+
+                        // --- Capacity Violation Delta ---
+                        double demand_diff = demand[cust1] - demand[cust2];
+
+                        if (is_truck_a) {
+                            double old_load_a = initial_solution.truck_route_cap[v_idx_a];
+                            double new_load_a = old_load_a - demand_diff;
+                            double limit_a = Dh;
+                            delta_cap_viol += max(0.0, (new_load_a - limit_a) / limit_a) - max(0.0, (old_load_a - limit_a) / limit_a);
+                        } else {
+                            double cap_old = max(0.0, (demand[cust1] - Dd) / Dd);
+                            double cap_new = max(0.0, (demand[cust2] - Dd) / Dd);
+                            delta_cap_viol += (cap_new - cap_old);
+                        }
+
+                        if (is_truck_b) {
+                            double old_load_b = initial_solution.truck_route_cap[v_idx_b];
+                            double new_load_b = old_load_b + demand_diff;
+                            double limit_b = Dh;
+                            delta_cap_viol += max(0.0, (new_load_b - limit_b) / limit_b) - max(0.0, (old_load_b - limit_b) / limit_b);
+                        } else {
+                            double cap_old = max(0.0, (demand[cust2] - Dd) / Dd);
+                            double cap_new = max(0.0, (demand[cust1] - Dd) / Dd);
+                            delta_cap_viol += (cap_new - cap_old);
+                        }
+
+                        // --- Deadline & Energy Violation Delta ---
+                        auto old_metrics_a = route_metrics[v_idx_a], old_metrics_b = route_metrics[v_idx_b];
+                        double new_time_a = old_metrics_a[0] + delta_time_a, new_time_b = old_metrics_b[0] + delta_time_b;
+                        double limit_time_a = is_truck_a ? truck_limit : drone_limit, limit_time_b = is_truck_b ? truck_limit : drone_limit;
+                        double delta_deadline_viol = (max(0.0, (new_time_a - limit_time_a) / limit_time_a) - old_metrics_a[1]) + (max(0.0, (new_time_b - limit_time_b) / limit_time_b) - old_metrics_b[1]);
+                        
+                        if (!is_truck_a) {
+                            double e_old = max(0.0, ((distance_matrix_euclid[0][cust1] * 2.0) / v_fly_drone - E) / E);
+                            double e_new = max(0.0, ((distance_matrix_euclid[0][cust2] * 2.0) / v_fly_drone - E) / E);
+                            delta_energy_viol += (e_new - e_old);
+                        }
+                        if (!is_truck_b) {
+                            double e_old = max(0.0, ((distance_matrix_euclid[0][cust2] * 2.0) / v_fly_drone - E) / E);
+                            double e_new = max(0.0, ((distance_matrix_euclid[0][cust1] * 2.0) / v_fly_drone - E) / E);
+                            delta_energy_viol += (e_new - e_old);
+                        }
+
+                        // --- Final Score ---
+                        double total_deadline_viol = initial_solution.deadline_violation + delta_deadline_viol;
+                        double total_cap_viol = initial_solution.capacity_violation + delta_cap_viol;
+                        double total_energy_viol = initial_solution.energy_violation + delta_energy_viol;
+                        double new_truck_dist = base_truck_dist + delta_truck_dist;
+                        double new_drone_dist = base_drone_dist + delta_drone_dist;
+
+                        double penalty = pow(1.0 + PENALTY_LAMBDA_DEADLINE * total_deadline_viol + PENALTY_LAMBDA_CAPACITY * total_cap_viol + PENALTY_LAMBDA_ENERGY * total_energy_viol, PENALTY_EXPONENT);
+                        double cand_cost = (new_truck_dist * COST_TRUCK_KM + new_drone_dist * COST_DRONE_KM) * penalty;
+
+                        bool is_feasible_cand = total_deadline_viol < 1e-8 && total_cap_viol < 1e-8 && total_energy_viol < 1e-8;
+                        if (is_tabu && !(cand_cost + 1e-8 < best_cost && is_feasible_cand)) continue;
+
+                        if (cand_cost < best_neighbor_cost_local) {
+                            best_neighbor_cost_local = cand_cost;
+                            best_cust_a = cust1; best_cust_b = cust2;
+                            best_pos_a = i; best_pos_b = j;
+                            best_veh_a = v_idx_a; best_veh_b = v_idx_b;
+                        }
+                    }
                 }
-                if (is_truck_b) {
-                    candidate.truck_routes[best_veh_b] = route_b;
-                    candidate.truck_route_times[best_veh_b] = new_metrics_b[0];
-                } else {
-                    candidate.drone_routes[best_veh_b - h] = route_b;
-                    candidate.drone_route_times[best_veh_b - h] = new_metrics_b[0];
-                }
-                candidate.deadline_violation += (new_metrics_a[1] - old_metric_a[1]) + (new_metrics_b[1] - old_metric_b[1]);
-                candidate.capacity_violation += (new_metrics_a[3] - old_metric_a[3]) + (new_metrics_b[3] - old_metric_b[3]);
-                candidate.energy_violation += (new_metrics_a[2] - old_metric_a[2]) + (new_metrics_b[2] - old_metric_b[2]);
-                candidate.total_makespan = 0.0;
-                for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
             }
-            best_candidate_neighbor = candidate;
         }
+
+        // --- Apply the best move found ---
+        if (best_cust_a != -1) {
+            best_neighbor = initial_solution;
+            if (best_veh_a == best_veh_b) { // Intra-route
+                swap(best_neighbor.truck_routes[best_veh_a][best_pos_a], best_neighbor.truck_routes[best_veh_a][best_pos_b]);
+            } else { // Inter-route
+                (best_veh_a < h ? best_neighbor.truck_routes[best_veh_a] : best_neighbor.drone_routes[best_veh_a - h])[best_pos_a] = best_cust_b;
+                (best_veh_b < h ? best_neighbor.truck_routes[best_veh_b] : best_neighbor.drone_routes[best_veh_b - h])[best_pos_b] = best_cust_a;
+            }
             
-
-        if (best_cust_a != -1 && best_cust_b != -1 && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            int u = min(best_cust_a, best_cust_b);
-            int v = max(best_cust_a, best_cust_b);
-            tabu_list_11[u][v] = current_iter + TABU_TENURE_11;
-
-            // Debug: print swap info
-             /* cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            cout << "[N1] swap " << best_cust_a << " and " << best_cust_b
-                 << ", score: " << solution_score_total_time(initial_solution)
-                 << " -> " << best_neighbor_cost_local
-                 << ", iter " << current_iter << "\n"; */
-
-            return best_neighbor;
+            best_neighbor = recalculate_solution(best_neighbor);
+            
+            if (solution_cost(best_neighbor) < best_neighbor_cost) {
+                 best_neighbor_cost = solution_cost(best_neighbor);
+                 tabu_list_10[min(best_cust_a, best_cust_b)][max(best_cust_a, best_cust_b)] = current_iter + TABU_TENURE_10;
+                 return best_neighbor;
+            }
         }
         return initial_solution;
-
     } else if (neighbor_id == 2) {
-        // Neighborhood 2: relocate a consecutive pair (2,0)-move from the critical vehicle to another vehicle
-        // Structure mirrors neighborhood 0: identify critical vehicle, enumerate candidate relocations,
-        // respect tabu_list_20 keyed by (min(c1,c2), max(c1,c2), target_vehicle).
+         // N2: Relocate two ADJACENT customers from ANY vehicle to ANY vehicle
+        int veh_count = h + d;
 
-        // Prepare best tracking
-        Solution best_candidate_neighbor = initial_solution;
+        int best_cust1 = -1, best_cust2 = -1;
+        int best_target_veh = -1;
+        int best_pos = -1;
         double best_neighbor_cost_local = 1e10;
-        int best_c1 = -1, best_c2 = -1;
-        int best_target_vehicle = -1;
-        int best_src_pos = -1, best_target_pos = -1;
 
-        auto consider_relocate_pair = [&](const vi& base_route, bool is_truck_mode, int critical_vehicle_id) {
-            if (base_route.size() <= 3) return; // nothing to do if fewer than two customers
+        // 1. Pre-calculate metric vectors for all routes
+        vector<vd> route_metrics(h + d);
+        double base_truck_dist = 0.0, base_drone_dist = 0.0;
+        vd total_capacity_truck(h, 0.0);
+        for (int i = 0; i < h; ++i) {
+            route_metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
+            const auto& r = initial_solution.truck_routes[i];
+            for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+            if (!r.empty() && r.back() != 0) base_truck_dist += distance_matrix_manhattan[r.back()][0];
+            for (int c : r) total_capacity_truck[i] += demand[c];
+        }
+        for (int i = 0; i < d; ++i) {
+            route_metrics[h + i] = check_drone_route_feasibility(initial_solution.drone_routes[i]);
+            const auto& r = initial_solution.drone_routes[i];
+            for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
+        }
 
-            auto normalize_route = [](const vi& route) -> vi {
-                vi normalized;
-                for (int node : route) {
-                    if (normalized.empty() || node != 0 || normalized.back() != 0) normalized.push_back(node);
-                }
-                if (normalized.empty()) return vi{0};
-                if (normalized.front() != 0) normalized.insert(normalized.begin(), 0);
-                if (normalized.back() != 0) normalized.push_back(0);
-                return normalized;
-            };
+        for (int v1 = 0; v1 < h + d; ++v1) {
+            bool is_v1_truck = v1 < h;
+            const auto& r1 = is_v1_truck ? initial_solution.truck_routes[v1] : initial_solution.drone_routes[v1 - h];
 
-            vi orig = normalize_route(base_route);
-            if (orig.size() <= 3) return;
-            vd orig_metrics = is_truck_mode
-                ? check_route_feasibility(orig, 0.0, true)
-                : check_route_feasibility(orig, 0.0, false);
+            // Adjacency is defined by position in the route list for both trucks and drones.
+            // Truck: [0, c1, c2, c3, 0]. Drone: [0, c1, c2, c3]
+            size_t start_idx = is_v1_truck ? 1 : 0;
+            if (r1.size() < start_idx + 2 + (is_v1_truck ? 1 : 0)) continue; // Not enough customers for a pair
 
-            vector<int> pos;
-            for (int i = 0; i + 1 < (int)orig.size(); ++i) {
-                if (orig[i] != 0 && orig[i + 1] != 0) pos.push_back(i);
-            }
-            if (pos.empty()) return;
+            for (size_t i = start_idx; i < r1.size() - 1 - (is_v1_truck ? 1 : 0); ++i) {
+                int cust1 = r1[i];
+                int cust2 = r1[i+1];
+                if (cust1 == 0 || cust2 == 0) continue;
 
-            auto apply_candidate = [&](const vi& crit_route, const vd& crit_metrics_local,
-                                      const optional<pair<int, vi>>& target_change) {
-                Solution candidate = initial_solution;
-                candidate.deadline_violation += crit_metrics_local[1] - orig_metrics[1];
-                candidate.capacity_violation += crit_metrics_local[3] - orig_metrics[3];
-                candidate.energy_violation += crit_metrics_local[2] - orig_metrics[2];
-                if (is_truck_mode) {
-                    candidate.truck_routes[critical_vehicle_id] = crit_route;
-                    candidate.truck_route_times[critical_vehicle_id] = (crit_route.size() > 1) ? crit_metrics_local[0] : 0.0;
-                } else {
-                    candidate.drone_routes[critical_vehicle_id - h] = crit_route;
-                    candidate.drone_route_times[critical_vehicle_id - h] = (crit_route.size() > 1) ? crit_metrics_local[0] : 0.0;
-                }
+                // --- 1. Removal Delta ---
+                double removal_dist_delta = 0.0;
+                double removal_time_delta = 0.0;
+                
+                vi r1_removed = r1;
+                r1_removed.erase(r1_removed.begin() + i, r1_removed.begin() + i + 2);
 
-                if (target_change.has_value()) {
-                    int target_vehicle = target_change->first;
-                    const vi& new_target_route = target_change->second;
-                    bool target_is_truck = target_vehicle < h;
-                    vd target_metrics_before = target_is_truck
-                        ? check_route_feasibility(target_is_truck ? initial_solution.truck_routes[target_vehicle]
-                                                                 : initial_solution.drone_routes[target_vehicle - h], 0.0, target_is_truck)
-                        : check_route_feasibility(initial_solution.drone_routes[target_vehicle - h], 0.0, false);
-                    vd target_metrics_after = target_is_truck
-                        ? check_route_feasibility(new_target_route, 0.0, true)
-                        : check_route_feasibility(new_target_route, 0.0, false);
-                    candidate.deadline_violation += target_metrics_after[1] - target_metrics_before[1];
-                    candidate.capacity_violation += target_metrics_after[3] - target_metrics_before[3];
-                    candidate.energy_violation += target_metrics_after[2] - target_metrics_before[2];
-                    if (target_is_truck) {
-                        candidate.truck_routes[target_vehicle] = new_target_route;
-                        candidate.truck_route_times[target_vehicle] = (new_target_route.size() > 1) ? target_metrics_after[0] : 0.0;
-                    } else {
-                        candidate.drone_routes[target_vehicle - h] = new_target_route;
-                        candidate.drone_route_times[target_vehicle - h] = (new_target_route.size() > 1) ? target_metrics_after[0] : 0.0;
-                    }
+                vd r1_orig_feas = check_route_feasibility(r1, 0.0, is_v1_truck);
+                vd r1_removed_feas = check_route_feasibility(r1_removed, 0.0, is_v1_truck);
+                removal_time_delta = r1_removed_feas[0] - r1_orig_feas[0];
+                if (is_v1_truck) {
+                    int prev = r1[i-1];
+                    int next = (i + 2 < r1.size()) ? r1[i+2] : 0; // Fallback to depot if missing
+                    removal_dist_delta = distance_matrix_manhattan[prev][next]
+                                       - distance_matrix_manhattan[prev][cust1]
+                                       - distance_matrix_manhattan[cust1][cust2]
+                                       - distance_matrix_manhattan[cust2][next];
+                } else { // Drone
+                    removal_dist_delta = -(distance_matrix_euclid[0][cust1] * 2.0 + distance_matrix_euclid[0][cust2] * 2.0);
                 }
 
-                candidate.total_makespan = 0.0;
-                for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                for (double tt : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, tt);
-                return candidate;
-            };
+                double tmp_total_dist_truck = base_truck_dist;
+                double tmp_total_dist_drone = base_drone_dist;
+                if (is_v1_truck) tmp_total_dist_truck += removal_dist_delta;
+                else tmp_total_dist_drone += removal_dist_delta;
 
-            for (int p : pos) {
-                int c1 = orig[p];
-                int c2 = orig[p + 1];
+                for (int v2 = 0; v2 < h + d; ++v2) {
+                    bool is_v2_truck = v2 < h;
+                    if ((!served_by_drone[cust1] || !served_by_drone[cust2]) && !is_v2_truck) continue;
+                    // If both are drones, they must go to separate vehicles
+                    if (!is_v2_truck && v1 == v2) continue;
 
-                vi reduced = orig;
-                reduced.erase(reduced.begin() + p, reduced.begin() + p + 2);
-                reduced = normalize_route(reduced);
-                vd reduced_metrics = is_truck_mode
-                    ? check_route_feasibility(reduced, 0.0, true)
-                    : check_route_feasibility(reduced, 0.0, false);
+                    vector<int> tabu_key = {cust1, cust2, v2};
+                    bool is_tabu = (tabu_list_20.count(tabu_key) && tabu_list_20[tabu_key] > current_iter);
+                    
+                    const auto& r2_base = (v1 == v2) ? r1_removed : (is_v2_truck ? initial_solution.truck_routes[v2] : initial_solution.drone_routes[v2-h]);
+                    int loop_end = is_v2_truck ? r2_base.size() : 1;
 
-                for (int ip = 1; ip <= (int)reduced.size(); ++ip) {
-                    vi r = reduced;
-                    r.insert(r.begin() + ip, c1);
-                    r.insert(r.begin() + ip + 1, c2);
-                    vi r_norm = normalize_route(r);
-                    if (r_norm == orig) continue;
+                    for (int p_insert = 1; p_insert <= loop_end; ++p_insert) {
+                        if (is_v2_truck && p_insert >= r2_base.size() && r2_base.size() > 1) continue;
 
-                    vd new_metrics = is_truck_mode
-                        ? check_route_feasibility(r_norm, 0.0, true)
-                        : check_route_feasibility(r_norm, 0.0, false);
-                    Solution candidate = apply_candidate(r_norm, new_metrics, nullopt);
-
-                    vector<int> key = { min(c1, c2), max(c1, c2), critical_vehicle_id };
-                    auto it = tabu_list_20.find(key);
-                    bool is_tabu = (it != tabu_list_20.end() && it->second > current_iter);
-                    double candidate_score = solution_cost(candidate);
-                    bool candidate_feasible = candidate.deadline_violation <= 1e-8 &&
-                                               candidate.capacity_violation <= 1e-8 &&
-                                               candidate.energy_violation <= 1e-8;
-                    if (is_tabu && !(candidate_score + 1e-8 < best_cost && candidate_feasible)) continue;
-
-                    if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                        best_neighbor_cost_local = candidate_score;
-                        best_candidate_neighbor = candidate;
-                        best_c1 = c1; best_c2 = c2;
-                        best_target_vehicle = critical_vehicle_id;
-                        best_src_pos = p;
-                        best_target_pos = ip;
-                    }
-                }
-
-                for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                    if (target_veh == critical_vehicle_id) continue;
-                    bool target_is_truck = target_veh < h;
-                    vi target_route = target_is_truck
-                        ? initial_solution.truck_routes[target_veh]
-                        : initial_solution.drone_routes[target_veh - h];
-                    if (!target_is_truck && (served_by_drone[c1] == 0 || served_by_drone[c2] == 0)) continue;
-                    target_route = normalize_route(target_route);
-
-                    for (int insert_pos = 1; insert_pos <= (int)target_route.size(); ++insert_pos) {
-                        vi new_target = target_route;
-                        new_target.insert(new_target.begin() + insert_pos, c1);
-                        new_target.insert(new_target.begin() + insert_pos + 1, c2);
-                        new_target = normalize_route(new_target);
-
-                        Solution candidate = initial_solution;
-                        candidate.deadline_violation = initial_solution.deadline_violation;
-                        candidate.capacity_violation = initial_solution.capacity_violation;
-                        candidate.energy_violation = initial_solution.energy_violation;
-
-                        // build candidate with reduced critical route + modified target route
-                        vd crit_metrics_ready = reduced_metrics;
-                        vd target_metrics_new = target_is_truck
-                            ? check_route_feasibility(new_target, 0.0, true)
-                            : check_route_feasibility(new_target, 0.0, false);
-                        vd target_metrics_old = target_is_truck
-                            ? check_route_feasibility(target_route, 0.0, true)
-                            : check_route_feasibility(target_route, 0.0, false);
-
-                        candidate.deadline_violation += crit_metrics_ready[1] - orig_metrics[1];
-                        candidate.deadline_violation += target_metrics_new[1] - target_metrics_old[1];
-                        candidate.capacity_violation += crit_metrics_ready[3] - orig_metrics[3];
-                        candidate.capacity_violation += target_metrics_new[3] - target_metrics_old[3];
-                        candidate.energy_violation += crit_metrics_ready[2] - orig_metrics[2];
-                        candidate.energy_violation += target_metrics_new[2] - target_metrics_old[2];
-
-                        if (is_truck_mode) {
-                            candidate.truck_routes[critical_vehicle_id] = reduced;
-                            candidate.truck_route_times[critical_vehicle_id] = (reduced.size() > 1) ? crit_metrics_ready[0] : 0.0;
-                        } else {
-                            candidate.drone_routes[critical_vehicle_id - h] = reduced;
-                            candidate.drone_route_times[critical_vehicle_id - h] = (reduced.size() > 1) ? crit_metrics_ready[0] : 0.0;
-                        }
-                        if (target_is_truck) {
-                            candidate.truck_routes[target_veh] = new_target;
-                            candidate.truck_route_times[target_veh] = (new_target.size() > 1) ? target_metrics_new[0] : 0.0;
-                        } else {
-                            candidate.drone_routes[target_veh - h] = new_target;
-                            candidate.drone_route_times[target_veh - h] = (new_target.size() > 1) ? target_metrics_new[0] : 0.0;
+                        // --- 2. Insertion Delta ---
+                        double insertion_dist_delta = 0.0;
+                        double insertion_time_delta = 0.0;
+                        if (is_v2_truck) {
+                            if (r2_base.empty()) continue; // No depot to attach to
+                            int prev = r2_base[p_insert - 1];
+                            int next = (p_insert < (int)r2_base.size()) ? r2_base[p_insert] : 0; // Fallback depot if route has no trailing depot
+                            insertion_dist_delta = distance_matrix_manhattan[prev][cust1]
+                                                 + distance_matrix_manhattan[cust1][cust2]
+                                                 + distance_matrix_manhattan[cust2][next]
+                                                 - distance_matrix_manhattan[prev][next];
+                            insertion_time_delta = insertion_dist_delta / vmax;
+                        } else { // Drone
+                            insertion_dist_delta = distance_matrix_euclid[0][cust1] * 2.0 + distance_matrix_euclid[0][cust2] * 2.0;
+                            insertion_time_delta = insertion_dist_delta / v_fly_drone;
                         }
 
-                        candidate.total_makespan = 0.0;
-                        for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                        for (double tt : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, tt);
+                        // --- 3. Cost & Penalty Deltas ---
+                        double new_dist_truck = tmp_total_dist_truck;
+                        double new_dist_drone = tmp_total_dist_drone;
+                        if (is_v2_truck) new_dist_truck += insertion_dist_delta;
+                        else new_dist_drone += insertion_dist_delta;
 
-                        vector<int> key = { min(c1, c2), max(c1, c2), target_veh };
-                        auto it = tabu_list_20.find(key);
-                        bool is_tabu = (it != tabu_list_20.end() && it->second > current_iter);
-                        double candidate_score = solution_cost(candidate);
-                        bool feasible = candidate.deadline_violation <= 1e-8 &&
-                                         candidate.capacity_violation <= 1e-8 &&
-                                         candidate.energy_violation <= 1e-8;
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost && feasible)) continue;
+                        // Violations
+                        double base_cap_violation = initial_solution.capacity_violation;
+                        double base_energy_violation = initial_solution.energy_violation;
+                        double base_deadline_violation = initial_solution.deadline_violation;
+                        double cap_delta = 0.0, energy_delta = 0.0, time_viol_delta = 0.0;
 
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_c1 = c1; best_c2 = c2;
-                            best_target_vehicle = target_veh;
-                            best_src_pos = p;
-                            best_target_pos = insert_pos;
+                        if (v1 == v2){
+                            // Same vehicle: cap_violation and energy_violation not changed
+                            // Only deadline violation changes
+                            double old_viol = route_metrics[v1][1];
+                            double new_route_time = route_metrics[v1][0] + removal_time_delta + insertion_time_delta;
+                            double new_viol = max(0.0, (new_route_time - (is_v1_truck ? truck_limit : drone_limit)) / (is_v1_truck ? truck_limit : drone_limit));
+                            time_viol_delta += (new_viol - old_viol);
+                        }
+                        else {
+                            // Capacity & Energy Violation Delta
+                            cap_delta = r1_removed_feas[3] - r1_orig_feas[3];
+                            if (is_v2_truck) {
+                                double old_load = total_capacity_truck[v2];
+                                double new_load = old_load + demand[cust1] + demand[cust2];
+                                double limit = Dh;
+                                double old_viol = max(0.0, (old_load - limit) / limit);
+                                double new_viol = max(0.0, (new_load - limit) / limit);
+                                cap_delta += (new_viol - old_viol);
+                            }
+                            else {
+                                // This won't happen if served_by_drone is respected
+                            }
+                            // Deadline Violation Delta
+                            double old_viol_src = route_metrics[v1][1];
+                            double new_route_time_src = route_metrics[v1][0] + removal_time_delta;
+                            double new_viol_src = max(0.0, (new_route_time_src - (is_v1_truck ? truck_limit : drone_limit)) / (is_v1_truck ? truck_limit : drone_limit));
+                            time_viol_delta += (new_viol_src - old_viol_src);
+                            double old_viol_tgt = route_metrics[v2][1];
+                            double new_route_time_tgt = route_metrics[v2][0] + insertion_time_delta;
+                            double new_viol_tgt = max(0.0, (new_route_time_tgt - (is_v2_truck ? truck_limit : drone_limit)) / (is_v2_truck ? truck_limit : drone_limit));
+                            time_viol_delta += (new_viol_tgt - old_viol_tgt);
+                        }
+                        double new_cap_violation = base_cap_violation + cap_delta;
+                        double new_energy_violation = base_energy_violation + energy_delta;
+                        double new_deadline_violation = base_deadline_violation + time_viol_delta;
+
+                        double penalty = pow(1.0 
+                            + PENALTY_LAMBDA_CAPACITY * max(0.0, new_cap_violation)
+                            + PENALTY_LAMBDA_ENERGY * max(0.0, new_energy_violation)
+                            + PENALTY_LAMBDA_DEADLINE * max(0.0, new_deadline_violation),
+                            PENALTY_EXPONENT);
+
+                        double new_score = (new_dist_truck * COST_TRUCK_KM + new_dist_drone * COST_DRONE_KM) * penalty;
+                        
+                        if (is_tabu && !(new_score + 1e-8 < best_cost && new_deadline_violation < 1e-8 && new_cap_violation < 1e-8)) {
+                            continue;
+                        }
+
+                        if (new_score < best_neighbor_cost_local) {
+                            best_neighbor_cost_local = new_score;
+                            best_cust1 = cust1;
+                            best_cust2 = cust2;
+                            best_target_veh = v2;
+                            best_pos = p_insert;
                         }
                     }
                 }
             }
-        };
-
-        for (int critical_idx = 0; critical_idx < h + d; ++critical_idx) {
-            bool crit_is_truck = critical_idx < h;
-            const vi& route = crit_is_truck
-                ? initial_solution.truck_routes[critical_idx]
-                : initial_solution.drone_routes[critical_idx - h];
-            consider_relocate_pair(route, crit_is_truck, critical_idx);
         }
 
-        // apply best move if found
-        if (best_c1 != -1 && best_c2 != -1 && best_target_vehicle != -1 && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            // update tabu
-            vector<int> key = { min(best_c1, best_c2), max(best_c1, best_c2), best_target_vehicle };
-            tabu_list_20[key] = current_iter + TABU_TENURE_20;
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            // Debug:
-            /*  cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            cout << "[N2] relocate pair (" << best_c1 << "," << best_c2 << ") to vehicle " << best_target_vehicle
-                 << ", score: " << solution_score(initial_solution)
-                 << " -> " << solution_score(best_candidate_neighbor)
-                 << ", iter " << current_iter << "\n"; */
-            // return the chosen neighbor (already fully assembled in best_candidate_neighbor)*/
-            return best_neighbor;
-        }
-        return initial_solution;
+        if (best_cust1 != -1) {
+            Solution candidate = initial_solution;
+            
+            // 1. Remove cust1 and cust2 from their original route
+            for(int v=0; v<h+d; ++v) {
+                auto& r = (v < h) ? candidate.truck_routes[v] : candidate.drone_routes[v-h];
+                bool found_pair = false;
+                for(size_t i = 0; i < r.size() -1; ++i) {
+                    if (r[i] == best_cust1 && r[i+1] == best_cust2) {
+                        r.erase(r.begin() + i, r.begin() + i + 2);
+                        found_pair = true;
+                        break;
+                    }
+                }
+                if (found_pair) break;
+            }
 
+            // 2. Insert into target route
+            if (best_target_veh < h) { // Truck target
+                auto& r_target = candidate.truck_routes[best_target_veh];
+                int pos = max(1, min((int)r_target.size() -1, best_pos));
+                r_target.insert(r_target.begin() + pos, {best_cust1, best_cust2});
+                if (r_target.back() != 0) r_target.push_back(0);
+            } else { // Drone target: push to back as separate sorties
+                candidate.drone_routes[best_target_veh-h].push_back(best_cust1);
+                candidate.drone_routes[best_target_veh-h].push_back(best_cust2);
+            }
+
+            best_neighbor = recalculate_solution(candidate);
+            best_neighbor_cost = solution_score_cost(best_neighbor);
+            
+            if (best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
+                 best_neighbor_cost = best_neighbor_cost_local;
+            }
+
+            vector<int> tabu_key = {best_cust1, best_cust2, best_target_veh};
+            tabu_list_20[tabu_key] = current_iter + TABU_TENURE_20;
+        }
+        
+        return best_neighbor;
     } else if (neighbor_id == 3) {
-        // Neighborhood 3: 2-opt within each subroute (between depot nodes) for trucks or drones.
+        // Neighborhood 3: 2-opt within each subroute (between depot nodes) for trucks ONLY.
         // Finds the best 2-opt move across all routes that yields the largest local time drop.
 
         if ((int)tabu_list_2opt.size() != n + 1 || ((int)tabu_list_2opt.size() > 0 && (int)tabu_list_2opt[0].size() != n + 1)) {
@@ -3989,107 +1793,82 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
         double best_neighbor_cost_local = 1e10;
         int best_edge_u = -1, best_edge_v = -1;
         int best_i = -1, best_j = -1;
+        int best_route_idx = -1;
 
-        auto normalize_route = [](vi r) -> vi {
-            if (r.empty()) return r;
-            if (r.front() != 0) r.insert(r.begin(), 0);
-            if (r.back() != 0) r.push_back(0);
-            vi cleaned; cleaned.reserve(r.size());
-            for (int node : r) {
-                if (!cleaned.empty() && cleaned.back() == 0 && node == 0) continue;
-                cleaned.push_back(node);
+        // Pre-compute truck route metrics
+        vector<vd> truck_route_metrics(h);
+        vd base_route_dist(h, 0.0);
+        double base_truck_dist = 0.0, base_drone_dist = 0.0;
+        for (int i = 0; i < h; ++i) {
+            truck_route_metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
+            const auto& r = initial_solution.truck_routes[i];
+            for (size_t k = 0; k + 1 < r.size(); ++k) {
+                base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+                base_route_dist[i] += distance_matrix_manhattan[r[k]][r[k+1]];
             }
-            return cleaned;
-        };
-
-        auto consider_2opt = [&](const vi& base_route, bool is_truck_mode, int route_idx) {
-            if (base_route.size() <= 3) return;
-
-            vd route_metrics = check_route_feasibility(base_route, 0.0, is_truck_mode);
-            int m = (int)base_route.size();
-            int start = 0;
-            while (start < m) {
-                while (start < m && base_route[start] == 0) ++start;
-                if (start >= m) break;
-                int seg_end = start;
-                while (seg_end + 1 < m && base_route[seg_end + 1] != 0) ++seg_end;
-
-                for (int i = start; i < seg_end; ++i) {
-                    for (int j = i + 1; j <= seg_end; ++j) {
-                        vi new_route = base_route;
-                        reverse(new_route.begin() + i, new_route.begin() + j + 1);
-                        if (new_route == base_route) continue;
-
-                        new_route = normalize_route(new_route);
-                        vd new_metrics = check_route_feasibility(new_route, 0.0, is_truck_mode);
-                        int u = min(base_route[i], base_route[j]);
-                        int v = max(base_route[i], base_route[j]);
-                        if (u < 0 || v < 0) continue;
-                        bool is_tabu = (tabu_list_2opt.size() > (size_t)u &&
-                                        tabu_list_2opt[u].size() > (size_t)v &&
-                                        tabu_list_2opt[u][v] > current_iter);
-
-                        Solution candidate = initial_solution;
-                        candidate.deadline_violation += new_metrics[1] - route_metrics[1];
-                        candidate.capacity_violation += new_metrics[3] - route_metrics[3];
-                        candidate.energy_violation += new_metrics[2] - route_metrics[2];
-                        if (is_truck_mode) {
-                            candidate.truck_routes[route_idx] = new_route;
-                            candidate.truck_route_times[route_idx] = (new_route.size() > 1) ? new_metrics[0] : 0.0;
-                        } else {
-                            int drone_route_idx = route_idx - h;
-                            if (drone_route_idx >= 0 && drone_route_idx < (int)candidate.drone_routes.size()) {
-                                candidate.drone_routes[drone_route_idx] = new_route;
-                                candidate.drone_route_times[drone_route_idx] = (new_route.size() > 1) ? new_metrics[0] : 0.0;
-                            }
-                        }
-                        candidate.total_makespan = 0.0;
-                        for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                        for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-                        double candidate_score = solution_cost(candidate);
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
-                                         candidate.deadline_violation <= 1e-8 &&
-                                         candidate.capacity_violation <= 1e-8 &&
-                                         candidate.energy_violation <= 1e-8)) continue;
-
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_edge_u = u;
-                            best_edge_v = v;
-                            best_i = i;
-                            best_j = j;
-                        }
-                    }
-                }
-                start = seg_end + 1;
-            }
-        };
-
-        for (int critical_idx = 0; critical_idx < h + d; ++critical_idx) {
-            bool crit_is_truck = critical_idx < h;
-            const vi& route = crit_is_truck
-                ? initial_solution.truck_routes[critical_idx]
-                : initial_solution.drone_routes[critical_idx - h];
-            consider_2opt(route, crit_is_truck, critical_idx);
+        }
+        for (int i = 0; i < d; ++i) {
+            const auto& r = initial_solution.drone_routes[i];
+            for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
         }
 
-        if (best_edge_u != -1 && best_edge_v != -1 && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            tabu_list_2opt[best_edge_u][best_edge_v] = current_iter + TABU_TENURE_2OPT;
+        for (int v = 0; v < h; ++v) {
+            const auto& route = initial_solution.truck_routes[v];
+            int m = (int)route.size();
+            if (m <= 3) continue; // Not enough customers for 2-opt
 
-            // Debug N3
-            /* cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            cout << "[N3] 2-opt on " << (best_is_truck ? "truck" : "drone") << " #"
-                 << (crit_is_truck ? critical_idx + 1 : critical_idx + 1)
-                 << " between positions " << best_i << " and " << best_j
-                 << ", score: " << solution_score(initial_solution)
-                 << " -> " << solution_score(best_candidate_neighbor)
-                 << ", iter " << current_iter << "\n"; */
+            for (int i = 1; i < m - 2; ++i) {
+                for (int j = i + 1; j < m -1; ++j) {
+                    int u1 = route[i], v1 = route[i + 1];
+                    int u2 = route[j], v2 = route[j + 1];
 
-            return best_neighbor;
+                    int ua = min(u1, v1), va = max(u1, v1);
+                    int ub = min(u2, v2), vb = max(u2, v2);
+
+                    bool is_tabu = (tabu_list_2opt[ua][va] > current_iter) ||
+                                   (tabu_list_2opt[ub][vb] > current_iter);
+
+                    // Calculate distance delta
+                    double delta_dist = (distance_matrix_manhattan[u1][u2] + distance_matrix_manhattan[v1][v2])
+                                      - (distance_matrix_manhattan[u1][v1] + distance_matrix_manhattan[u2][v2]);
+                    double delta_time = delta_dist / vmax;
+
+                    auto old_metrics = truck_route_metrics[v];
+                    double new_route_time = old_metrics[0] + delta_time;
+
+                    double old_route_viol = old_metrics[1];
+                    double new_route_viol = max(0.0, (new_route_time - truck_limit) / truck_limit);
+                    double total_deadline_viol = initial_solution.deadline_violation - old_route_viol + new_route_viol;
+
+                    double total_cap_viol = initial_solution.capacity_violation; // No change
+                    double total_energy_viol = initial_solution.energy_violation; // No change
+
+                    double new_truck_dist = base_truck_dist + delta_dist;
+
+                    double penalty = pow(1.0 + PENALTY_LAMBDA_DEADLINE * total_deadline_viol + PENALTY_LAMBDA_CAPACITY * total_cap_viol + PENALTY_LAMBDA_ENERGY * total_energy_viol, PENALTY_EXPONENT);
+                    double cand_cost = (new_truck_dist * COST_TRUCK_KM + base_drone_dist * COST_DRONE_KM) * penalty;
+                    if (is_tabu && !(cand_cost + 1e-8 < best_cost && total_deadline_viol < 1e-8 && total_cap_viol < 1e-8)) continue;
+                    if (cand_cost < best_neighbor_cost_local) {
+                        best_neighbor_cost_local = cand_cost;
+                        best_edge_u = u1; best_edge_v = v1;
+                        best_i = i; best_j = j;
+                        best_route_idx = v;
+                    }
+                }
+            }
+        }
+
+        // Apply the best move found
+        if (best_edge_u != -1 && best_route_idx != -1) {
+            best_neighbor = initial_solution;
+            auto& route = best_neighbor.truck_routes[best_route_idx];
+            reverse(route.begin() + best_i + 1, route.begin() + best_j + 1);
+            best_neighbor = recalculate_solution(best_neighbor);
+            if (solution_cost(best_neighbor) < best_neighbor_cost) {
+                 best_neighbor_cost = solution_cost(best_neighbor);
+                 tabu_list_2opt[min(best_edge_u, best_edge_v)][max(best_edge_u, best_edge_v)] = current_iter + TABU_TENURE_2OPT;
+                 return best_neighbor;
+            }
         }
         return initial_solution;
 
@@ -4098,1099 +1877,1214 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             tabu_list_2opt_star.assign(n + 1, vector<int>(n + 1, 0));
         }
 
-        auto normalize_route = [](vi route) {
-            if (route.empty()) return route;
-            if (route.front() != 0) route.insert(route.begin(), 0);
-            if (route.back() != 0) route.push_back(0);
-            vi cleaned;
-            cleaned.reserve(route.size());
-            for (int node : route) {
-                if (!cleaned.empty() && cleaned.back() == node) continue;
-                cleaned.push_back(node);
-            }
-            return cleaned;
-        };
-
         Solution best_candidate_neighbor = best_neighbor;
         double best_neighbor_cost_local = 1e18;
-        int best_ua = -1, best_va = -1, best_ub = -1, best_vb = -1;
+        int best_u = -1, best_v = -1; // Edge (u,v) being broken or formed for tabu
+        int best_r1 = -1, best_r2 = -1;
+        int best_cut1 = -1, best_cut2 = -1;
 
-        auto enumerate_segments = [](const vi& route) {
-            vector<pair<int,int>> segs;
-            int m = (int)route.size();
-            int start = 0;
-            while (start < m) {
-                while (start < m && route[start] == 0) ++start;
-                if (start >= m) break;
-                int end = start;
-                while (end + 1 < m && route[end + 1] != 0) ++end;
-                segs.emplace_back(start, end);
-                start = end + 1;
-            }
-            return segs;
+        // Precompute Prefix/Suffix info for all truck routes to enable O(1) check
+        // We need: Cumulative Dist, Cumulative Load at each node
+        struct RouteInfo {
+            vector<double> dist_prefix;
+            vector<double> load_prefix;
+            double total_dist;
+            double total_load;
         };
+        vector<RouteInfo> r_info(h);
+        vector<int> r_size(h);
+        double current_total_truck_dist = 0;
 
-        auto evaluate_two_opt_star = [&](const vi& crit_route_raw, bool crit_is_truck, int crit_idx,
-                                         const vi& other_route_raw, bool other_is_truck, int other_idx) {
-            vi crit_route = normalize_route(crit_route_raw);
-            if (crit_route.size() <= 3) return;
-            vi other_route = normalize_route(other_route_raw);
-            if (other_route.size() <= 3) return;
-            vd crit_metrics = check_route_feasibility(crit_route, 0.0, crit_is_truck);
-            auto crit_segs = enumerate_segments(crit_route);
-            vd other_metrics = check_route_feasibility(other_route, 0.0, other_is_truck);
-            auto other_segs = enumerate_segments(other_route);
+        for (int i=0; i<h; ++i) {
+            const vi& r = initial_solution.truck_routes[i];
+            int m = r.size();
+            r_size[i] = m;
+            r_info[i].dist_prefix.assign(m, 0.0);
+            r_info[i].load_prefix.assign(m, 0.0);
+            
+            double d = 0;
+            double l = 0;
+            for(int k=0; k<m; ++k) {
+                if (k > 0) d += distance_matrix_manhattan[r[k-1]][r[k]];
+                /* Assuming uniform demand or extracting demand if available. 
+                   If demand is 1 per customer or looked up: */
+                if (r[k] != 0) l += 1.0; // Replace with actual demand lookup if needed e.g. demand[r[k]]
+                
+                r_info[i].dist_prefix[k] = d;
+                r_info[i].load_prefix[k] = l;
+            }
+            r_info[i].total_dist = d;
+            r_info[i].total_load = l;
+            current_total_truck_dist += d;
+        }
 
-            for (const auto& segA : crit_segs) {
-                for (int i = segA.first; i < segA.second; ++i) {
-                    int a1 = crit_route[i], a2 = crit_route[i + 1];
-                    int ua = min(a1, a2), va = max(a1, a2);
-                    if (a1 == 0 || a2 == 0) continue;
+        double base_drone_cost = 0; 
+        for(int i=0; i<d; ++i) {
+             // Calculate once to add to delta later
+             const auto& r = initial_solution.drone_routes[i];
+             for(int c : r) if(c!=0) base_drone_cost += distance_matrix_euclid[0][c]*2.0 * COST_DRONE_KM;
+        }
+        
+        // Loop over pairs of truck routes
+        for (int r1 = 0; r1 < h; ++r1) {
+            const vi& route1 = initial_solution.truck_routes[r1];
+            if (route1.size() < 2) continue;
+            vd route1_feas = check_truck_route_feasibility(route1);
 
-                    for (const auto& segB : other_segs) {
-                        for (int j = segB.first; j < segB.second; ++j) {
-                            int b1 = other_route[j], b2 = other_route[j + 1];
-                            int ub = min(b1, b2), vb = max(b1, b2);
-                            if (b1 == 0 || b2 == 0) continue;
+            for (int r2 = r1 + 1; r2 < h; ++r2) {
+                const vi& route2 = initial_solution.truck_routes[r2];
+                if (route2.size() < 2) continue;
+                vd route2_feas = check_truck_route_feasibility(route2);
 
-                            bool is_tabu = (tabu_list_2opt_star[ua][va] > current_iter) ||
-                                           (tabu_list_2opt_star[ub][vb] > current_iter);
+                // Try all cut positions
+                // Cut i in route1 means: New route 1 ends at i, connects to route2[j+1]
+                // Cut j in route2 means: New route 2 ends at j, connects to route1[i+1]
+                // Valid cuts are before the final return to depot (index size-1)
+                for (int i = 0; i < (int)route1.size() - 1; ++i) {
+                    for (int j = 0; j < (int)route2.size() - 1; ++j) {
+                        
+                        int u1 = route1[i];
+                        int v1 = route1[i+1]; // Old edge 1 broken
+                        int u2 = route2[j];
+                        int v2 = route2[j+1]; // Old edge 2 broken
 
-                            vi crit_new = crit_route;
-                            vi other_new = other_route;
+                        // Tabu check on stored edges? 
+                        // Usually tabu stores edges added/removed.
+                        // We are adding (u1, v2) and (u2, v1)
+                        bool is_tabu = (tabu_list_2opt_star[min(u1,v2)][max(u1,v2)] > current_iter) ||
+                                       (tabu_list_2opt_star[min(u2,v1)][max(u2,v1)] > current_iter);
 
-                            vi tailA(crit_new.begin() + i + 1, crit_new.begin() + segA.second + 1);
-                            vi tailB(other_new.begin() + j + 1, other_new.begin() + segB.second + 1);
+                        // 1. Capacity Check (O(1))
+                        // R1 New Load = R1_Prefix(i) + (R2_Total - R2_Prefix(j))
+                        double r1_new_load = r_info[r1].load_prefix[i] + (r_info[r2].total_load - r_info[r2].load_prefix[j]);
+                        // R2 New Load = R2_Prefix(j) + (R1_Total - R1_Prefix(i))
+                        double r2_new_load = r_info[r2].load_prefix[j] + (r_info[r1].total_load - r_info[r1].load_prefix[i]);
+                        double new_capacity_violation = 0.0, new_energy_violation = 0.0, new_deadline_violation = 0.0;
+                        double penalty = 0.0;
+                        double capacity_delta = 0.0, energy_delta = 0.0, deadline_delta = 0.0;
 
-                            crit_new.erase(crit_new.begin() + i + 1, crit_new.begin() + segA.second + 1);
-                            other_new.erase(other_new.begin() + j + 1, other_new.begin() + segB.second + 1);
+                        if (r1_new_load > Dh) {
+                            capacity_delta += (r1_new_load - Dh) / Dh;
+                        }
+                        if (r2_new_load > Dh) {
+                            capacity_delta += (r2_new_load - Dh) / Dh;
+                        }
+                        capacity_delta = capacity_delta - route1_feas[3] - route2_feas[3];
+                        new_capacity_violation = initial_solution.capacity_violation + capacity_delta;
 
-                            crit_new.insert(crit_new.begin() + i + 1, tailB.begin(), tailB.end());
-                            other_new.insert(other_new.begin() + j + 1, tailA.begin(), tailA.end());
+                        // 2. Distance Delta (O(1))
+                        // Removed: (u1->v1) + (u2->v2)
+                        double dist_removed = distance_matrix_manhattan[u1][v1] + distance_matrix_manhattan[u2][v2];
+                        // Added: (u1->v2) + (u2->v1)
+                        double dist_added = distance_matrix_manhattan[u1][v2] + distance_matrix_manhattan[u2][v1];
+                        
+                        // Change in total distance
+                        // However, we must account for the chunks being swapped.
+                        // New Dist R1 = PrefixDist1(i) + (TotalDist2 - PrefixDist2(j+1)) + Dist(u1, v2) (wait, indices careful)
+                        // Correct logic:
+                        // Prefix1 ends at i (u1). Suffix1 starts at i+1 (v1).
+                        // Prefix2 ends at j (u2). Suffix2 starts at j+1 (v2).
+                        // New R1 = Prefix1 + Edge(u1, v2) + Suffix2
+                        // New R2 = Prefix2 + Edge(u2, v1) + Suffix1
+                        
+                        double suffix2_dist = r_info[r2].total_dist - r_info[r2].dist_prefix[j+1]; // Dist from v2 to end
+                        double r1_new_dist = r_info[r1].dist_prefix[i] + distance_matrix_manhattan[u1][v2] + suffix2_dist;
+                        
+                        double suffix1_dist = r_info[r1].total_dist - r_info[r1].dist_prefix[i+1]; // Dist from v1 to end
+                        double r2_new_dist = r_info[r2].dist_prefix[j] + distance_matrix_manhattan[u2][v1] + suffix1_dist;
 
-                            crit_new = normalize_route(crit_new);
-                            other_new = normalize_route(other_new);
-                            if (crit_new == crit_route && other_new == other_route) continue;
+                        double new_total_truck_dist = current_total_truck_dist 
+                                                    - r_info[r1].total_dist - r_info[r2].total_dist
+                                                    + r1_new_dist + r2_new_dist;
 
-                            vd crit_metrics_new = check_route_feasibility(crit_new, 0.0, crit_is_truck);
-                            vd other_metrics_new = check_route_feasibility(other_new, 0.0, other_is_truck);
+                        // 3. Time Feasibility 
+                        double r1_new_time = r1_new_dist / vmax;
+                        double r2_new_time = r2_new_dist / vmax;
+                        double r1_old_viol = route1_feas[1];
+                        double r2_old_viol = route2_feas[1];
+                        double r1_new_viol = max(0.0, (r1_new_time - truck_limit) / truck_limit);
+                        double r2_new_viol = max(0.0, (r2_new_time - truck_limit) / truck_limit);
+                        deadline_delta += (r1_new_viol - r1_old_viol) + (r2_new_viol - r2_old_viol);
+                        new_deadline_violation = initial_solution.deadline_violation + deadline_delta;
 
-                            Solution candidate = initial_solution;
-                            candidate.deadline_violation += crit_metrics_new[1] - crit_metrics[1];
-                            candidate.capacity_violation += crit_metrics_new[3] - crit_metrics[3];
-                            candidate.energy_violation += crit_metrics_new[2] - crit_metrics[2];
-                            candidate.deadline_violation += other_metrics_new[1] - other_metrics[1];
-                            candidate.capacity_violation += other_metrics_new[3] - other_metrics[3];
-                            candidate.energy_violation += other_metrics_new[2] - other_metrics[2];
+                        new_energy_violation = initial_solution.energy_violation + energy_delta;
+                        penalty = pow(1.0 
+                            + PENALTY_LAMBDA_DEADLINE * max(0.0, new_deadline_violation)
+                            + PENALTY_LAMBDA_CAPACITY * max(0.0, new_capacity_violation)
+                            + PENALTY_LAMBDA_ENERGY * max(0.0, new_energy_violation),
+                            PENALTY_EXPONENT);
+                        double cand_cost = (new_total_truck_dist * COST_TRUCK_KM + base_drone_cost) * penalty;
 
-                            if (crit_is_truck) {
-                                candidate.truck_routes[crit_idx] = crit_new;
-                                candidate.truck_route_times[crit_idx] = (crit_new.size() > 1) ? crit_metrics_new[0] : 0.0;
-                            } else {
-                                int crit_drone_idx = crit_idx - h;
-                                if (crit_drone_idx >= 0 && crit_drone_idx < (int)candidate.drone_routes.size()) {
-                                    candidate.drone_routes[crit_drone_idx] = crit_new;
-                                    candidate.drone_route_times[crit_drone_idx] = (crit_new.size() > 1) ? crit_metrics_new[0] : 0.0;
-                                }
-                            }
+                        // Aspiration
+                        if (is_tabu && cand_cost >= best_cost) continue;
 
-                            if (other_is_truck) {
-                                candidate.truck_routes[other_idx] = other_new;
-                                candidate.truck_route_times[other_idx] = (other_new.size() > 1) ? other_metrics_new[0] : 0.0;
-                            } else {
-                                int other_drone_idx = other_idx - h;
-                                if (other_drone_idx >= 0 && other_drone_idx < (int)candidate.drone_routes.size()) {
-                                    candidate.drone_routes[other_drone_idx] = other_new;
-                                    candidate.drone_route_times[other_drone_idx] = (other_new.size() > 1) ? other_metrics_new[0] : 0.0;
-                                }
-                            }
-
-                            candidate.total_makespan = 0.0;
-                            for (int i = 0; i < h; ++i) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[i]);
-                            for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-                            double candidate_score = solution_cost(candidate);
-                            if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
-                                             candidate.deadline_violation <= 1e-8 &&
-                                             candidate.capacity_violation <= 1e-8 &&
-                                             candidate.energy_violation <= 1e-8)) {
-                                continue;
-                            }
-
-                            if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                                best_neighbor_cost_local = candidate_score;
-                                best_candidate_neighbor = candidate;
-                                best_ua = ua; best_va = va;
-                                best_ub = ub; best_vb = vb;
-                            }
+                        if (cand_cost < best_neighbor_cost_local) {
+                            best_neighbor_cost_local = cand_cost;
+                            best_r1 = r1; best_r2 = r2;
+                            best_cut1 = i; best_cut2 = j;
+                            best_u = u1; best_v = v2; // one of the new edges for tabu ref
                         }
                     }
                 }
             }
-        };
-
-        for (int crit_idx = 0; crit_idx < h + d; ++crit_idx) {
-            bool crit_is_truck = crit_idx < h;
-            const vi& crit_route_raw = crit_is_truck
-                ? initial_solution.truck_routes[crit_idx]
-                : initial_solution.drone_routes[crit_idx - h];
-            for (int other_idx = 0; other_idx < h + d; ++other_idx) {
-                if (other_idx == crit_idx) continue;
-                bool other_is_truck = other_idx < h;
-                const vi& other_route_raw = other_is_truck
-                    ? initial_solution.truck_routes[other_idx]
-                    : initial_solution.drone_routes[other_idx - h];
-                evaluate_two_opt_star(crit_route_raw, crit_is_truck, crit_idx,
-                                      other_route_raw, other_is_truck, other_idx);
-            }
         }
 
-        if (best_ua != -1 && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            best_neighbor = best_candidate_neighbor;
+        if (best_r1 != -1 && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
+            // Reconstruct the solution only for the best move
+            best_neighbor = initial_solution;
+            vi& route1 = best_neighbor.truck_routes[best_r1];
+            vi& route2 = best_neighbor.truck_routes[best_r2];
+            
+            vi new_r1, new_r2;
+            
+            // Prefix 1
+            for(int k=0; k<=best_cut1; ++k) new_r1.push_back(route1[k]);
+            // Suffix 2
+            for(int k=best_cut2+1; k<(int)route2.size(); ++k) new_r1.push_back(route2[k]);
+
+            // Prefix 2
+            for(int k=0; k<=best_cut2; ++k) new_r2.push_back(route2[k]);
+            // Suffix 1
+            for(int k=best_cut1+1; k<(int)route1.size(); ++k) new_r2.push_back(route1[k]);
+
+            best_neighbor.truck_routes[best_r1] = new_r1;
+            best_neighbor.truck_routes[best_r2] = new_r2;
+            
+            best_neighbor = recalculate_solution(best_neighbor); // Only recalc once at end
             best_neighbor_cost = best_neighbor_cost_local;
-            tabu_list_2opt_star[best_ua][best_va] = current_iter + TABU_TENURE_2OPT_STAR;
-            tabu_list_2opt_star[best_ub][best_vb] = current_iter + TABU_TENURE_2OPT_STAR;
-
-            //Debug N4
-            /* cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            cout << "[N4] 2-opt* cuts (" << best_ua << "," << best_va << ") & (" << best_ub << "," << best_vb << ")"
-                 << ", score: " << solution_score(initial_solution)
-                 << " -> " << solution_score(best_candidate_neighbor)
-                 << ", iter " << current_iter << "\n"; */
-
+            
+            // Update Tabu
+            // For 2-opt*, we can ban the edge we added (u1, v2)
+            tabu_list_2opt_star[min(best_u, best_v)][max(best_u, best_v)] = current_iter + TABU_TENURE_2OPT_STAR;
+            
             return best_neighbor;
         }
         return initial_solution;
     } else if (neighbor_id == 5) {
 
-        Solution best_candidate_neighbor = best_neighbor;
-        double best_neighbor_cost_local = 1e18;
-        vector<int> best_tabu_triple;
-        int best_pair_a = -1, best_pair_b = -1, best_single = -1;
-        bool best_pair_from_critical = true;
-        int best_other_vehicle = -1;
-        bool best_other_is_truck = true;
+        // Neighborhood 5: 2-1 Swap (Swap pair (u,v) from A with single w from B)
 
-        auto normalize_route = [](vi route) {
-            if (route.empty()) return route;
-            if (route.front() != 0) route.insert(route.begin(), 0);
-            if (route.back() != 0) route.push_back(0);
-            vi cleaned;
-            cleaned.reserve(route.size());
-            for (int node : route) {
-                if (!cleaned.empty() && cleaned.back() == node) continue;
-                cleaned.push_back(node);
-            }
-            return cleaned;
-        };
-
-        auto consider_pair_vs_single = [&](const vi& crit_route, bool crit_mode_truck, int crit_global_idx, int crit_route_idx) {
-            if (crit_route.size() <= 3) return;
-
-            vd crit_metrics = check_route_feasibility(crit_route, 0.0, crit_mode_truck);
-            vector<int> pair_positions;
-            for (int i = 0; i + 1 < (int)crit_route.size(); ++i)
-                if (crit_route[i] != 0 && crit_route[i + 1] != 0) pair_positions.push_back(i);
-            if (pair_positions.empty()) return;
-
-            auto near_enough = [&](int u, int v) {
-                return !KNN_ADJ.empty() && KNN_ADJ.size() > (size_t)u && KNN_ADJ[u].size() > (size_t)v && KNN_ADJ[u][v];
-            };
-
-            for (int pair_idx : pair_positions) {
-                int c1 = crit_route[pair_idx];
-                int c2 = crit_route[pair_idx + 1];
-
-                for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                    bool target_is_truck = target_veh < h;
-                    if (target_veh == crit_global_idx) continue;
-                    
-                    if (!target_is_truck && (!served_by_drone[c1] || !served_by_drone[c2])) continue;
-
-                    int target_idx = target_is_truck ? target_veh : target_veh - h;
-                    const vi& target_route = target_is_truck
-                        ? initial_solution.truck_routes[target_idx]
-                        : initial_solution.drone_routes[target_idx];
-                    if (target_route.size() <= 2) continue;
-
-                    vector<int> target_positions;
-                    for (int j = 0; j < (int)target_route.size(); ++j)
-                        if (target_route[j] != 0) target_positions.push_back(j);
-                    if (target_positions.empty()) continue;
-
-                    vd target_metrics = check_route_feasibility(target_route, 0.0, target_is_truck);
-
-                    for (int pos_single : target_positions) {
-                        int single = target_route[pos_single];
-                        if (!crit_mode_truck && !served_by_drone[single]) continue;
-
-                        if (!KNN_ADJ.empty()) {
-                            bool ok = near_enough(c1, single) || near_enough(single, c1) ||
-                                      near_enough(c2, single) || near_enough(single, c2);
-                            if (!ok) continue;
-                        }
-
-                        vi crit_new = crit_route;
-                        crit_new.erase(crit_new.begin() + pair_idx);
-                        crit_new.erase(crit_new.begin() + pair_idx);
-                        crit_new.insert(crit_new.begin() + pair_idx, single);
-                        crit_new = normalize_route(crit_new);
-
-                        vi target_new = target_route;
-                        target_new.erase(target_new.begin() + pos_single);
-                        target_new.insert(target_new.begin() + pos_single, c1);
-                        target_new.insert(target_new.begin() + pos_single + 1, c2);
-                        target_new = normalize_route(target_new);
-
-                        vd crit_new_metrics = check_route_feasibility(crit_new, 0.0, crit_mode_truck);
-                        vd target_new_metrics = check_route_feasibility(target_new, 0.0, target_is_truck);
-
-                        Solution candidate = initial_solution;
-                        candidate.deadline_violation += crit_new_metrics[1] - crit_metrics[1];
-                        candidate.capacity_violation += crit_new_metrics[3] - crit_metrics[3];
-                        candidate.energy_violation += crit_new_metrics[2] - crit_metrics[2];
-                        candidate.deadline_violation += target_new_metrics[1] - target_metrics[1];
-                        candidate.capacity_violation += target_new_metrics[3] - target_metrics[3];
-                        candidate.energy_violation += target_new_metrics[2] - target_metrics[2];
-
-                        if (crit_mode_truck) {
-                            candidate.truck_routes[crit_route_idx] = crit_new;
-                            candidate.truck_route_times[crit_route_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
-                        } else {
-                            int crit_drone_idx = crit_route_idx;
-                            if (crit_drone_idx >= 0 && crit_drone_idx < (int)candidate.drone_routes.size()) {
-                                candidate.drone_routes[crit_drone_idx] = crit_new;
-                                candidate.drone_route_times[crit_drone_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
-                            }
-                        }
-                        if (target_is_truck) {
-                            candidate.truck_routes[target_idx] = target_new;
-                            candidate.truck_route_times[target_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
-                        } else {
-                            int target_drone_idx = target_idx;
-                            if (target_drone_idx >= 0 && target_drone_idx < (int)candidate.drone_routes.size()) {
-                                candidate.drone_routes[target_drone_idx] = target_new;
-                                candidate.drone_route_times[target_drone_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
-                            }
-                        }
-
-                        candidate.total_makespan = 0.0;
-                        for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                        for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-
-                        vector<int> key = { min(c1, c2), max(c1, c2), single };
-                        auto it = tabu_list_21.find(key);
-                        bool is_tabu = (it != tabu_list_21.end() && it->second > current_iter);
-                        double candidate_score = solution_cost(candidate);
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
-                                         candidate.deadline_violation <= 1e-8 &&
-                                         candidate.capacity_violation <= 1e-8 &&
-                                         candidate.energy_violation <= 1e-8)) {
-                            continue;
-                        }
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_tabu_triple = key;
-                            best_pair_a = c1;
-                            best_pair_b = c2;
-                            best_single = single;
-                            best_pair_from_critical = true;
-                            best_other_vehicle = target_veh;
-                            best_other_is_truck = target_is_truck;
-                        }
-                    }
-                }
-            }
-        };
-
-        auto consider_single_vs_pair = [&](const vi& crit_route, bool crit_mode_truck, int crit_global_idx, int crit_route_idx) {
-            if (crit_route.size() <= 2) return;
-
-            vd crit_metrics = check_route_feasibility(crit_route, 0.0, crit_mode_truck);
-            vector<int> single_positions;
-            for (int i = 0; i < (int)crit_route.size(); ++i)
-                if (crit_route[i] != 0) single_positions.push_back(i);
-            if (single_positions.empty()) return;
-
-            auto near_enough = [&](int u, int v) {
-                return !KNN_ADJ.empty() && KNN_ADJ.size() > (size_t)u && KNN_ADJ[u].size() > (size_t)v && KNN_ADJ[u][v];
-            };
-
-            for (int single_idx : single_positions) {
-                int single = crit_route[single_idx];
-
-                for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                    if (target_veh == crit_global_idx) continue;
-                    bool target_is_truck = target_veh < h;
-                    if (!target_is_truck && !served_by_drone[single]) continue;
-
-                    int target_idx = target_is_truck ? target_veh : target_veh - h;
-                    const vi& target_route = target_is_truck
-                        ? initial_solution.truck_routes[target_idx]
-                        : initial_solution.drone_routes[target_idx];
-                    if (target_route.size() <= 3) continue;
-
-                    vector<int> pair_positions;
-                    for (int j = 0; j + 1 < (int)target_route.size(); ++j)
-                        if (target_route[j] != 0 && target_route[j + 1] != 0) pair_positions.push_back(j);
-                    if (pair_positions.empty()) continue;
-
-                    vd target_metrics = check_route_feasibility(target_route, 0.0, target_is_truck);
-
-                    for (int pair_idx : pair_positions) {
-                        int b1 = target_route[pair_idx];
-                        int b2 = target_route[pair_idx + 1];
-                        if (!crit_mode_truck && (!served_by_drone[b1] || !served_by_drone[b2])) continue;
-
-                        if (!KNN_ADJ.empty()) {
-                            bool ok = near_enough(single, b1) || near_enough(b1, single) ||
-                                      near_enough(single, b2) || near_enough(b2, single);
-                            if (!ok) continue;
-                        }
-
-                        vi crit_new = crit_route;
-                        crit_new.erase(crit_new.begin() + single_idx);
-                        crit_new.insert(crit_new.begin() + single_idx, b1);
-                        crit_new.insert(crit_new.begin() + single_idx + 1, b2);
-                        crit_new = normalize_route(crit_new);
-
-                        vi target_new = target_route;
-                        target_new.erase(target_new.begin() + pair_idx);
-                        target_new.erase(target_new.begin() + pair_idx);
-                        target_new.insert(target_new.begin() + pair_idx, single);
-                        target_new = normalize_route(target_new);
-
-                        vd crit_new_metrics = check_route_feasibility(crit_new, 0.0, crit_mode_truck);
-                        vd target_new_metrics = check_route_feasibility(target_new, 0.0, target_is_truck);
-
-                        Solution candidate = initial_solution;
-                        candidate.deadline_violation += crit_new_metrics[1] - crit_metrics[1];
-                        candidate.capacity_violation += crit_new_metrics[3] - crit_metrics[3];
-                        candidate.energy_violation += crit_new_metrics[2] - crit_metrics[2];
-                        candidate.deadline_violation += target_new_metrics[1] - target_metrics[1];
-                        candidate.capacity_violation += target_new_metrics[3] - target_metrics[3];
-                        candidate.energy_violation += target_new_metrics[2] - target_metrics[2];
-
-                        if (crit_mode_truck) {
-                            candidate.truck_routes[crit_route_idx] = crit_new;
-                            candidate.truck_route_times[crit_route_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
-                        } else {
-                            int crit_drone_idx = crit_route_idx;
-                            if (crit_drone_idx >= 0 && crit_drone_idx < (int)candidate.drone_routes.size()) {
-                                candidate.drone_routes[crit_drone_idx] = crit_new;
-                                candidate.drone_route_times[crit_drone_idx] = (crit_new.size() > 1) ? crit_new_metrics[0] : 0.0;
-                            }
-                        }
-                        if (target_is_truck) {
-                            candidate.truck_routes[target_idx] = target_new;
-                            candidate.truck_route_times[target_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
-                        } else {
-                            int target_drone_idx = target_idx;
-                            if (target_drone_idx >= 0 && target_drone_idx < (int)candidate.drone_routes.size()) {
-                                candidate.drone_routes[target_drone_idx] = target_new;
-                                candidate.drone_route_times[target_drone_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
-                            }
-                        }
-
-                        candidate.total_makespan = 0.0;
-                        for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                        for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-
-                        vector<int> key = { min(b1, b2), max(b1, b2), single };
-                        auto it = tabu_list_21.find(key);
-                        bool is_tabu = (it != tabu_list_21.end() && it->second > current_iter);
-                        double candidate_score = solution_cost(candidate);
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
-                                         candidate.deadline_violation <= 1e-8 &&
-                                         candidate.capacity_violation <= 1e-8 &&
-                                         candidate.energy_violation <= 1e-8)) {
-                            continue;
-                        }
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_tabu_triple = key;
-                            best_pair_a = b1;
-                            best_pair_b = b2;
-                            best_single = single;
-                            best_pair_from_critical = false;
-                            best_other_vehicle = target_veh;
-                            best_other_is_truck = target_is_truck;
-                        }
-                    }
-                }
-            }
-        };
-
-        for (int critical_idx = 0; critical_idx < h + d; ++critical_idx) {
-            bool crit_is_truck = critical_idx < h;
-            const vi& route = crit_is_truck
-                ? initial_solution.truck_routes[critical_idx]
-                : initial_solution.drone_routes[critical_idx - h];
-            int route_idx = crit_is_truck ? critical_idx : critical_idx - h;
-            consider_pair_vs_single(route, crit_is_truck, critical_idx, route_idx);
-            consider_single_vs_pair(route, crit_is_truck, critical_idx, route_idx);
+        int best_r1 = -1, best_r2 = -1;
+        int best_pos_pair = -1, best_pos_single = -1;
+        double best_cost_local = 1e18;
+        vector<int> best_triple; // For tabu update
+        
+        // 1. Pre-calculate metrics (Reuse N1 logic)
+        vector<vd> metrics(h + d);
+        double base_truck_dist = 0.0, base_drone_dist = 0.0;
+        for (int i = 0; i < h; ++i) {
+            metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
+            const auto& r = initial_solution.truck_routes[i];
+            for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+        }
+        for (int i = 0; i < d; ++i) {
+            metrics[h + i] = check_drone_route_feasibility(initial_solution.drone_routes[i]);
+            const auto& r = initial_solution.drone_routes[i];
+            for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
         }
 
-        if (!best_tabu_triple.empty() && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            tabu_list_21[best_tabu_triple] = current_iter + TABU_TENURE_21;
+        // Loop pairs of routes
+        // We do directed pairs (A, B) where A provides the Pair, B provides the Single
+        for (int rA = 0; rA < h + d; ++rA) {
+            bool is_truck_a = rA < h;
+            const vi& route_a = is_truck_a ? initial_solution.truck_routes[rA] : initial_solution.drone_routes[rA - h];
+            if (route_a.size() < 3) continue; // Need at least 2 customers (+depots or just list)
 
-            // Debug N5
-            /* cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            bool other_is_truck = best_other_is_truck;
-            int other_idx = other_is_truck ? best_other_vehicle : best_other_vehicle - h;
-            cout << "[N5] (" << (best_pair_from_critical ? "2,1" : "1,2") << ") swap pair ("
-                 << best_pair_a << "," << best_pair_b << ") with customer " << best_single
-                 << " between " << (crit_is_truck ? "truck" : "drone") << " #" << (critical_idx + 1)
-                 << " and " << (other_is_truck ? "truck" : "drone") << " #" << (other_idx + 1)
-                 << ", score: " << solution_score(initial_solution)
-                 << " -> " << solution_score(best_candidate_neighbor)
-                 << ", iter " << current_iter << "\n"; */
+            // Define iteration range for Pair (u, v) starting at i
+            int max_i = is_truck_a ? (int)route_a.size() - 3 : (int)route_a.size() - 2;
+            int start_i = is_truck_a ? 1 : 0;
+            if (max_i < start_i) continue;
 
-            return best_neighbor;
+            for (int rB = 0; rB < h + d; ++rB) {
+                if (rA == rB) {
+                    // INTRA-ROUTE, FOR TRUCKS
+                    if (!is_truck_a) continue; // Drones cannot do intra-route 2-1 swap
+                    const vi& route = route_a;
+                    for (int i = 1; i <= (int)route.size() - 3; ++i) {
+                        int u = route[i];
+                        int v = route[i+1];
+                        if (u == 0 || v == 0) continue; // Skip depot
+                        for (int j = i + 2; j <= (int)route.size() - 2; ++j) {
+                            int w = route[j];
+                            if (w == 0) continue; // Skip depot
+
+                            vector<int> triple = {u, v, w};
+                            sort(triple.begin(), triple.end());
+                            bool is_tabu = (tabu_list_21.count(triple) && tabu_list_21[triple] > current_iter);
+
+                            // --- Calculate Deltas ---
+
+                            // Cost & Time A (Change in Truck Route)
+                            double delta_dist_a = 0;
+                            double delta_time_a = 0;
+                            
+                            int p1 = route[i-1];
+                            int s1 = route[i+2]; // Successor of v (if j=i+2, this is w)
+                            int p2 = route[j-1]; // Predecessor of w (if j=i+2, this is v)
+                            int s2 = route[j+1]; // Successor of w
+
+                            double current_val = 0;
+                            double new_val = 0;
+
+                            if (j == i + 2) {
+                                // Consecutive: ... p1 -> u -> v -> w -> s2 ...
+                                // Becomes:     ... p1 -> w -> u -> v -> s2 ...
+                                // (u,v) edge is preserved, so we ignore it in delta
+                                current_val = distance_matrix_manhattan[p1][u] + distance_matrix_manhattan[v][w] + distance_matrix_manhattan[w][s2];
+                                new_val     = distance_matrix_manhattan[p1][w] + distance_matrix_manhattan[w][u] + distance_matrix_manhattan[v][s2];
+                            } else {
+                                // Disjoint:
+                                // Spot i: ... p1 -> u -> v -> s1 ...  ==>  ... p1 -> w -> s1 ...
+                                double rem_i = distance_matrix_manhattan[p1][u] + distance_matrix_manhattan[u][v] + distance_matrix_manhattan[v][s1];
+                                double add_i = distance_matrix_manhattan[p1][w] + distance_matrix_manhattan[w][s1];
+
+                                // Spot j: ... p2 -> w -> s2 ...  ==>  ... p2 -> u -> v -> s2 ...
+                                double rem_j = distance_matrix_manhattan[p2][w] + distance_matrix_manhattan[w][s2];
+                                double add_j = distance_matrix_manhattan[p2][u] + distance_matrix_manhattan[u][v] + distance_matrix_manhattan[v][s2];
+
+                                current_val = rem_i + rem_j;
+                                new_val     = add_i + add_j;
+                            }
+
+                            delta_dist_a = (new_val - current_val);
+                            delta_time_a = delta_dist_a / vmax;
+
+                            double new_total_truck_dist = base_truck_dist + delta_dist_a;
+                            double new_total_drone_dist = base_drone_dist;
+
+                            // --- Violations ---
+
+                            double delta_cap = 0; // No capacity change in intra-route swap
+
+                            double delta_dead = 0;
+                            double lim_a = truck_limit;
+                            double new_t_a = metrics[rA][0] + delta_time_a;
+                            delta_dead += max(0.0, (new_t_a - lim_a)/lim_a) - max(0.0, (metrics[rA][0] - lim_a)/lim_a);
+
+                            double new_cap_violation = initial_solution.capacity_violation + delta_cap;
+                            double new_energy_violation = initial_solution.energy_violation;
+                            double new_deadline_violation = initial_solution.deadline_violation + delta_dead;
+
+                            double penalty = pow(1.0 
+                                + PENALTY_LAMBDA_CAPACITY * max(0.0, new_cap_violation)
+                                + PENALTY_LAMBDA_ENERGY * max(0.0, new_energy_violation)
+                                + PENALTY_LAMBDA_DEADLINE * max(0.0, new_deadline_violation),
+                                PENALTY_EXPONENT);
+                            
+                            double new_score = (new_total_truck_dist * COST_TRUCK_KM + new_total_drone_dist * COST_DRONE_KM) * penalty;
+                            
+                            if (is_tabu && !(new_score + 1e-8 < best_cost && new_deadline_violation < 1e-8 && new_cap_violation < 1e-8)) {
+                                continue;
+                            }
+                            if (new_score < best_cost_local) {
+                                best_cost_local = new_score;
+                                best_r1 = rA;
+                                best_r2 = rA;
+                                best_pos_pair = i;
+                                best_pos_single = j;
+                                best_triple = triple;
+                            }
+                        }
+                    }
+                }
+                if (rA == rB) continue; // Already handled
+                bool is_truck_b = rB < h;
+                const vi& route_b = is_truck_b ? initial_solution.truck_routes[rB] : initial_solution.drone_routes[rB - h];
+                if (route_b.empty() || (is_truck_b && route_b.size() < 3)) continue; 
+
+                int start_j = is_truck_b ? 1 : 0;
+                int end_j = is_truck_b ? (int)route_b.size() - 2 : (int)route_b.size() - 1;
+
+                for (int i = start_i; i <= max_i; ++i) {
+                    int u = route_a[i];
+                    int v = route_a[i+1];
+                    if (u == 0 || v == 0) continue; 
+                    if (!is_truck_b && (!served_by_drone[u] || !served_by_drone[v])) continue;
+
+                    for (int j = start_j; j <= end_j; ++j) {
+                        int w = route_b[j];
+                        if (w == 0) continue;
+                        if (!is_truck_a && !served_by_drone[w]) continue;
+
+                        vector<int> triple = {u, v, w};
+                        sort(triple.begin(), triple.end());
+                        bool is_tabu = (tabu_list_21.count(triple) && tabu_list_21[triple] > current_iter);
+
+                        // --- Calculate Deltas ---
+                        
+                        // Cost & Time A (Remove u,v Add w)
+                        double delta_dist_a = 0;
+                        double delta_time_a = 0;
+                        if (is_truck_a) {
+                            int prev = route_a[i-1];
+                            int next = route_a[i+2];
+                            double removed = distance_matrix_manhattan[prev][u] + distance_matrix_manhattan[u][v] + distance_matrix_manhattan[v][next];
+                            double added = distance_matrix_manhattan[prev][w] + distance_matrix_manhattan[w][next];
+                            delta_dist_a = (added - removed);
+                            delta_time_a = (added - removed) / vmax;
+                        } else {
+                            delta_dist_a = (2.0 * distance_matrix_euclid[0][w] - 2.0 * distance_matrix_euclid[0][u] - 2.0 * distance_matrix_euclid[0][v]);
+                            delta_time_a = delta_dist_a / v_fly_drone;
+                        }
+
+                        // Cost & Time B (Remove w Add u,v)
+                        double delta_dist_b = 0;
+                        double delta_time_b = 0;
+                        if (is_truck_b) {
+                            int prev = route_b[j-1];
+                            int next = route_b[j+1];
+                            double removed = distance_matrix_manhattan[prev][w] + distance_matrix_manhattan[w][next];
+                            double added = distance_matrix_manhattan[prev][u] + distance_matrix_manhattan[u][v] + distance_matrix_manhattan[v][next];
+                            delta_dist_b = (added - removed);
+                            delta_time_b = (added - removed) / vmax;
+                        } else {
+                            delta_dist_b = (2.0 * distance_matrix_euclid[0][u] + 2.0 * distance_matrix_euclid[0][v] - 2.0 * distance_matrix_euclid[0][w]);
+                            delta_time_b = delta_dist_b / v_fly_drone;
+                        }
+
+                        double new_total_truck_dist = base_truck_dist + (is_truck_a ? delta_dist_a : 0) + (is_truck_b ? delta_dist_b : 0);
+                        double new_total_drone_dist = base_drone_dist + (!is_truck_a ? delta_dist_a : 0) + (!is_truck_b ? delta_dist_b : 0);
+
+                        // --- Violations ---
+                        double dem_change_a = demand[w] - (demand[u] + demand[v]);
+                        double dem_change_b = (demand[u] + demand[v]) - demand[w];
+                        
+                        double delta_cap = 0;
+                        if (is_truck_a) {
+                             double load = initial_solution.truck_route_cap[rA];
+                             delta_cap += max(0.0, (load + dem_change_a - Dh)/Dh) - max(0.0, (load - Dh)/Dh);
+                        } else {
+                             delta_cap += max(0.0, (demand[w]-Dd)/Dd) - max(0.0, (demand[u]-Dd)/Dd) - max(0.0, (demand[v]-Dd)/Dd);
+                        }
+                         if (is_truck_b) {
+                             double load = initial_solution.truck_route_cap[rB];
+                             delta_cap += max(0.0, (load + dem_change_b - Dh)/Dh) - max(0.0, (load - Dh)/Dh);
+                        } else {
+                             delta_cap += max(0.0, (demand[u]-Dd)/Dd) + max(0.0, (demand[v]-Dd)/Dd) - max(0.0, (demand[w]-Dd)/Dd);
+                        }
+                        
+                        double delta_dead = 0;
+                        double lim_a = is_truck_a ? truck_limit : drone_limit;
+                        double new_t_a = metrics[rA][0] + delta_time_a;
+                        delta_dead += max(0.0, (new_t_a - lim_a)/lim_a) - metrics[rA][1];
+
+                        double lim_b = is_truck_b ? truck_limit : drone_limit;
+                        double new_t_b = metrics[rB][0] + delta_time_b;
+                        delta_dead += max(0.0, (new_t_b - lim_b)/lim_b) - metrics[rB][1];
+                        
+                        double delta_energy = 0;
+                        if (!is_truck_a) {
+                             double e_u = max(0.0, (2*distance_matrix_euclid[0][u]/v_fly_drone - E)/E);
+                             double e_v = max(0.0, (2*distance_matrix_euclid[0][v]/v_fly_drone - E)/E);
+                             double e_w = max(0.0, (2*distance_matrix_euclid[0][w]/v_fly_drone - E)/E);
+                             delta_energy += (e_w - e_u - e_v);
+                        }
+                        if (!is_truck_b) {
+                             double e_u = max(0.0, (2*distance_matrix_euclid[0][u]/v_fly_drone - E)/E);
+                             double e_v = max(0.0, (2*distance_matrix_euclid[0][v]/v_fly_drone - E)/E);
+                             double e_w = max(0.0, (2*distance_matrix_euclid[0][w]/v_fly_drone - E)/E);
+                             delta_energy += (e_u + e_v - e_w);
+                        }
+
+                        double total_dead = initial_solution.deadline_violation + delta_dead;
+                        double total_cap = initial_solution.capacity_violation + delta_cap;
+                        double total_en = initial_solution.energy_violation + delta_energy;
+                        
+                        double penalty = pow(1.0 + PENALTY_LAMBDA_DEADLINE*total_dead + PENALTY_LAMBDA_CAPACITY*total_cap + PENALTY_LAMBDA_ENERGY*total_en, PENALTY_EXPONENT);
+                        double score = (new_total_truck_dist * COST_TRUCK_KM + new_total_drone_dist * COST_DRONE_KM) * penalty;
+                        
+                        bool is_feas = (total_dead < 1e-8 && total_cap < 1e-8 && total_en < 1e-8);
+
+                        if (is_tabu && !(score < best_cost && is_feas)) continue; 
+                        
+                        if (score < best_cost_local) {
+                            best_cost_local = score;
+                            best_r1 = rA; best_r2 = rB;
+                            best_pos_pair = i; best_pos_single = j;
+                            best_triple = triple;
+                        }
+                    }
+                }
+            } 
+        } 
+
+        if (best_r1 != -1) {
+            best_neighbor = initial_solution;
+            
+            if (best_r1 != best_r2) {
+                // Extract references
+                bool is_truck_1 = best_r1 < h;
+                vi& r1 = is_truck_1 ? best_neighbor.truck_routes[best_r1] : best_neighbor.drone_routes[best_r1 - h];
+                bool is_truck_2 = best_r2 < h;
+                vi& r2 = is_truck_2 ? best_neighbor.truck_routes[best_r2] : best_neighbor.drone_routes[best_r2 - h];
+
+                int u = r1[best_pos_pair];
+                int v = r1[best_pos_pair+1];
+                int w = r2[best_pos_single];
+
+                // Perform Swap
+                // R1: replace u,v with w
+                r1[best_pos_pair] = w;
+                r1.erase(r1.begin() + best_pos_pair + 1);
+
+                // R2: replace w with u,v
+                r2[best_pos_single] = u;
+                r2.insert(r2.begin() + best_pos_single + 1, v);
+            }
+            else {
+                // Intra-route case for trucks
+                vi& r = best_neighbor.truck_routes[best_r1];
+                int u = r[best_pos_pair];
+                int v = r[best_pos_pair+1];
+                int w = r[best_pos_single];
+
+                // Reconstruct new route
+                vi new_route;
+                for (int k = 0; k < (int)r.size(); ++k) {
+                    if (k == best_pos_pair) {
+                        new_route.push_back(w); // w
+                    } else if (k == best_pos_single) {
+                        new_route.push_back(u); // u
+                        new_route.push_back(v); // v
+                    } else if (k != best_pos_pair + 1) { // skip v at pos_pair+1
+                        new_route.push_back(r[k]);
+                    }
+                }
+                best_neighbor.truck_routes[best_r1] = new_route;
+            }
+
+            best_neighbor = recalculate_solution(best_neighbor);
+
+            if (solution_cost(best_neighbor) < best_neighbor_cost) {
+                best_neighbor_cost = solution_cost(best_neighbor);
+                tabu_list_21[best_triple] = current_iter + TABU_TENURE_21;
+                return best_neighbor;
+            }
         }
         return initial_solution;
     } else if (neighbor_id == 6) {
-        // Neighborhood 6: Swap two pairs of customers between routes
+       // Neighborhood 6: 2-2 Swap (Swap pair (u1,u2) from A with pair (v1,v2) from B)
 
-        Solution best_candidate_neighbor = best_neighbor;
-        double best_neighbor_cost_local = 1e18;
-        vector<int> best_tabu_key;
-        int best_pair_a1 = -1, best_pair_a2 = -1;
-        int best_pair_b1 = -1, best_pair_b2 = -1;
-        int best_other_vehicle = -1;
-        bool best_other_is_truck = true;
-        bool best_same_route = false;
+        int best_r1 = -1, best_r2 = -1;
+        int best_pos_1 = -1, best_pos_2 = -1;
+        double best_cost_local = 1e18;
+        vector<int> best_triple; // For tabu update (stores u1, u2, v1, v2 sorted)
+        
+        // 1. Pre-calculate metrics (Reuse logic)
+        vector<vd> metrics(h + d);
+        double base_truck_dist = 0.0, base_drone_dist = 0.0;
+        for (int i = 0; i < h; ++i) {
+            metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
+            const auto& r = initial_solution.truck_routes[i];
+            for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+        }
+        for (int i = 0; i < d; ++i) {
+            metrics[h + i] = check_drone_route_feasibility(initial_solution.drone_routes[i]);
+            const auto& r = initial_solution.drone_routes[i];
+            for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
+        }
 
-        auto enumerate_pairs = [](const vi& route) {
-            vector<int> starts;
-            for (int i = 0; i + 1 < (int)route.size(); ++i) {
-                if (route[i] != 0 && route[i + 1] != 0) starts.push_back(i);
-            }
-            return starts;
-        };
+        // Loop pairs of routes
+        for (int rA = 0; rA < h + d; ++rA) {
+            bool is_truck_a = rA < h;
+            const vi& route_a = is_truck_a ? initial_solution.truck_routes[rA] : initial_solution.drone_routes[rA - h];
+            if (route_a.size() < (is_truck_a ? 4 : 2)) continue; // Need at least Pair
 
-        auto normalize_route = [](vi route) {
-            if (route.empty()) return route;
-            if (route.front() != 0) route.insert(route.begin(), 0);
-            if (route.back() != 0) route.push_back(0);
-            vi cleaned;
-            cleaned.reserve(route.size());
-            for (int node : route) {
-                if (!cleaned.empty() && cleaned.back() == node) continue;
-                cleaned.push_back(node);
-            }
-            return cleaned;
-        };
+            // Define iteration range for Pair 1 (u1, u2) starting at i
+            int max_i = is_truck_a ? (int)route_a.size() - 3 : (int)route_a.size() - 2;
+            int start_i = is_truck_a ? 1 : 0;
+            if (max_i < start_i) continue;
 
-        auto near_enough = [&](int u, int v) {
-            return !KNN_ADJ.empty() && KNN_ADJ.size() > (size_t)u &&
-                   KNN_ADJ[u].size() > (size_t)v && KNN_ADJ[u][v];
-        };
+            for (int rB = 0; rB < h + d; ++rB) {
+                // Determine limits for rB
+                bool is_truck_b = rB < h;
+                const vi& route_b = is_truck_b ? initial_solution.truck_routes[rB] : initial_solution.drone_routes[rB - h];
+                if (route_b.empty() || route_b.size() < (is_truck_b ? 4 : 2)) continue;
 
-        auto consider_swap_pairs = [&](const vi& base_route, bool base_is_truck, int base_route_idx) {
-            if (base_route.size() <= 3) return;
+                int max_j = is_truck_b ? (int)route_b.size() - 3 : (int)route_b.size() - 2;
+                int start_j = is_truck_b ? 1 : 0;
+                
+                if (rA == rB) {
+                    // INTRA-ROUTE
+                    if (!is_truck_a) continue; // Skip drone intra-route (no cost change)
+                    
+                    for (int i = start_i; i <= max_i; ++i) {
+                        int u1 = route_a[i];
+                        int u2 = route_a[i+1];
+                        if (u1 == 0 || u2 == 0) continue;
 
-            vd base_metrics = check_route_feasibility(base_route, 0.0, base_is_truck);
-            auto base_pairs = enumerate_pairs(base_route);
-            if (base_pairs.empty()) return;
+                        // rB is rA, so j must be disjoint (and > i). 
+                        // Start j at i + 2 to avoid overlap (u1, u2) vs (v1, v2)
+                        for (int j = i + 2; j <= max_j; ++j) {
+                            int v1 = route_a[j];
+                            int v2 = route_a[j+1];
+                            if (v1 == 0 || v2 == 0) continue;
 
-            for (int p : base_pairs) {
-                int a1 = base_route[p];
-                int a2 = base_route[p + 1];
+                            vector<int> quad = {u1, u2, v1, v2};
+                            sort(quad.begin(), quad.end());
+                            bool is_tabu = (tabu_list_22.count(quad) && tabu_list_22[quad] > current_iter);
 
-                for (int target_veh = 0; target_veh < h + d; ++target_veh) {
-                    bool target_is_truck = target_veh < h;
-                    int target_idx = target_is_truck ? target_veh : target_veh - h;
-                    bool same_route = (target_veh == base_route_idx);
-                    const vi& target_route = same_route
-                        ? base_route
-                        : (target_is_truck
-                               ? initial_solution.truck_routes[target_idx]
-                               : initial_solution.drone_routes[target_idx]);
+                            // --- Delta Calc (Intra-Truck) ---
+                            double delta_dist_a = 0;
+                            double delta_time_a = 0;
+                            
+                            int p1 = route_a[i-1];
+                            int s1 = route_a[i+2]; // Next after u2 (could be v1 if j=i+2)
+                            int p2 = route_a[j-1]; // Prev before v1 (could be u2 if j=i+2)
+                            int s2 = route_a[j+2]; // Next after v2
 
-                    if (target_route.size() <= 3) continue;
-                    auto target_pairs = enumerate_pairs(target_route);
-                    if (target_pairs.empty()) continue;
+                            double current_dist = 0;
+                            double new_dist = 0;
 
-                    vd target_metrics;
-                    if (!same_route) {
-                        target_metrics = check_route_feasibility(target_route, 0.0, target_is_truck);
-                    }
-
-                    for (int q : target_pairs) {
-                        if (same_route && (q == p || q == p + 1 || p == q + 1)) continue;
-
-                        int b1 = target_route[q];
-                        int b2 = target_route[q + 1];
-
-                        if (!target_is_truck && (!served_by_drone[a1] || !served_by_drone[a2])) continue;
-                        if (!base_is_truck && (!served_by_drone[b1] || !served_by_drone[b2])) continue;
-
-                        if (!KNN_ADJ.empty()) {
-                            bool ok = near_enough(a1, b1) || near_enough(a1, b2) ||
-                                      near_enough(a2, b1) || near_enough(a2, b2) ||
-                                      near_enough(b1, a1) || near_enough(b2, a1) ||
-                                      near_enough(b1, a2) || near_enough(b2, a2);
-                            if (!ok) continue;
-                        }
-
-                        vector<int> tabu_key = {a1, a2, b1, b2};
-                        sort(tabu_key.begin(), tabu_key.end());
-                        auto it_tabu = tabu_list_22.find(tabu_key);
-                        bool is_tabu = (it_tabu != tabu_list_22.end() && it_tabu->second > current_iter);
-
-                        vi base_new = base_route;
-                        vi target_new = target_route;
-
-                        if (same_route) {
-                            swap(base_new[p], base_new[q]);
-                            swap(base_new[p + 1], base_new[q + 1]);
-                        } else {
-                            base_new[p] = b1;
-                            base_new[p + 1] = b2;
-                            target_new[q] = a1;
-                            target_new[q + 1] = a2;
-                        }
-                        base_new = normalize_route(base_new);
-                        target_new = normalize_route(target_new);
-
-                        vd base_new_metrics = check_route_feasibility(base_new, 0.0, base_is_truck);
-                        vd target_new_metrics;
-                        if (!same_route) {
-                            target_new_metrics = check_route_feasibility(target_new, 0.0, target_is_truck);
-                        }
-
-                        Solution candidate = initial_solution;
-                        candidate.deadline_violation += base_new_metrics[1] - base_metrics[1];
-                        candidate.capacity_violation += base_new_metrics[3] - base_metrics[3];
-                        candidate.energy_violation += base_new_metrics[2] - base_metrics[2];
-                        if (!same_route) {
-                            candidate.deadline_violation += target_new_metrics[1] - target_metrics[1];
-                            candidate.capacity_violation += target_new_metrics[3] - target_metrics[3];
-                            candidate.energy_violation += target_new_metrics[2] - target_metrics[2];
-                        }
-
-                        if (base_is_truck) {
-                            candidate.truck_routes[base_route_idx] = base_new;
-                            candidate.truck_route_times[base_route_idx] = (base_new.size() > 1) ? base_new_metrics[0] : 0.0;
-                        } else {
-                            int base_drone_idx = base_route_idx - h;
-                            if (base_drone_idx >= 0 && base_drone_idx < (int)candidate.drone_routes.size()) {
-                                candidate.drone_routes[base_drone_idx] = base_new;
-                                candidate.drone_route_times[base_drone_idx] = (base_new.size() > 1) ? base_new_metrics[0] : 0.0;
-                            }
-                        }
-
-                        if (!same_route) {
-                            if (target_is_truck) {
-                                candidate.truck_routes[target_idx] = target_new;
-                                candidate.truck_route_times[target_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
+                            if (j == i + 2) {
+                                // Consecutive: p1 -> u1 -> u2 -> v1 -> v2 -> s2
+                                // Swap:        p1 -> v1 -> v2 -> u1 -> u2 -> s2
+                                current_dist = distance_matrix_manhattan[p1][u1] + distance_matrix_manhattan[u2][v1] + distance_matrix_manhattan[v2][s2];
+                                new_dist     = distance_matrix_manhattan[p1][v1] + distance_matrix_manhattan[v2][u1] + distance_matrix_manhattan[u2][s2];
                             } else {
-                                int target_drone_idx = target_idx;
-                                if (target_drone_idx >= 0 && target_drone_idx < (int)candidate.drone_routes.size()) {
-                                    candidate.drone_routes[target_drone_idx] = target_new;
-                                    candidate.drone_route_times[target_drone_idx] = (target_new.size() > 1) ? target_new_metrics[0] : 0.0;
+                                // Disjoint
+                                // At i: p1 -> u1 -> u2 -> s1  ==>  p1 -> v1 -> v2 -> s1
+                                current_dist += distance_matrix_manhattan[p1][u1] + distance_matrix_manhattan[u2][s1];
+                                new_dist     += distance_matrix_manhattan[p1][v1] + distance_matrix_manhattan[v2][s1];
+                                // At j: p2 -> v1 -> v2 -> s2  ==>  p2 -> u1 -> u2 -> s2
+                                current_dist += distance_matrix_manhattan[p2][v1] + distance_matrix_manhattan[v2][s2];
+                                new_dist     += distance_matrix_manhattan[p2][u1] + distance_matrix_manhattan[u2][s2];
+                            }
+                            
+                            delta_dist_a = new_dist - current_dist;
+                            delta_time_a = delta_dist_a / vmax;
+
+                            double new_total_truck_dist = base_truck_dist + delta_dist_a;
+                            double new_total_drone_dist = base_drone_dist;
+
+                            // -- Violations --
+                            // Intra-swap capacity check (path dependent)
+                            double new_route_cap_violation = 0;
+                            {
+                                // Simulate new route order for capacity
+                                double load = 0;
+                                for(int k=0; k<(int)route_a.size(); ++k) {
+                                    int node = 0;
+                                    if (k == i) node = v1;
+                                    else if (k == i+1) node = v2;
+                                    else if (k == j) node = u1;
+                                    else if (k == j+1) node = u2;
+                                    else node = route_a[k];
+
+                                    if (node == 0) load = 0;
+                                    else {
+                                        load += demand[node];
+                                        if (load > Dh) new_route_cap_violation += (load - Dh) / Dh;
+                                    }
                                 }
                             }
-                        }
+                            double delta_dead = 0;
+                            double new_t_a = metrics[rA][0] + delta_time_a;
+                            delta_dead = max(0.0, (new_t_a - truck_limit)/truck_limit) - metrics[rA][1];
 
-                        candidate.total_makespan = 0.0;
-                        for (double t : candidate.truck_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-                        for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
+                            double new_cap_violation = initial_solution.capacity_violation - metrics[rA][3] + new_route_cap_violation;
+                            double new_energy_violation = initial_solution.energy_violation; // Unchanged for truck
+                            double new_deadline_violation = initial_solution.deadline_violation + delta_dead;
 
-                        double candidate_score = solution_cost(candidate);
-                        if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
-                                         candidate.deadline_violation <= 1e-8 &&
-                                         candidate.capacity_violation <= 1e-8 &&
-                                         candidate.energy_violation <= 1e-8)) {
-                            continue;
+                            double penalty = pow(1.0 
+                                + PENALTY_LAMBDA_CAPACITY * max(0.0, new_cap_violation)
+                                + PENALTY_LAMBDA_ENERGY * max(0.0, new_energy_violation)
+                                + PENALTY_LAMBDA_DEADLINE * max(0.0, new_deadline_violation),
+                                PENALTY_EXPONENT);
+                            
+                            double score = (new_total_truck_dist * COST_TRUCK_KM + new_total_drone_dist * COST_DRONE_KM) * penalty;
+                            bool is_feas = (new_deadline_violation < 1e-8 && new_cap_violation < 1e-8 && new_energy_violation < 1e-8);
+                            if (is_tabu && !(score < best_cost && is_feas)) continue;
+
+                            if (score < best_cost_local) {
+                                best_cost_local = score;
+                                best_r1 = rA; best_r2 = rA;
+                                best_pos_1 = i; best_pos_2 = j;
+                                best_triple = quad;
+                            }
                         }
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                            best_tabu_key = tabu_key;
-                            best_pair_a1 = a1;
-                            best_pair_a2 = a2;
-                            best_pair_b1 = b1;
-                            best_pair_b2 = b2;
-                            best_other_vehicle = target_veh;
-                            best_other_is_truck = target_is_truck;
-                            best_same_route = same_route;
+                    }
+
+                } else {
+                    // INTER-ROUTE
+                    if (rA > rB) continue; // Avoid double counting pairs (undirected pair of routes)
+                    
+                    for (int i = start_i; i <= max_i; ++i) {
+                        int u1 = route_a[i];
+                        int u2 = route_a[i+1];
+                        if (u1 == 0 || u2 == 0) continue;
+                        if (!is_truck_b && (!served_by_drone[u1] || !served_by_drone[u2])) continue;
+
+                        for (int j = start_j; j <= max_j; ++j) {
+                            int v1 = route_b[j];
+                            int v2 = route_b[j+1];
+                            if (v1 == 0 || v2 == 0) continue;
+                            if (!is_truck_a && (!served_by_drone[v1] || !served_by_drone[v2])) continue;
+
+                            vector<int> quad = {u1, u2, v1, v2};
+                            sort(quad.begin(), quad.end());
+                            bool is_tabu = (tabu_list_22.count(quad) && tabu_list_22[quad] > current_iter);
+
+                            // --- Delta Calc ---
+                            double delta_dist_a = 0, delta_time_a = 0;
+                            double delta_dist_b = 0, delta_time_b = 0;
+
+                            // Route A: Remove u1,u2. Add v1,v2.
+                            if (is_truck_a) {
+                                int p = route_a[i-1];
+                                int s = route_a[i+2];
+                                double rem = distance_matrix_manhattan[p][u1] + distance_matrix_manhattan[u1][u2] + distance_matrix_manhattan[u2][s];
+                                double add = distance_matrix_manhattan[p][v1] + distance_matrix_manhattan[v1][v2] + distance_matrix_manhattan[v2][s];
+                                delta_dist_a = add - rem;
+                                delta_time_a = delta_dist_a / vmax;
+                            } else {
+                                // Drone: sorties
+                                double rem = 2.0 * distance_matrix_euclid[0][u1] + 2.0 * distance_matrix_euclid[0][u2];
+                                double add = 2.0 * distance_matrix_euclid[0][v1] + 2.0 * distance_matrix_euclid[0][v2];
+                                delta_dist_a = add - rem;
+                                delta_time_a = delta_dist_a / v_fly_drone;
+                            }
+
+                            // Route B: Remove v1,v2. Add u1,u2.
+                            if (is_truck_b) {
+                                int p = route_b[j-1];
+                                int s = route_b[j+2];
+                                double rem = distance_matrix_manhattan[p][v1] + distance_matrix_manhattan[v1][v2] + distance_matrix_manhattan[v2][s];
+                                double add = distance_matrix_manhattan[p][u1] + distance_matrix_manhattan[u1][u2] + distance_matrix_manhattan[u2][s];
+                                delta_dist_b = add - rem;
+                                delta_time_b = delta_dist_b / vmax;
+                            } else {
+                                double rem = 2.0 * distance_matrix_euclid[0][v1] + 2.0 * distance_matrix_euclid[0][v2];
+                                double add = 2.0 * distance_matrix_euclid[0][u1] + 2.0 * distance_matrix_euclid[0][u2];
+                                delta_dist_b = add - rem;
+                                delta_time_b = delta_dist_b / v_fly_drone;
+                            }
+
+                            double new_total_truck_dist = base_truck_dist + (is_truck_a ? delta_dist_a : 0) + (is_truck_b ? delta_dist_b : 0);
+                            double new_total_drone_dist = base_drone_dist + (!is_truck_a ? delta_dist_a : 0) + (!is_truck_b ? delta_dist_b : 0);
+
+                            // Capacity
+                            // If Truck->Drone: check Dd logic? (handled by feasibility usually, or explicitly here)
+                            // Capacity violation strictly path dependent for trucks.
+                            double delta_cap = 0;
+                            // Truck A
+                            double dem_change_a = (demand[v1] + demand[v2]) - (demand[u1] + demand[u2]);
+                            if (is_truck_a) {
+                                // Estimate: load + change
+                                double load_a = initial_solution.truck_route_cap[rA]; // This is total load.
+                                // Approximation for delta:
+                                delta_cap += max(0.0, (load_a + dem_change_a - Dh)/Dh) - max(0.0, (load_a - Dh)/Dh); 
+                            } else {
+                                // Drone A: u1,u2 out, v1,v2 in.
+                                // Check individual drone items
+                                delta_cap += (max(0.0, (demand[v1]-Dd)/Dd) + max(0.0, (demand[v2]-Dd)/Dd)) 
+                                           - (max(0.0, (demand[u1]-Dd)/Dd) + max(0.0, (demand[u2]-Dd)/Dd));
+                            }
+                            // Truck B
+                            double dem_change_b = (demand[u1] + demand[u2]) - (demand[v1] + demand[v2]);
+                            if (is_truck_b) {
+                                double load_b = initial_solution.truck_route_cap[rB];
+                                delta_cap += max(0.0, (load_b + dem_change_b - Dh)/Dh) - max(0.0, (load_b - Dh)/Dh);
+                            } else {
+                                delta_cap += (max(0.0, (demand[u1]-Dd)/Dd) + max(0.0, (demand[u2]-Dd)/Dd)) 
+                                           - (max(0.0, (demand[v1]-Dd)/Dd) + max(0.0, (demand[v2]-Dd)/Dd));
+                            }
+
+                            // Deadline
+                            double delta_dead = 0;
+                            double t_a = metrics[rA][0] + delta_time_a;
+                            double lim_a = is_truck_a ? truck_limit : drone_limit;
+                            delta_dead += max(0.0, (t_a - lim_a)/lim_a) - metrics[rA][1];
+
+                            double t_b = metrics[rB][0] + delta_time_b;
+                            double lim_b = is_truck_b ? truck_limit : drone_limit;
+                            delta_dead += max(0.0, (t_b - lim_b)/lim_b) - metrics[rB][1];
+
+                            // Energy (Drone only)
+                            double delta_en = 0;
+                            auto calc_e = [&](int c) { return max(0.0, (2.0*distance_matrix_euclid[0][c]/v_fly_drone - E)/E); };
+                            if (!is_truck_a) delta_en += (calc_e(v1) + calc_e(v2)) - (calc_e(u1) + calc_e(u2));
+                            if (!is_truck_b) delta_en += (calc_e(u1) + calc_e(u2)) - (calc_e(v1) + calc_e(v2));
+
+                            double new_cap_violation = initial_solution.capacity_violation + delta_cap;
+                            double new_en_violation = initial_solution.energy_violation + delta_en;
+                            double new_dead_violation = initial_solution.deadline_violation + delta_dead;
+
+                            double penalty = pow(1.0 
+                                + PENALTY_LAMBDA_CAPACITY * max(0.0, new_cap_violation)
+                                + PENALTY_LAMBDA_ENERGY * max(0.0, new_en_violation)
+                                + PENALTY_LAMBDA_DEADLINE * max(0.0, new_dead_violation),
+                                PENALTY_EXPONENT);
+
+                            double score = (new_total_truck_dist * COST_TRUCK_KM + new_total_drone_dist * COST_DRONE_KM) * penalty;
+
+                            bool is_feas = (new_dead_violation < 1e-8 && new_cap_violation < 1e-8 && new_en_violation < 1e-8);
+                            if (is_tabu && !(score < best_cost && is_feas)) continue;
+
+                            if (score < best_cost_local) {
+                                best_cost_local = score;
+                                best_r1 = rA; best_r2 = rB;
+                                best_pos_1 = i; best_pos_2 = j;
+                                best_triple = quad;
+                            }
                         }
                     }
                 }
             }
-        };
-
-        for (int critical_idx = 0; critical_idx < h + d; ++critical_idx) {
-            bool crit_is_truck = critical_idx < h;
-            const vi& route = crit_is_truck
-                ? initial_solution.truck_routes[critical_idx]
-                : initial_solution.drone_routes[critical_idx - h];
-            consider_swap_pairs(route, crit_is_truck, critical_idx);
         }
 
-        if (!best_tabu_key.empty() && best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
-            tabu_list_22[best_tabu_key] = current_iter + TABU_TENURE_22;
+        if (best_r1 != -1) {
+            best_neighbor = initial_solution;
+            
+            // Apply Move
+            if (best_r1 != best_r2) {
+                // Inter
+                bool is_tr1 = best_r1 < h;
+                vi& r1 = is_tr1 ? best_neighbor.truck_routes[best_r1] : best_neighbor.drone_routes[best_r1 - h];
+                bool is_tr2 = best_r2 < h;
+                vi& r2 = is_tr2 ? best_neighbor.truck_routes[best_r2] : best_neighbor.drone_routes[best_r2 - h];
 
-            // Debug N6
-            /* cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            bool other_is_truck = best_other_is_truck;
-            int other_idx = other_is_truck ? best_other_vehicle : best_other_vehicle - h;
-            cout << "[N6] (" << (best_same_route ? "same route" : "different routes") << ") swap pairs ("
-                 << best_pair_a1 << "," << best_pair_a2 << ") & ("
-                 << best_pair_b1 << "," << best_pair_b2 << ") "
-                 << ", score: " << solution_score(initial_solution)
-                 << " -> " << solution_score(best_candidate_neighbor)
-                 << ", iter " << current_iter << "\n"; */
+                int u1 = r1[best_pos_1];
+                int u2 = r1[best_pos_1+1];
+                int v1 = r2[best_pos_2];
+                int v2 = r2[best_pos_2+1];
 
-            return best_neighbor;
+                // Swap
+                r1[best_pos_1] = v1;
+                r1[best_pos_1+1] = v2;
+                r2[best_pos_2] = u1;
+                r2[best_pos_2+1] = u2;
+            } else {
+                // Intra (Truck only)
+                vi& r = best_neighbor.truck_routes[best_r1];
+                int i = best_pos_1;
+                int j = best_pos_2;
+                int u1 = r[i];
+                int u2 = r[i+1];
+                int v1 = r[j];
+                int v2 = r[j+1];
+
+                r[i] = v1;
+                r[i+1] = v2;
+                r[j] = u1;
+                r[j+1] = u2;
+            }
+
+            best_neighbor = recalculate_solution(best_neighbor);
+            tabu_list_22[best_triple] = current_iter + TABU_TENURE_22;
+        }
+
+        if (solution_cost(best_neighbor) < best_neighbor_cost) {
+             return best_neighbor;
         }
         return initial_solution;
 
     }  else if (neighbor_id == 7) {
-        // Neighborhood 7: depth-2 ejection chain (i -> j -> k)
-        Solution best_candidate_neighbor = best_neighbor;
-        double best_neighbor_cost_local = 1e18;
-        vector<int> best_tabu_key;
-        int best_veh_i = -1, best_veh_j = -1, best_veh_k = -1;
-        int best_cust_removed = -1, best_cust_ejected = -1;
+        // Neighborhood 7: Depth-2 Ejection Chain (u from A -> replaces v in B -> v inserts in C)
+        // Optimized: Random Permutation Selection
 
-        auto normalize_route = [](vi route) {
-            if (route.empty()) return route;
-            if (route.front() != 0) route.insert(route.begin(), 0);
-            if (route.back() != 0) route.push_back(0);
-            vi cleaned;
-            cleaned.reserve(route.size());
-            for (int node : route) {
-                if (!cleaned.empty() && cleaned.back() == node) continue;
-                cleaned.push_back(node);
+        int best_rA = -1, best_rB = -1, best_rC = -1;
+        int best_pos_u = -1, best_pos_v = -1, best_pos_k = -1;
+        double best_cost_local = 1e18;
+        vector<int> best_tabu_key; // {u, v}
+        
+        // 1. Pre-calculate metrics
+        vector<vd> metrics(h + d);
+        double base_truck_dist = 0.0, base_drone_dist = 0.0;
+        for (int i = 0; i < h; ++i) {
+            metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
+            const auto& r = initial_solution.truck_routes[i];
+            for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+        }
+        for (int i = 0; i < d; ++i) {
+            metrics[h + i] = check_drone_route_feasibility(initial_solution.drone_routes[i]);
+            const auto& r = initial_solution.drone_routes[i];
+            for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
+        }
+
+        const int NUM_RANDOM_TRIPLETS = 1; // Limit attempts
+        int n_routes = h + d;
+        if (n_routes < 3) return initial_solution;
+
+        vi route_indices;
+        for (int i = 0; i < n_routes; ++i){
+            if (i < h) {
+                if (initial_solution.truck_routes[i].size() <= 2) continue;
+                route_indices.push_back(i);  // Truck
             }
-            return cleaned;
-        };
+            else {
+                if (initial_solution.drone_routes[i - h].size() <= 1) continue;
+                route_indices.push_back(i);  // Drone
+            }
+        }
 
-        auto is_truck_vehicle = [&](int veh_id) { return veh_id < h; };
-        auto fetch_route = [&](int veh_id) -> const vi& {
-            return (veh_id < h) ? initial_solution.truck_routes[veh_id]
-                                : initial_solution.drone_routes[veh_id - h];
-        };
+        int filtered_n_routes = (int)route_indices.size();
 
-        auto get_metrics = [&](const vi& route, bool truck_mode) {
-            return check_route_feasibility(route, 0.0, truck_mode);
-        };
+        for (int attempt = 0; attempt < NUM_RANDOM_TRIPLETS; ++attempt) {
+            int rA = rand() % filtered_n_routes;
+            int rB = rand() % filtered_n_routes;
+            while(rB == rA) rB = rand() % filtered_n_routes;
+            int rC = rand() % filtered_n_routes;
+            while(rC == rA || rC == rB) rC = rand() % filtered_n_routes;
+            rA = route_indices[rA];
+            rB = route_indices[rB];
+            rC = route_indices[rC];
+            bool is_truck_a = rA < h;
+            const vi& route_a = is_truck_a ? initial_solution.truck_routes[rA] : initial_solution.drone_routes[rA - h];
 
-        auto is_near = [&](int u, int v) {
-            if (KNN_ADJ.empty()) return true;
-            if (u < 0 || v < 0) return false;
-            if (u >= (int)KNN_ADJ.size()) return false;
-            if (v >= (int)KNN_ADJ[u].size()) return false;
-            return (KNN_ADJ[u][v] == 1);
-        };
+            bool is_truck_b = rB < h;
+            const vi& route_b = is_truck_b ? initial_solution.truck_routes[rB] : initial_solution.drone_routes[rB - h];
 
-        const int MAX_ROUTE_TRIPLETS = min(50, (h + d) * max(0, h + d - 1) * max(0, h + d - 2) / 6);
-        int triplets_evaluated = 0;
-        bool stop_search = false;
+            bool is_truck_c = rC < h;
+            const vi& route_c = is_truck_c ? initial_solution.truck_routes[rC] : initial_solution.drone_routes[rC - h];
 
-        for (int veh_i = 0; veh_i < h + d && !stop_search; ++veh_i) {
-            const vi& route_i_raw = fetch_route(veh_i);
-            if (route_i_raw.size() <= 2) continue;
-            vi route_i = normalize_route(route_i_raw);
-            vd metrics_i = get_metrics(route_i, is_truck_vehicle(veh_i));
+            // Loop u in A
+            int max_i = is_truck_a ? (int)route_a.size() - 2 : (int)route_a.size() - 1;
+            int start_i = is_truck_a ? 1 : 0;
+            
+            for (int i = start_i; i <= max_i; ++i) {
+                int u = route_a[i];
+                if (u == 0) continue;
+                if (!is_truck_b && !served_by_drone[u]) continue; 
 
-            vector<int> pos_i;
-            for (int idx = 0; idx < (int)route_i.size(); ++idx)
-                if (route_i[idx] != 0) pos_i.push_back(idx);
-            if (pos_i.empty()) continue;
+                // Loop v in B
+                int max_j = is_truck_b ? (int)route_b.size() - 2 : (int)route_b.size() - 1;
+                int start_j = is_truck_b ? 1 : 0;
 
-            for (int veh_j = 0; veh_j < h + d && !stop_search; ++veh_j) {
-                if (veh_j == veh_i) continue;
-                const vi& route_j_raw = fetch_route(veh_j);
-                if (route_j_raw.size() <= 2) continue;
-                vi route_j = normalize_route(route_j_raw);
-                vd metrics_j = get_metrics(route_j, is_truck_vehicle(veh_j));
+                for (int j = start_j; j <= max_j; ++j) {
+                    int v = route_b[j];
+                    if (v == 0) continue;
+                    if (!is_truck_c && !served_by_drone[v]) continue;
 
-                vector<int> pos_j;
-                vector<int> customers_j;
-                for (int idx = 0; idx < (int)route_j.size(); ++idx) {
-                    if (route_j[idx] != 0) {
-                        pos_j.push_back(idx);
-                        customers_j.push_back(route_j[idx]);
-                    }
-                }
-                if (pos_j.empty()) continue;
+                    vector<int> tabu_key = {u, v};
+                    sort(tabu_key.begin(), tabu_key.end());
+                    bool is_tabu = (tabu_list_ejection.count(tabu_key) && tabu_list_ejection[tabu_key] > current_iter);
 
-                for (int veh_k = 0; veh_k < h + d; ++veh_k) {
-                    if (veh_k == veh_i || veh_k == veh_j) continue;
-                    if (triplets_evaluated >= MAX_ROUTE_TRIPLETS) { stop_search = true; break; }
-                    ++triplets_evaluated;
+                    // Loop position k in C
+                    int max_k = is_truck_c ? (int)route_c.size() - 2 : (int)route_c.size() - 1;
+                    int start_k = is_truck_c ? 0 : -1; 
 
-                    const vi& route_k_raw = fetch_route(veh_k);
-                    vi route_k = normalize_route(route_k_raw);
-                    vd metrics_k = get_metrics(route_k, is_truck_vehicle(veh_k));
+                    for (int k = start_k; k <= max_k; ++k) {
+                        
+                        // --- DELTA EVALUATION ---
 
-                    vector<int> pos_k_candidates;
-                    for (int idx = 1; idx <= (int)route_k.size(); ++idx)
-                        pos_k_candidates.push_back(idx);
-
-                    if (pos_k_candidates.empty()) continue;
-
-                    for (int pos_idx_i : pos_i) {
-                        int cust_removed = route_i[pos_idx_i];
-                        vi route_i_new = route_i;
-                        route_i_new.erase(route_i_new.begin() + pos_idx_i);
-                        route_i_new = normalize_route(route_i_new);
-                        vd metrics_i_new = get_metrics(route_i_new, is_truck_vehicle(veh_i));
-
-                        if (!KNN_ADJ.empty()) {
-                            bool near_some = false;
-                            for (int c : customers_j) {
-                                if (is_near(cust_removed, c) || is_near(c, cust_removed)) { near_some = true; break; }
-                            }
-                            if (!customers_j.empty() && !near_some) continue;
+                        // 1. Route A: Remove u at i
+                        double delta_dist_a = 0;
+                        if (is_truck_a) {
+                            int p = route_a[i-1], s = route_a[i+1];
+                            delta_dist_a = distance_matrix_manhattan[p][s] - distance_matrix_manhattan[p][u] - distance_matrix_manhattan[u][s];
+                        } else {
+                            delta_dist_a = -(2.0 * distance_matrix_euclid[0][u]);
                         }
-                        if (!is_truck_vehicle(veh_j) && !served_by_drone[cust_removed]) continue;
 
-                        for (int pos_idx_j : pos_j) {
-                            int cust_ejected = route_j[pos_idx_j];
-                            if (cust_removed == cust_ejected) continue;
-                            if (!is_truck_vehicle(veh_k) && !served_by_drone[cust_ejected]) continue;
+                        // 2. Route B: Swap v with u at j
+                        double delta_dist_b = 0;
+                        if (is_truck_b) {
+                            int p = route_b[j-1], s = route_b[j+1];
+                            delta_dist_b = (distance_matrix_manhattan[p][u] + distance_matrix_manhattan[u][s]) - (distance_matrix_manhattan[p][v] + distance_matrix_manhattan[v][s]);
+                        } else {
+                            delta_dist_b = (2.0 * distance_matrix_euclid[0][u]) - (2.0 * distance_matrix_euclid[0][v]);
+                        }
 
-                            if (!KNN_ADJ.empty()) {
-                                if (!(is_near(cust_removed, cust_ejected) || is_near(cust_ejected, cust_removed))) continue;
+                        // 3. Route C: Insert v after k
+                        double delta_dist_c = 0;
+                        if (is_truck_c) {
+                            int p = route_c[k];
+                            int s = route_c[k+1];
+                            delta_dist_c = (distance_matrix_manhattan[p][v] + distance_matrix_manhattan[v][s]) - distance_matrix_manhattan[p][s];
+                        } else {
+                            delta_dist_c = (2.0 * distance_matrix_euclid[0][v]);
+                        }
+
+                        double delta_time_a = is_truck_a ? delta_dist_a / vmax : delta_dist_a / v_fly_drone;
+                        double delta_time_b = is_truck_b ? delta_dist_b / vmax : delta_dist_b / v_fly_drone;
+                        double delta_time_c = is_truck_c ? delta_dist_c / vmax : delta_dist_c / v_fly_drone;
+
+                        double new_tot_truck = base_truck_dist + (is_truck_a?delta_dist_a:0) + (is_truck_b?delta_dist_b:0) + (is_truck_c?delta_dist_c:0);
+                        double new_tot_drone = base_drone_dist + (!is_truck_a?delta_dist_a:0) + (!is_truck_b?delta_dist_b:0) + (!is_truck_c?delta_dist_c:0);
+
+                        // Capacity
+                        double new_cap_A = 0, new_cap_B = 0, new_cap_C = 0;
+                        
+                        // A: Remove u
+                        if (is_truck_a) {
+                            double load = 0;
+                            for(size_t idx=0; idx<route_a.size(); ++idx) {
+                                if (idx == (size_t)i) continue; 
+                                int node = route_a[idx];
+                                if (node==0) load=0;
+                                else { load+=demand[node]; if(load>Dh) new_cap_A += (load-Dh)/Dh; }
                             }
+                        } else {
+                            for(int c : route_a) if(c!=u) if((demand[c]-Dd)>0) new_cap_A += (demand[c]-Dd)/Dd;
+                        }
 
-                            vi route_j_new = route_j;
-                            route_j_new[pos_idx_j] = cust_removed;
-                            route_j_new = normalize_route(route_j_new);
-                            vd metrics_j_new = get_metrics(route_j_new, is_truck_vehicle(veh_j));
-
-                            for (int insert_pos_k : pos_k_candidates) {
-                                vi route_k_new = route_k;
-                                if (find(route_k_new.begin(), route_k_new.end(), cust_ejected) != route_k_new.end()) continue;
-                                int insert_index = min(insert_pos_k, (int)route_k_new.size());
-                                route_k_new.insert(route_k_new.begin() + insert_index, cust_ejected);
-                                route_k_new = normalize_route(route_k_new);
-                                vd metrics_k_new = get_metrics(route_k_new, is_truck_vehicle(veh_k));
-
-                                if (!KNN_ADJ.empty()) {
-                                    int idx_new = -1;
-                                    for (int idx = 0; idx < (int)route_k_new.size(); ++idx) {
-                                        if (route_k_new[idx] == cust_ejected) { idx_new = idx; break; }
-                                    }
-                                    if (idx_new != -1 && idx_new > 0 && idx_new + 1 < (int)route_k_new.size()) {
-                                        int prev = route_k_new[idx_new - 1];
-                                        int next = route_k_new[idx_new + 1];
-                                        if (!(is_near(cust_ejected, prev) || is_near(prev, cust_ejected) ||
-                                              is_near(cust_ejected, next) || is_near(next, cust_ejected))) {
-                                            continue;
-                                        }
-                                    }
-                                }
-
-                                Solution candidate = initial_solution;
-
-                                candidate.deadline_violation += metrics_i_new[1] - metrics_i[1];
-                                candidate.capacity_violation += metrics_i_new[3] - metrics_i[3];
-                                candidate.energy_violation += metrics_i_new[2] - metrics_i[2];
-
-                                candidate.deadline_violation += metrics_j_new[1] - metrics_j[1];
-                                candidate.capacity_violation += metrics_j_new[3] - metrics_j[3];
-                                candidate.energy_violation += metrics_j_new[2] - metrics_j[2];
-
-                                candidate.deadline_violation += metrics_k_new[1] - metrics_k[1];
-                                candidate.capacity_violation += metrics_k_new[3] - metrics_k[3];
-                                candidate.energy_violation += metrics_k_new[2] - metrics_k[2];
-
-                                if (is_truck_vehicle(veh_i)) {
-                                    candidate.truck_routes[veh_i] = route_i_new;
-                                    candidate.truck_route_times[veh_i] = (route_i_new.size() > 1) ? metrics_i_new[0] : 0.0;
-                                } else {
-                                    candidate.drone_routes[veh_i - h] = route_i_new;
-                                    candidate.drone_route_times[veh_i - h] = (route_i_new.size() > 1) ? metrics_i_new[0] : 0.0;
-                                }
-
-                                if (is_truck_vehicle(veh_j)) {
-                                    candidate.truck_routes[veh_j] = route_j_new;
-                                    candidate.truck_route_times[veh_j] = (route_j_new.size() > 1) ? metrics_j_new[0] : 0.0;
-                                } else {
-                                    candidate.drone_routes[veh_j - h] = route_j_new;
-                                    candidate.drone_route_times[veh_j - h] = (route_j_new.size() > 1) ? metrics_j_new[0] : 0.0;
-                                }
-
-                                if (is_truck_vehicle(veh_k)) {
-                                    candidate.truck_routes[veh_k] = route_k_new;
-                                    candidate.truck_route_times[veh_k] = (route_k_new.size() > 1) ? metrics_k_new[0] : 0.0;
-                                } else {
-                                    candidate.drone_routes[veh_k - h] = route_k_new;
-                                    candidate.drone_route_times[veh_k - h] = (route_k_new.size() > 1) ? metrics_k_new[0] : 0.0;
-                                }
-
-                                candidate.total_makespan = 0.0;
-                                for (double t : candidate.truck_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-                                for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-
-                                vector<int> tabu_key = {min(cust_removed, cust_ejected), max(cust_removed, cust_ejected)};
-                                bool is_tabu = (tabu_list_ejection.count(tabu_key) &&
-                                                tabu_list_ejection[tabu_key] > current_iter);
-
-                                double candidate_score = solution_cost(candidate);
-                                if (is_tabu && !(candidate_score + 1e-8 < best_cost &&
-                                                candidate.deadline_violation <= 1e-8 &&
-                                                candidate.capacity_violation <= 1e-8 &&
-                                                candidate.energy_violation <= 1e-8)) {
-                                    continue;
-                                }
-                                if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                                    best_neighbor_cost_local = candidate_score;
-                                    best_candidate_neighbor = candidate;
-                                    best_tabu_key = tabu_key;
-                                    best_veh_i = veh_i;
-                                    best_veh_j = veh_j;
-                                    best_veh_k = veh_k;
-                                    best_cust_removed = cust_removed;
-                                    best_cust_ejected = cust_ejected;
-                                }
+                        // B: Swap v -> u
+                        if (is_truck_b) {
+                            double load = 0;
+                            for(size_t idx=0; idx<route_b.size(); ++idx) {
+                                int node = (idx == (size_t)j) ? u : route_b[idx];
+                                if (node==0) load=0;
+                                else { load+=demand[node]; if(load>Dh) new_cap_B += (load-Dh)/Dh; }
                             }
+                        } else {
+                            for(size_t idx=0; idx<route_b.size(); ++idx) {
+                                int node = (idx == (size_t)j) ? u : route_b[idx];
+                                if((demand[node]-Dd)>0) new_cap_B += (demand[node]-Dd)/Dd;
+                            }
+                        }
+
+                        // C: Insert v
+                        if (is_truck_c) {
+                            double load = 0;
+                            for(size_t idx=0; idx<route_c.size(); ++idx) {
+                                int node = route_c[idx];
+                                if (node==0) load=0;
+                                else { load+=demand[node]; if(load>Dh) new_cap_C += (load-Dh)/Dh; }
+                                if (idx == (size_t)k) { load+=demand[v]; if(load>Dh) new_cap_C += (load-Dh)/Dh; }
+                            }
+                        } else {
+                                for(int c : route_c) if((demand[c]-Dd)>0) new_cap_C += (demand[c]-Dd)/Dd;
+                                if((demand[v]-Dd)>0) new_cap_C += (demand[v]-Dd)/Dd;
+                        }
+
+                        double tot_cap_viol = initial_solution.capacity_violation 
+                                            - metrics[rA][3] - metrics[rB][3] - metrics[rC][3]
+                                            + new_cap_A + new_cap_B + new_cap_C;
+
+                        // Deadline
+                        auto calc_dead = [&](int rIdx, double dt, bool truck) {
+                            double lim = truck ? truck_limit : drone_limit;
+                            return max(0.0, (metrics[rIdx][0] + dt - lim)/lim);
+                        };
+                        double new_dead_A = calc_dead(rA, delta_time_a, is_truck_a);
+                        double new_dead_B = calc_dead(rB, delta_time_b, is_truck_b);
+                        double new_dead_C = calc_dead(rC, delta_time_c, is_truck_c);
+
+                        double tot_dead_viol = initial_solution.deadline_violation
+                                                - metrics[rA][1] - metrics[rB][1] - metrics[rC][1]
+                                                + new_dead_A + new_dead_B + new_dead_C;
+
+                        // Energy (Drone only)
+                        double tot_en_viol = initial_solution.energy_violation;
+                        auto en_cost = [&](int c) { return max(0.0, (2.0*distance_matrix_euclid[0][c]/v_fly_drone - E)/E); };
+                        if (!is_truck_a) tot_en_viol -= en_cost(u);
+                        if (!is_truck_b) tot_en_viol += en_cost(u) - en_cost(v);
+                        if (!is_truck_c) tot_en_viol += en_cost(v);
+
+                        // Score
+                        double penalty = pow(1.0 
+                            + PENALTY_LAMBDA_CAPACITY * max(0.0, tot_cap_viol)
+                            + PENALTY_LAMBDA_ENERGY * max(0.0, tot_en_viol)
+                            + PENALTY_LAMBDA_DEADLINE * max(0.0, tot_dead_viol),
+                            PENALTY_EXPONENT);
+
+                        double score = (new_tot_truck*COST_TRUCK_KM + new_tot_drone*COST_DRONE_KM) * penalty;
+
+                        bool is_feas = (tot_dead_viol < 1e-8 && tot_cap_viol < 1e-8 && tot_en_viol < 1e-8);
+                        if (is_tabu && !(score < best_cost && is_feas)) continue;
+
+                        if (score < best_cost_local) {
+                            best_cost_local = score;
+                            best_rA = rA; best_rB = rB; best_rC = rC;
+                            best_pos_u = i; best_pos_v = j; best_pos_k = k;
+                            best_tabu_key = tabu_key;
                         }
                     }
                 }
             }
         }
 
-        if (!best_tabu_key.empty()) {
-            best_neighbor = best_candidate_neighbor;
-            best_neighbor_cost = best_neighbor_cost_local;
+        if (best_rA != -1) {
+            best_neighbor = initial_solution;
+            // Apply Moves
+            // 1. Remove u from A
+            bool is_truck_a = best_rA < h;
+            vi& ra = is_truck_a ? best_neighbor.truck_routes[best_rA] : best_neighbor.drone_routes[best_rA - h];
+            int u = ra[best_pos_u];
+            ra.erase(ra.begin() + best_pos_u);
+
+            // 2. Swap v with u in B
+            bool is_truck_b = best_rB < h;
+            vi& rb = is_truck_b ? best_neighbor.truck_routes[best_rB] : best_neighbor.drone_routes[best_rB - h];
+            int v = rb[best_pos_v];
+            rb[best_pos_v] = u;
+
+            // 3. Insert v into C
+            bool is_truck_c = best_rC < h;
+            vi& rc = is_truck_c ? best_neighbor.truck_routes[best_rC] : best_neighbor.drone_routes[best_rC - h];
+            // Insert after best_pos_k
+            if (is_truck_c) {
+                rc.insert(rc.begin() + best_pos_k + 1, v);
+            } else {
+                rc.push_back(v); 
+            }
+
+            best_neighbor = recalculate_solution(best_neighbor);
             tabu_list_ejection[best_tabu_key] = current_iter + TABU_TENURE_EJECTION;
-
-            cout.setf(std::ios::fixed);
-            cout << setprecision(6);
-            auto print_vehicle = [&](int v) {
-                return (is_truck_vehicle(v) ? string("truck #") + to_string(v + 1)
-                                            : string("drone #") + to_string(v - h + 1));
-            };
-            // Debug N7
-            /* cout << "[N7] ejection chain: move " << best_cust_removed << " from " << print_vehicle(best_veh_i)
-                 << ", replace " << best_cust_ejected << " on " << print_vehicle(best_veh_j)
-                 << ", insert into " << print_vehicle(best_veh_k)
-                 << ", score: " << solution_score(initial_solution)
-                 << " -> " << solution_score(best_candidate_neighbor)
-                 << ", iter " << current_iter << "\n"; */
-
-            return best_neighbor;
+            
+            if (solution_cost(best_neighbor) < best_neighbor_cost) {
+                return best_neighbor;
+            }
         }
         return initial_solution;
     } else if (neighbor_id == 8) {
-        // Neighborhood 8: Merge Any Two Trips (Trip Fusion) - Total Time Version
-        Solution best_candidate_neighbor = best_neighbor;
-        double best_neighbor_cost_local = 1e18;
+        // Neighborhood 8: Greedy Truck -> Optimal Drone Offload
+        // Strategy: Identify the drone with the smallest current travel time.
+        // Attempt to move drone-eligible customers from trucks to ONLY that drone.
+        // This balances load by filling the "idlest" drone.
 
-        for (int veh = 0; veh < h + d; ++veh) {
-            bool is_truck = veh < h;
-            const vi& route = is_truck ? initial_solution.truck_routes[veh] 
-                                       : initial_solution.drone_routes[veh - h];
-            if (route.size() < 3) continue;
+        int best_r_truck = -1;
+        int best_pos_u = -1;
+        int best_u_val = -1;
+        
+        // Find optimal target drone (min time, and must have remaining budget)
+        int target_drone_idx = -1;
+        double min_drone_time = 1e18;
+        
+        vector<double> drone_times(d);
+        for(int i=0; i<d; ++i) {
+             const auto& r = initial_solution.drone_routes[i];
+             // Simple time calc or full feasibility check? 
+             // We can use check_drone_route_feasibility, but here raw sum of euclidean legs is enough for selection
+             double t = 0;
+             for(int c : r) t += (2.0 * distance_matrix_euclid[0][c] / v_fly_drone);
+             drone_times[i] = t;
+             
+             if (t < drone_limit - 1e-6) { // Must have budget
+                 if (t < min_drone_time) {
+                     min_drone_time = t;
+                     target_drone_idx = i;
+                 }
+             }
+        }
 
-            vector<vector<int>> trips;
-            vector<int> current_trip;
-            for (size_t i = 1; i < route.size(); ++i) {
-                if (route[i] == 0) {
-                    if (!current_trip.empty()) {
-                        trips.push_back(current_trip);
-                        current_trip.clear();
-                    }
-                } else {
-                    current_trip.push_back(route[i]);
+        if (target_drone_idx == -1) return initial_solution; // No drone has time available
+
+        int rD = h + target_drone_idx;
+        double best_cost_local = 1e18;
+
+        // 1. Pre-calculate metrics for all vehicles (needed for Delta)
+        vector<vd> metrics(h + d);
+        double base_truck_dist = 0.0, base_drone_dist = 0.0;
+        for (int i = 0; i < h; ++i) {
+            metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
+            const auto& r = initial_solution.truck_routes[i];
+            for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+        }
+        for (int i = 0; i < d; ++i) {
+            metrics[h + i] = check_drone_route_feasibility(initial_solution.drone_routes[i]);
+            // Use metrics[h+i][0] as accurate time if available, but our loop calc above is fine for selection
+            const auto& r = initial_solution.drone_routes[i];
+            for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
+        }
+
+        // Loop Truck Routes
+        for (int rT = 0; rT < h; ++rT) {
+            const vi& route_t = initial_solution.truck_routes[rT];
+            // Skip depot
+            for (int i = 1; i < (int)route_t.size() - 1; ++i) {
+                int u = route_t[i];
+                if (!served_by_drone[u]) continue; 
+
+                // Tabu Check
+                bool is_tabu = false;
+                 if (!tabu_list_10.empty() && (int)tabu_list_10.size() > u && (int)tabu_list_10[u].size() > rD) {
+                    is_tabu = (tabu_list_10[u][rD] > current_iter);
                 }
-            }
-            if (!current_trip.empty()) trips.push_back(current_trip);
 
-            if (trips.size() < 2) continue;
+                // --- Delta Evaluation ---
 
-            for (int i = 0; i < (int)trips.size(); ++i) {
-                for (int j = i + 1; j < (int)trips.size(); ++j) {
-                    double demand_i = 0;
-                    for(int c : trips[i]) demand_i += demand[c];
-                    double demand_j = 0;
-                    for(int c : trips[j]) demand_j += demand[c];
-                    
-                    if (is_truck) {
-                        if (demand_i + demand_j > Dh + 1e-9) continue;
-                    } else {
-                        if (demand_i + demand_j > Dd + 1e-9) continue;
+                // 1. Truck Removal Cost
+                int p = route_t[i-1], s = route_t[i+1];
+                double delta_dist_t = distance_matrix_manhattan[p][s] - distance_matrix_manhattan[p][u] - distance_matrix_manhattan[u][s];
+                double delta_time_t = delta_dist_t / vmax;
+
+                // 2. Drone Insertion Cost
+                double delta_dist_d = 2.0 * distance_matrix_euclid[0][u];
+                double delta_time_d = delta_dist_d / v_fly_drone;
+
+                // Pre-check basic feasibility for speed: if drone exceeds limit, skip immediately
+                if (metrics[rD][0] + delta_time_d > drone_limit) continue;
+
+                double new_truck_dist = base_truck_dist + delta_dist_t;
+                double new_drone_dist = base_drone_dist + delta_dist_d;
+
+                // 3. Violations
+                
+                // Deadline
+                double delta_dead = 0;
+                // Truck time decreases, so deadline violation reduces (or stays 0)
+                double t_t = metrics[rT][0] + delta_time_t;
+                delta_dead += max(0.0, (t_t - truck_limit)/truck_limit) - metrics[rT][1];
+                
+                // Drone time increases
+                double t_d = metrics[rD][0] + delta_time_d; 
+                delta_dead += max(0.0, (t_d - drone_limit)/drone_limit) - metrics[rD][1];
+
+                // Capacity (Truck reduced)
+                double new_truck_cap_viol = 0;
+                double load = 0;
+                for (int k_idx=0; k_idx<(int)route_t.size(); ++k_idx) {
+                    if (k_idx == i) continue; 
+                    int c = route_t[k_idx];
+                    if (c==0) load = 0;
+                    else {
+                        load += demand[c];
+                        if (load > Dh) new_truck_cap_viol += (load - Dh)/Dh;
                     }
+                }
+                double delta_cap = (new_truck_cap_viol - metrics[rT][3]); 
 
-                    for (int opt = 0; opt < 8; ++opt) {
-                        vi merged_trip;
-                        vi ti = trips[i];
-                        vi tj = trips[j];
+                double new_cap_viol = initial_solution.capacity_violation + delta_cap;
+                double new_dead_viol = initial_solution.deadline_violation + delta_dead;
+                // Energy violation shouldn't change if u is feasible (served_by_drone check covers local u energy)
 
-                        bool i_first = (opt < 4);
-                        int type = opt % 4; 
-                        
-                        vi* first = i_first ? &ti : &tj;
-                        vi* second = i_first ? &tj : &ti;
-                        
-                        bool rev_first = (type == 2 || type == 3);
-                        bool rev_second = (type == 1 || type == 3);
+                double penalty = pow(1.0 
+                    + PENALTY_LAMBDA_CAPACITY * max(0.0, new_cap_viol)
+                    + PENALTY_LAMBDA_ENERGY * max(0.0, initial_solution.energy_violation)
+                    + PENALTY_LAMBDA_DEADLINE * max(0.0, new_dead_viol),
+                    PENALTY_EXPONENT);
 
-                        if (rev_first) reverse(first->begin(), first->end());
-                        if (rev_second) reverse(second->begin(), second->end());
+                double score = (new_truck_dist * COST_TRUCK_KM + new_drone_dist * COST_DRONE_KM) * penalty;
 
-                        merged_trip.insert(merged_trip.end(), first->begin(), first->end());
-                        merged_trip.insert(merged_trip.end(), second->begin(), second->end());
+                bool is_feas = (new_dead_viol < 1e-8 && new_cap_viol < 1e-8 && initial_solution.energy_violation < 1e-8);
+                if (is_tabu && !(score < best_cost && is_feas)) continue;
 
-                        vi new_route;
-                        new_route.push_back(0);
-                        for (int k = 0; k < (int)trips.size(); ++k) {
-                            if (k == j) continue; 
-                            if (k == i) {
-                                new_route.insert(new_route.end(), merged_trip.begin(), merged_trip.end());
-                            } else {
-                                new_route.insert(new_route.end(), trips[k].begin(), trips[k].end());
-                            }
-                            new_route.push_back(0);
-                        }
-
-                        vd new_metrics = check_route_feasibility(new_route, 0.0, is_truck);
-                        if (new_metrics[1] > 1e-8 || new_metrics[2] > 1e-8 || new_metrics[3] > 1e-8) continue;
-
-                        vd old_metrics = check_route_feasibility(route, 0.0, is_truck);
-                        Solution candidate = initial_solution;
-                        candidate.deadline_violation += new_metrics[1] - old_metrics[1];
-                        candidate.capacity_violation += new_metrics[3] - old_metrics[3];
-                        candidate.energy_violation += new_metrics[2] - old_metrics[2];
-
-                        if (is_truck) {
-                            candidate.truck_routes[veh] = new_route;
-                            candidate.truck_route_times[veh] = (new_route.size() > 1) ? new_metrics[0] : 0.0;
-                        } else {
-                            candidate.drone_routes[veh - h] = new_route;
-                            candidate.drone_route_times[veh - h] = (new_route.size() > 1) ? new_metrics[0] : 0.0;
-                        }
-
-                        candidate.total_makespan = 0.0;
-                        for (int t = 0; t < h; ++t) candidate.total_makespan = max(candidate.total_makespan, candidate.truck_route_times[t]);
-                        for (double t : candidate.drone_route_times) candidate.total_makespan = max(candidate.total_makespan, t);
-
-                        double candidate_score = solution_cost(candidate);
-                        
-                        if (candidate_score + 1e-8 < best_neighbor_cost_local) {
-                            best_neighbor_cost_local = candidate_score;
-                            best_candidate_neighbor = candidate;
-                        }
-                    }
+                if (score < best_cost_local) {
+                    best_cost_local = score;
+                    best_r_truck = rT;
+                    best_pos_u = i;
+                    best_u_val = u;
                 }
             }
         }
 
-        if (best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
-            return best_candidate_neighbor;
+        if (best_r_truck != -1) {
+            best_neighbor = initial_solution;
+            
+            // 1. Remove from Truck
+            vi& rt = best_neighbor.truck_routes[best_r_truck];
+            rt.erase(rt.begin() + best_pos_u);
+            
+            // 2. Add to Drone
+            vi& rd = best_neighbor.drone_routes[target_drone_idx];
+            rd.push_back(best_u_val);
+
+            best_neighbor = recalculate_solution(best_neighbor);
+
+            // Update Tabu
+            if ((int)tabu_list_10.size() == n + 1) {
+            tabu_list_10[best_u_val][rD] = current_iter + TABU_TENURE_10;
+            }
+            
+            if (solution_cost(best_neighbor) < best_neighbor_cost) {
+                return best_neighbor;
+            }
         }
         return initial_solution;
     }
     return initial_solution;
-}
-
-void updated_edge_records(const Solution& sol){
-    for (int i = 0; i < h; ++i) {
-        const vi& route = sol.truck_routes[i];
-        for (size_t j = 0; j + 1 < route.size(); ++j) {
-            int u = route[j];
-            int v = route[j + 1];
-            edge_records[u][v] = min(edge_records[u][v], sol.total_makespan);
-            edge_records[v][u] = min(edge_records[v][u], sol.total_makespan);
-        }
-    }
-    for (int i = 0; i < d; ++i) {
-        const vi& route = sol.drone_routes[i];
-        for (size_t j = 0; j + 1 < route.size(); ++j) {
-            int u = route[j];
-            int v = route[j + 1];
-            edge_records[u][v] = min(edge_records[u][v], sol.total_makespan);
-            edge_records[v][u] = min(edge_records[v][u], sol.total_makespan);
-        }
-    }
-}
-
-int hamming_distance(const Solution& sol1, const Solution& sol2) {
-    int distance = 0;
-    int successor1[n+1];
-    int successor2[n+1];
-    for (int i = 0; i < h; ++i) {
-        const vi& route = sol1.truck_routes[i];
-        for (size_t j = 0; j + 1 < route.size(); ++j) {
-            int u = route[j];
-            int v = route[j + 1];
-            if (u != 0) {
-                successor1[u] = v;
-            }
-        }
-        const vi& route2 = sol2.truck_routes[i];
-        for (size_t j = 0; j + 1 < route2.size(); ++j) {
-            int u = route2[j];
-            int v = route2[j + 1];
-            if (u != 0) {
-                successor2[u] = v;
-            }
-        }
-    }
-    for (int i = 0; i < d; ++i) {
-        const vi& route = sol1.drone_routes[i];
-        for (size_t j = 0; j + 1 < route.size(); ++j) {
-            int u = route[j];
-            int v = route[j + 1];
-            if (u != 0) {
-                successor1[u] = v;
-            }
-        }
-        const vi& route2 = sol2.drone_routes[i];
-        for (size_t j = 0; j + 1 < route2.size(); ++j) {
-            int u = route2[j];
-            int v = route2[j + 1];
-            if (u != 0) {
-                successor2[u] = v;
-            }
-        }
-    }
-    for (int i = 1; i <= n; ++i) {
-        if (successor1[i] != successor2[i]) {
-            distance++;
-        }
-    }
-    return distance;
-}
-
-Solution recalculate_solution(Solution sol) {
-    sol.deadline_violation = 0.0;
-    sol.energy_violation = 0.0;
-    sol.capacity_violation = 0.0;
-    for (int i = 0; i < h; ++i) {
-        vd metrics = check_route_feasibility(sol.truck_routes[i], 0.0, true);
-        sol.truck_route_times[i] = metrics[0];
-        sol.deadline_violation += metrics[1];
-        sol.energy_violation += metrics[2];
-        sol.capacity_violation += metrics[3];
-    }
-    for (int i = 0; i < d; ++i) {
-        vd metrics = check_route_feasibility(sol.drone_routes[i], 0.0, false);
-        sol.drone_route_times[i] = metrics[0];
-        sol.deadline_violation += metrics[1];
-        sol.energy_violation += metrics[2];
-        sol.capacity_violation += metrics[3];
-    }
-
-    sol.total_makespan = 0.0;
-    for (int t = 0; t < h; ++t) sol.total_makespan = max(sol.total_makespan, sol.truck_route_times[t]);
-    for (int t = 0; t < d; ++t) sol.total_makespan = max(sol.total_makespan, sol.drone_route_times[t]);
-    return sol;
 }
 
 bool check_solution_integrity(const Solution& sol) {
@@ -5225,197 +3119,6 @@ bool check_solution_integrity(const Solution& sol) {
     return (served_count == n);
 }
 
-Solution updated_elite_set(const Solution& sol) {
-    bool is_feasible = (sol.deadline_violation <= 1e-8 &&
-                        sol.energy_violation <= 1e-8 &&
-                        sol.capacity_violation <= 1e-8);
-    if (!is_feasible) return sol;
-    Solution tmp;
-    if (elite_set.size() < ELITE_SET_SIZE) {
-        elite_set.push_back(sol);
-    } else {
-        int min_distance = 1e9;
-        int replace_idx = -1;
-        for (size_t i = 0; i < elite_set.size(); ++i) {
-            int dist = hamming_distance(sol, elite_set[i]);
-            if (dist < min_distance) {
-                min_distance = dist;
-                replace_idx = i;
-            }
-        }
-        if (replace_idx != -1) {
-            tmp = elite_set[replace_idx];
-            elite_set[replace_idx] = sol;
-        }
-    }
-    return tmp;
-}
-
-Solution destroy_and_repair(Solution sol) {
-    // [FIX] Use Radial Ruin (Spatial) instead of random/history
-    // This removes a geographic cluster, allowing it to be reassigned to a single vehicle
-    
-    unordered_set<int> to_destroy;
-    int destroy_count = static_cast<int>(n * 0.3); // Increased to 40% to break structures
-    
-    std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-    
-    // 1. Identify seeds: one random customer from each non-empty route
-    vector<int> seeds;
-    
-    auto pick_random_from_route = [&](const vi& route) -> int {
-        vector<int> valid_custs;
-        for (int c : route) {
-            if (c != 0) valid_custs.push_back(c);
-        }
-        if (valid_custs.empty()) return -1;
-        std::uniform_int_distribution<int> d_idx(0, valid_custs.size() - 1);
-        return valid_custs[d_idx(rng)];
-    };
-
-    // Pick seeds from trucks
-    for (int i = 0; i < h; ++i) {
-        int c = pick_random_from_route(sol.truck_routes[i]);
-        if (c != -1 && to_destroy.find(c) == to_destroy.end()) {
-            to_destroy.insert(c);
-            seeds.push_back(c);
-        }
-    }
-    // Pick seeds from drones
-    for (int i = 0; i < d; ++i) {
-        int c = pick_random_from_route(sol.drone_routes[i]);
-        if (c != -1 && to_destroy.find(c) == to_destroy.end()) {
-            to_destroy.insert(c);
-            seeds.push_back(c);
-        }
-    }
-
-    // 2. Expand from seeds (Round-Robin)
-    // We use a vector of indices to track position in KNN list for each seed
-    vector<int> knn_indices(seeds.size(), 0);
-    bool potential_remaining = true;
-
-    while ((int)to_destroy.size() < destroy_count && potential_remaining) {
-        potential_remaining = false;
-        for (size_t i = 0; i < seeds.size(); ++i) {
-            if ((int)to_destroy.size() >= destroy_count) break;
-            
-            int seed = seeds[i];
-            int& k_idx = knn_indices[i];
-            
-            if (seed <= n && !KNN_LIST[seed].empty()) {
-                // Try to find a neighbor we haven't destroyed yet
-                while (k_idx < (int)KNN_LIST[seed].size()) {
-                    int neighbor = KNN_LIST[seed][k_idx];
-                    k_idx++;
-                    if (to_destroy.find(neighbor) == to_destroy.end()) {
-                        to_destroy.insert(neighbor);
-                        potential_remaining = true; 
-                        break; // Move to next seed to keep it balanced
-                    }
-                }
-            }
-        }
-    }
-    
-    // 3. If we still need more (e.g. K is small or few seeds), fill randomly
-    std::uniform_int_distribution<int> dist(1, n);
-    while ((int)to_destroy.size() < destroy_count) {
-        int r = dist(rng);
-        to_destroy.insert(r);
-    }
-
-    Solution new_sol = sol;
-    for (int i = 0; i < h; ++i) {
-        vi& route = new_sol.truck_routes[i];
-        route.erase(remove_if(route.begin(), route.end(), [&](int c) {
-            return to_destroy.count(c) > 0;
-        }), route.end());
-    }
-    for (int i = 0; i < d; ++i) {
-        vi& route = new_sol.drone_routes[i];
-        route.erase(remove_if(route.begin(), route.end(), [&](int c) {
-            return to_destroy.count(c) > 0;
-        }), route.end());
-    }
-    //Recalculate route times and total makespan
-    new_sol.deadline_violation = 0.0;
-    new_sol.capacity_violation = 0.0;
-    new_sol.energy_violation = 0.0;
-    new_sol.total_makespan = 0.0;
-    for (int i = 0; i < h; ++i) {
-        vd metrics = check_route_feasibility(new_sol.truck_routes[i], 0.0, true);
-        new_sol.truck_route_times[i] = (new_sol.truck_routes[i].size() > 1) ? metrics[0] : 0.0;
-        new_sol.deadline_violation += metrics[1];
-        new_sol.energy_violation += metrics[2];
-        new_sol.capacity_violation += metrics[3];
-        new_sol.total_makespan = max(new_sol.total_makespan, new_sol.truck_route_times[i]);
-    }
-    for (int i = 0; i < d; ++i) {
-        vd metrics = check_route_feasibility(new_sol.drone_routes[i], 0.0, false);
-        new_sol.drone_route_times[i] = (new_sol.drone_routes[i].size() > 1) ? metrics[0] : 0.0;
-        new_sol.deadline_violation += metrics[1];
-        new_sol.energy_violation += metrics[2];
-        new_sol.capacity_violation += metrics[3];
-        new_sol.total_makespan = max(new_sol.total_makespan, new_sol.drone_route_times[i]);
-    }
-
-    vector<int> customers_to_insert(to_destroy.begin(), to_destroy.end());
-    std::shuffle(customers_to_insert.begin(), customers_to_insert.end(), rng);
-
-
-    for (int cust : customers_to_insert) {
-        new_sol = greedy_insert_customer(new_sol, cust, true);
-    }
-    // Normalize route formats after insertions
-    for (int i = 0; i < h; ++i) {
-        vi& route = new_sol.truck_routes[i];
-        if (route.empty() || route.front() != 0) route.insert(route.begin(), 0);
-        if (route.back() != 0) route.push_back(0);
-        vi cleaned;
-        cleaned.reserve(route.size());
-        for (int node : route) {
-            if (!cleaned.empty() && cleaned.back() == 0 && node == 0) continue;
-            cleaned.push_back(node);
-        }
-        route = cleaned;
-    }
-    for (int i = 0; i < d; ++i) {
-        vi& route = new_sol.drone_routes[i];
-        if (route.empty() || route.front() != 0) route.insert(route.begin(), 0);
-        if (route.back() != 0) route.push_back(0);
-        vi cleaned;
-        cleaned.reserve(route.size());
-        for (int node : route) {
-            if (!cleaned.empty() && cleaned.back() == 0 && node == 0) continue;
-            cleaned.push_back(node);
-        }
-        route = cleaned;
-    }
-    // Recalculate route times and total makespan after normalization
-    new_sol.deadline_violation = 0.0;
-    new_sol.capacity_violation = 0.0;
-    new_sol.energy_violation = 0.0;
-    new_sol.total_makespan = 0.0;
-    for (int i = 0; i < h; ++i) {
-        vd metrics = check_route_feasibility(new_sol.truck_routes[i], 0.0, true);
-        new_sol.truck_route_times[i] = (new_sol.truck_routes[i].size() > 1) ? metrics[0] : 0.0;
-        new_sol.deadline_violation += metrics[1];
-        new_sol.energy_violation += metrics[2];
-        new_sol.capacity_violation += metrics[3];
-        new_sol.total_makespan = max(new_sol.total_makespan, new_sol.truck_route_times[i]);
-    }
-    for (int i = 0; i < d; ++i) {
-        vd metrics = check_route_feasibility(new_sol.drone_routes[i], 0.0, false);
-        new_sol.drone_route_times[i] = (new_sol.drone_routes[i].size() > 1) ? metrics[0] : 0.0;
-        new_sol.deadline_violation += metrics[1];
-        new_sol.energy_violation += metrics[2];
-        new_sol.capacity_violation += metrics[3];
-        new_sol.total_makespan = max(new_sol.total_makespan, new_sol.drone_route_times[i]);
-    }
-    return new_sol;
-}
-
 Solution destroy_worst_repair_random(Solution sol) {
     unordered_set<int> to_destroy;
     int destroy_count = static_cast<int>(n * 0.3); // Destroy 30%
@@ -5423,71 +3126,90 @@ Solution destroy_worst_repair_random(Solution sol) {
     Solution current_sol = sol;
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
 
-    // 1. Destroy: Sequential Worst Removal (Targeting Critical Routes)
+    // --- 1. Destroy: Randomized Worst Removal (Global) ---
+    // We want to remove customers that contribute most to the COST (distance).
+    // To prevent cycles, we calculate "savings" for all, sort them, and pick randomly from the top.
+    
+    // Structure to hold removal candidates
+    struct Candidate {
+        int cust;
+        int veh_idx;
+        bool is_truck;
+        double saving;
+    };
+    
     for (int k = 0; k < destroy_count; ++k) {
-        // Identify critical vehicle
-        auto [crit_idx, is_truck] = critical_solution_index(current_sol);
-        
-        if (crit_idx == -1) break;
+        vector<Candidate> candidates;
+        candidates.reserve(n); // rough upper bound
 
-        vi& route = is_truck ? current_sol.truck_routes[crit_idx] 
-                             : current_sol.drone_routes[crit_idx];
-        
-        double current_route_time = is_truck ? current_sol.truck_route_times[crit_idx]
-                                             : current_sol.drone_route_times[crit_idx];
-        double best_diff = -1e9;
-        int best_cust = -1;
+        // Scan ALL trucks
+        for (int i = 0; i < h; ++i) {
+            const vi& route = current_sol.truck_routes[i]; 
+            if (route.size() <= 2) continue; // 0-0 or empty
 
-        // Find customer whose removal reduces the route time the most
-        for (int i = 1; i < (int)route.size() - 1; ++i) {
-            int cust = route[i];
-            if (cust == 0) continue;
-            
-            vi temp_route = route;
-            temp_route.erase(temp_route.begin() + i);
-            
-            double new_time = 0;
-            if (is_truck) {
-                auto res = check_route_feasibility(temp_route, 0.0, true);
-                new_time = res[0];
-            } else {
-                auto res = check_route_feasibility(temp_route, 0.0, false);
-                new_time = res[0];
-            }
-            
-            double diff = current_route_time - new_time;
-            if (diff > best_diff) {
-                best_diff = diff;
-                best_cust = cust;
+            for (int p = 1; p < (int)route.size() - 1; ++p) { // Skip depots
+                int cust = route[p];
+                if (cust == 0) continue;
+                if (to_destroy.count(cust)) continue;
+
+                // Truck Delta (Manhattan)
+                int prev = route[p-1];
+                int next = route[p+1];
+                double saving = distance_matrix_manhattan[prev][cust] 
+                              + distance_matrix_manhattan[cust][next]
+                              - distance_matrix_manhattan[prev][next];
+                // Weight by truck cost
+                candidates.push_back({cust, i, true, saving * COST_TRUCK_KM});
             }
         }
-        
-        if (best_cust != -1) {
-            to_destroy.insert(best_cust);
-            // Remove from current_sol to update state for next iteration
-            route.erase(std::remove(route.begin(), route.end(), best_cust), route.end());
-            
-            // Update time
-            if (is_truck) {
-                auto res = check_route_feasibility(route, 0.0, true);
-                current_sol.truck_route_times[crit_idx] = res[0];
-            } else {
-                auto res = check_route_feasibility(route, 0.0, false);
-                current_sol.drone_route_times[crit_idx] = res[0];
+
+        // Scan ALL drones
+        for (int i = 0; i < d; ++i) {
+            const vi& route = current_sol.drone_routes[i];
+            if (route.size() <= 1) continue; // {0}
+
+            for (int p = 1; p < (int)route.size(); ++p) { // Drones might not have end depot in storage, standard is list of customers
+                int cust = route[p];
+                if (cust == 0) continue;
+                if (to_destroy.count(cust)) continue;
+
+                // Drone Delta (Euclidean Sortie)
+                double saving = distance_matrix_euclid[0][cust] * 2.0;
+                // Weight by drone cost
+                candidates.push_back({cust, i, false, saving * COST_DRONE_KM});
             }
-            // Update global makespan (approximate is fine for selection)
-            current_sol.total_makespan = 0;
-            for(double t : current_sol.truck_route_times) current_sol.total_makespan = max(current_sol.total_makespan, t);
-            for(double t : current_sol.drone_route_times) current_sol.total_makespan = max(current_sol.total_makespan, t);
+        }
+
+        if (candidates.empty()) break;
+
+        // Sort by saving descending (Best removal first)
+        std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b){
+            return a.saving > b.saving;
+        });
+
+        // Randomized Selection (Shaw's heuristic)
+        // Pick index = |Candidates| * y^p, where y in [0,1], p is high (e.g. 6) to favor top
+        // Simplified: Pick from top roughly 20% or size 5
+        int range = max(1, min((int)candidates.size(), 6)); 
+        std::uniform_int_distribution<int> pick_dist(0, range - 1);
+        const Candidate& selected = candidates[pick_dist(rng)];
+
+        to_destroy.insert(selected.cust);
+
+        // Apply removal to current_sol immediately so next iteration sees accurate hole
+        if (selected.is_truck) {
+             vi& r = current_sol.truck_routes[selected.veh_idx];
+             r.erase(std::remove(r.begin(), r.end(), selected.cust), r.end());
+             // Update time? For destruction selection we only care about distance/cost savings roughly.
+             // We don't strictly need to update times here unless we use them for selection criteria.
+             // Since we use Pure Cost now, we can skip full time recalc optimization here for speed.
         } else {
-            // Fallback: random removal if critical route is empty/locked
-            std::uniform_int_distribution<int> dist(1, n);
-            int fallback = dist(rng);
-            to_destroy.insert(fallback);
+             vi& r = current_sol.drone_routes[selected.veh_idx];
+             r.erase(std::remove(r.begin(), r.end(), selected.cust), r.end());
         }
     }
 
-    // 2. Apply removal to a fresh copy of the original solution
+    // 2. Apply removal to a fresh copy of the original solution (clean slate)
     Solution new_sol = sol;
     for (int i = 0; i < h; ++i) {
         vi& route = new_sol.truck_routes[i];
@@ -5503,51 +3225,136 @@ Solution destroy_worst_repair_random(Solution sol) {
     }
     new_sol = recalculate_solution(new_sol);
 
-    // 3. Repair: Random Insertion
-    vector<int> customers_to_insert(to_destroy.begin(), to_destroy.end());
+     vector<int> customers_to_insert(to_destroy.begin(), to_destroy.end());
+    // Shuffle order of insertion to add diversity in the construction sequence itself
     std::shuffle(customers_to_insert.begin(), customers_to_insert.end(), rng);
 
     for (int cust : customers_to_insert) {
-        bool inserted = false;
-        vector<int> veh_indices(h + d);
-        std::iota(veh_indices.begin(), veh_indices.end(), 0);
-        std::shuffle(veh_indices.begin(), veh_indices.end(), rng);
         
-        for (int veh : veh_indices) {
-            bool is_truck = veh < h;
-            // Check drone eligibility
-            if (!is_truck && served_by_drone[cust] == 0) continue;
+        struct InsertionOption {
+            int veh_idx;
+            bool is_truck;
+            int pos;
+            double score; // Cost + Penalty
+            vi resulting_route; // Stored to avoid re-simulating
+            double route_time;
+        };
 
-            vi& route = is_truck ? new_sol.truck_routes[veh] : new_sol.drone_routes[veh - h];
+        vector<InsertionOption> options;
+        
+        // 1. Evaluate all Truck positions
+        for (int i = 0; i < h; ++i) {
+            const vi& route = new_sol.truck_routes[i];
             if (route.size() < 2) continue; // Should be 0-0
-
-            // Try random positions
-            vector<int> positions;
-            for(int p=1; p < (int)route.size(); ++p) positions.push_back(p);
-            std::shuffle(positions.begin(), positions.end(), rng);
             
-            for (int pos : positions) {
+            // Try all relevant truck positions (1 to size-1)
+            for (int p = 1; p < (int)route.size(); ++p) {
+                // Heuristic trim: if truck is far from cust, maybe skip? (Skipped for correctness now)
+                
                 vi temp_route = route;
-                temp_route.insert(temp_route.begin() + pos, cust);
+                temp_route.insert(temp_route.begin() + p, cust);
                 
-                vd res = is_truck ? check_route_feasibility(temp_route, 0.0, true) 
-                                  : check_route_feasibility(temp_route, 0.0, false);
+                // Check Feasibility & Cost
+                // Returns: [0]=total_time, [1]=dead_viol, [2]=energy_viol, [3]=cap_viol
+                vd m = check_route_feasibility(temp_route, 0.0, true);
                 
-                // Only accept feasible insertions for random repair
-                if (res[1] <= 1e-8 && res[2] <= 1e-8 && res[3] <= 1e-8) {
-                    route = temp_route;
-                    if (is_truck) new_sol.truck_route_times[veh] = res[0];
-                    else new_sol.drone_route_times[veh - h] = res[0];
-                    inserted = true;
-                    break;
-                }
+                // Calculate Delta Cost
+                double old_dist = 0;
+                // Optimization: Local delta is faster, but for now we do full route dist diff
+                // to be safe and consistent with "check_route_feasibility"
+                double new_dist = 0;
+                for(size_t k=0; k+1<temp_route.size(); ++k) new_dist += distance_matrix_manhattan[temp_route[k]][temp_route[k+1]];
+                
+                double current_dist = 0; 
+                for(size_t k=0; k+1<route.size(); ++k) current_dist += distance_matrix_manhattan[route[k]][route[k+1]];
+                
+                double delta_cost = (new_dist - current_dist) * COST_TRUCK_KM;
+
+                // Penalty Term
+                double penalties = PENALTY_LAMBDA_DEADLINE * m[1] 
+                                 + PENALTY_LAMBDA_ENERGY * m[2] 
+                                 + PENALTY_LAMBDA_CAPACITY * m[3];
+                
+                // Score = Delta + Penalties^Exp
+                double score = delta_cost + pow(1.0 + penalties, PENALTY_EXPONENT) * 10000.0 * (penalties > 1e-6 ? 1.0 : 0.0);
+                // If feasible, score is just delta cost. If not, it's boosted.
+                
+                options.push_back({i, true, p, score, temp_route, m[0]});
             }
-            if (inserted) break;
+        }
+
+        // 2. Evaluate all Drone positions
+        if (served_by_drone[cust]) {
+             for (int i = 0; i < d; ++i) {
+                const vi& route = new_sol.drone_routes[i];
+                // Drones append at end (simplification for "route" = list of customers)
+                
+                int p = (int)route.size(); 
+                vi temp_route = route;
+                temp_route.push_back(cust);
+
+                vd m = check_route_feasibility(temp_route, 0.0, false);
+
+                double new_dist = 0;
+                for(int c : temp_route) if(c!=0) new_dist += distance_matrix_euclid[0][c]*2.0;
+                double curr_dist = 0;
+                for(int c : route) if(c!=0) curr_dist += distance_matrix_euclid[0][c]*2.0;
+
+                double delta_cost = (new_dist - curr_dist) * COST_DRONE_KM;
+
+                double penalties = PENALTY_LAMBDA_DEADLINE * m[1] 
+                                    + PENALTY_LAMBDA_ENERGY * m[2] 
+                                    + PENALTY_LAMBDA_CAPACITY * m[3];
+                
+                double score = delta_cost + pow(1.0 + penalties, PENALTY_EXPONENT) * 100.0 * (penalties > 1e-6 ? 1.0 : 0.0);
+                
+                options.push_back({i, false, p, score, temp_route, m[0]});
+             }
+        }
+
+        if (options.empty()) {
+             // Fallback if no options found (shouldn't happen unless constraints are weird)
+             new_sol = greedy_insert_customer(new_sol, cust, true);
+             continue;
+        }
+
+        // 3. Probabilistic Selection (Softmax / Boltzmann)
+        // We want min score. So weight ~ exp( - beta * score )
+        // Normalize scores to avoid overflow.
+        double min_score = 1e18;
+        for(const auto& opt : options) if(opt.score < min_score) min_score = opt.score;
+        
+        // Beta parameter determines greediness. High beta = greedy. Low beta = random.
+        double beta = 0.5; // Tunable parameter for repair randomness
+        
+        vector<double> weights;
+        double total_weight = 0.0;
+        for(const auto& opt : options) {
+            double w = exp( -beta * (opt.score - min_score) );
+            weights.push_back(w);
+            total_weight += w;
         }
         
-        if (!inserted) {
-            // Fallback to greedy if random fails
-            new_sol = greedy_insert_customer(new_sol, cust, true);
+        double r = std::uniform_real_distribution<double>(0.0, total_weight)(rng);
+        double cum = 0.0;
+        int selected_idx = 0; // Default best/first
+        for(size_t k=0; k<weights.size(); ++k) {
+            cum += weights[k];
+            if (r <= cum) {
+                selected_idx = k;
+                break;
+            }
+        }
+
+        // Apply Selection
+        const auto& choice = options[selected_idx];
+        if (choice.is_truck) {
+            new_sol.truck_routes[choice.veh_idx] = choice.resulting_route;
+            new_sol.truck_route_times[choice.veh_idx] = choice.route_time;
+            // Update total dist? Loop at end handles full recalc
+        } else {
+            new_sol.drone_routes[choice.veh_idx] = choice.resulting_route;
+            new_sol.drone_route_times[choice.veh_idx] = choice.route_time;
         }
     }
     
@@ -5556,13 +3363,51 @@ Solution destroy_worst_repair_random(Solution sol) {
         vi& route = new_sol.truck_routes[i];
         if (route.empty() || route.front() != 0) route.insert(route.begin(), 0);
         if (route.back() != 0) route.push_back(0);
+        
+        // Final Feasibility Update
+        vd m = check_route_feasibility(route, 0.0, true);
+        new_sol.truck_route_times[i] = m[0];
+        // Dist calc
+        double km = 0; 
+        for(size_t k=0; k+1<route.size(); ++k) km += distance_matrix_manhattan[route[k]][route[k+1]];
+        new_sol.total_distance_truck += km;
     }
+    new_sol.total_distance_drone = 0;
     for (int i = 0; i < d; ++i) {
         vi& route = new_sol.drone_routes[i];
-        if (route.empty() || route.front() != 0) route.insert(route.begin(), 0);
-        if (route.back() != 0) route.push_back(0);
+        // Drones usually don't need 0-0 padding in this struct but let's be safe
+        if (!route.empty() && route.front() == 0) route.erase(route.begin()); // clean leading 0? 
+        // Logic in N0 assumes 0->C->0 implication. But check_feasibility assumes list of customers.
+        // Let's stick to standard: Drones are just list of customers.
+        
+        vd m = check_route_feasibility(route, 0.0, false);
+        new_sol.drone_route_times[i] = m[0];
+        // Dist calc
+        for(int c : route) if(c!=0) new_sol.total_distance_drone += distance_matrix_euclid[0][c]*2.0; 
     }
-    new_sol = recalculate_solution(new_sol);
+    
+    // Recalculate totals
+    new_sol.deadline_violation = 0; 
+    new_sol.capacity_violation = 0;
+    new_sol.energy_violation = 0;
+    new_sol.total_time = 0; 
+
+    // Proper summation
+    for(int i=0; i<h; ++i) {
+         vd m = check_route_feasibility(new_sol.truck_routes[i], 0.0, true);
+         new_sol.deadline_violation += m[1];
+         new_sol.energy_violation += m[2];
+         new_sol.capacity_violation += m[3];
+         new_sol.total_time += m[0];
+    } 
+    for(int i=0; i<d; ++i) {
+         vd m = check_route_feasibility(new_sol.drone_routes[i], 0.0, false);
+         new_sol.deadline_violation += m[1];
+         new_sol.energy_violation += m[2];
+         new_sol.capacity_violation += m[3];
+         new_sol.total_time += m[0];
+    }
+
     return new_sol;
 }
 
@@ -5573,23 +3418,19 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                sol.capacity_violation <= 1e-8 &&
                sol.energy_violation <= 1e-8;
     };
-    // Initialize edge records
-    edge_records.assign(n + 1, vector<double>(n + 1, 1e10));
-    updated_edge_records(initial_solution);
     Solution best_solution = initial_solution;
     Solution best_feasible_solution = initial_solution;
     bool initial_feasible = is_feasible(initial_solution);
-    double best_feasible_makespan = initial_feasible
-        ? initial_solution.total_makespan
+    double best_feasible_cost = initial_feasible
+        ? solution_score_cost(initial_solution)
         : std::numeric_limits<double>::infinity();
-    double best_cost = initial_feasible ? best_feasible_makespan : std::numeric_limits<double>::infinity();
     double score[NUM_NEIGHBORHOODS] = {0.0};
     double weight[NUM_NEIGHBORHOODS];
     for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) weight[i] = 1.0 / NUM_NEIGHBORHOODS;
     int count[NUM_NEIGHBORHOODS] = {0};
 
     Solution current_sol = initial_solution;
-    double current_cost = initial_solution.total_makespan;
+    double current_cost = solution_score_cost(current_sol);
 
     /* for (int i = 0; i < num_initial_sol; i++){
         Solution initial_sol = generate_initial_solution();
@@ -5636,414 +3477,154 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
         current_cost = current_sol.total_makespan;
     }*/
     current_sol = initial_solution;
-    current_cost = current_sol.total_makespan; 
-    int scoring_mode_segment = 1; // 0: makespan, 1: makespan + L2 norm on critical route, 2: L2 norm on all vehicles
-    for (int segment = 0; segment < CFG_MAX_SEGMENT; ++segment) {
-        int iter = 1;
-        int no_improve_iters = 0;
-        double T0 = 100.0; // initial temperature for simulated annealing acceptance
-        double alpha = 0.998; // cooling rate
-        int scoring_mode_iter = scoring_mode_segment;
-        // testing
-        //total_score_iter = false;
-        Solution best_segment_sol = current_sol;
-        double best_segment_score;
-        if (scoring_mode_iter == 1) {
-            best_segment_score = solution_score_l2_norm(current_sol);
-        }
-        else if (scoring_mode_iter == 0){
-            best_segment_score = solution_score_makespan(current_sol);
-        }
-        else if (scoring_mode_iter == 2){
-            best_segment_score = solution_score_total_time(current_sol);
-        }
-        //Debug:
-        cout << "=== Starting Segment " << segment + 1 <<" searching on critical route only";
-        if (scoring_mode_iter == 0){
-            cout << " (Makespan Minimization) ===\n";
-        }
-        else if (scoring_mode_iter == 1){
-            cout << " (2nd objective: L2 norm) ===\n";
-        }
-        else if (scoring_mode_iter == 2){
-            cout << " (L2 norm on all vehicles) ===\n";
-        }
-        cout << "Current Solution Score: " << best_segment_score
-             << ", Makespan: " << best_segment_sol.total_makespan << "\n";
-    // Reset tabu lists at the start of each segment (iteration counter restarts per segment)
-        while (iter <= CFG_MAX_ITER_PER_SEGMENT) {
-            // testing
-            //total_score_iter = false;
-            if (CFG_TIME_LIMIT_SEC > 0.0) {
-                double elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - ts_start).count();
-                if (elapsed >= CFG_TIME_LIMIT_SEC) break;
-            }
-            double best_solution_score_now = 1e10, current_score = 0.0;
-            if (scoring_mode_iter == 1) {
-                current_score = solution_score_l2_norm(current_sol);
-                best_solution_score_now = solution_score_l2_norm(best_solution);
-            }
-            else if (scoring_mode_iter == 0){
-                current_score = solution_score_makespan(current_sol);
-                best_solution_score_now = solution_score_makespan(best_solution);
-            }
-            else if (scoring_mode_iter == 2){
-                current_score = solution_score_total_time(current_sol);
-                best_solution_score_now = solution_score_total_time(best_solution);
-            }
+    
+    // Unified Tabu Search on Cost
+    int iter = 1;
+    int total_iters = CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT;
+    int no_improve_iters = 0;
 
-            double total_weight = 0.0;
-            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-                total_weight += weight[i];
-            }
-            double r = ((double) rand() / (RAND_MAX));
-            int selected_neighbor = 0;
-            double cumulative = 0.0;
-            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-                cumulative += weight[i] / total_weight;
-                if (r < cumulative) {
-                    selected_neighbor = i;
-                    break;
-                }
-            }
-            if (selected_neighbor == 0 && r >= cumulative) {
-                selected_neighbor = NUM_NEIGHBORHOODS - 1;
-            }
-            count[selected_neighbor]++;
-            // Use the monotonically increasing iteration counter 'iter' as the tabu iteration for local_search
-            Solution init_neighbor;
-            if (scoring_mode_iter == 0) {
-                init_neighbor = local_search(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_makespan);
-            }
-            else if (scoring_mode_iter == 1){
-                init_neighbor = local_search(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_l2_norm);
-            }
-            else if (scoring_mode_iter == 2){
-                init_neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_total_time);
-            }
-            Solution neighbor = recalculate_solution(init_neighbor);
-            // Check if recalculation changes the solution violation values
-            if (std::abs(neighbor.deadline_violation - init_neighbor.deadline_violation) > 1e-8 ||
-                std::abs(neighbor.capacity_violation - init_neighbor.capacity_violation) > 1e-8 ||
-                std::abs(neighbor.energy_violation - init_neighbor.energy_violation) > 1e-8 ||
-                std::abs(neighbor.total_makespan - init_neighbor.total_makespan) > 1e-8) {
-                cout << "Iter " << iter << ", Selected Neighborhood: " << selected_neighbor << " recalculation changed violation values!\n";
-                cout << "Current Solution:\n";
-                print_solution_stream(current_sol, cout);
-                cout << "Initial Neighbor Solution:\n";
-                print_solution_stream(init_neighbor, cout);
-                cout << "Recalculated Neighbor Solution:\n";
-                print_solution_stream(neighbor, cout);
-                neighbor = current_sol;
-                exit(1);
-            } 
+    cout << "=== Starting Unified Tabu Search (Minimizing Weighted Cost) ===\n";
+    cout << "Initial Cost: " << solution_score_cost(current_sol) << "\n";
 
-            if (!check_solution_integrity(neighbor)) {
-                cout << "Iter " << iter << ", Selected Neighborhood: " << selected_neighbor << "failed integrity check!\n";
-                cout << "Current Solution:\n";
-                print_solution_stream(current_sol, cout);
-                cout << "Neighbor Solution:\n";
-                print_solution_stream(neighbor, cout);
-                neighbor = current_sol;
-                exit(1);
-            }
-            bool neighbor_feasible = is_feasible(neighbor);
-            // Clamp neighbor violation values to zero if they are very small
-            if (neighbor.deadline_violation < 1e-8) neighbor.deadline_violation = 0.0;
-            if (neighbor.capacity_violation < 1e-8) neighbor.capacity_violation = 0.0;
-            if (neighbor.energy_violation < 1e-8) neighbor.energy_violation = 0.0;
-            double neighbor_score;
-            if (scoring_mode_iter == 1) {
-                neighbor_score = solution_score_l2_norm(neighbor);
-            } else if (scoring_mode_iter == 0) {
-                neighbor_score = solution_score_makespan(neighbor);
-            } else if (scoring_mode_iter == 2){
-                neighbor_score = solution_score_total_time(neighbor);
-            }
-            // Debug: print selected neighborhood and scores
-            /* cout.setf(std::ios::fixed); cout << setprecision(6);
-            cout << "[Iter " << iter << "] Selected Neighborhood: " << selected_neighbor
-                 << ", Current Score: " << current_score
-                 << ", Neighbor Score: " << neighbor_score
-                 << ", Current Makespan: " << current_cost
-                 << ", Neighbor Makespan: " << neighbor.total_makespan << "\n";
-            print_solution_stream(neighbor, cout); */
+    double best_solution_score_now = solution_score_cost(best_solution);
 
-            if (neighbor_score + 1e-12 < best_solution_score_now ||
-                (std::abs(neighbor_score - best_solution_score_now) <= 1e-12 &&
-                 neighbor.total_makespan + 1e-12 < best_solution.total_makespan)) {
-                current_sol = neighbor;
-                current_cost = neighbor.total_makespan;
-                best_solution = neighbor;
-                score[selected_neighbor] += gamma1;
-                no_improve_iters = 0;
-                best_solution_score_now = neighbor_score;
-                //updated_edge_records(neighbor);
-                //Solution tmp = updated_elite_set(neighbor);
-                scoring_mode_segment = 1;
-            } else if (neighbor_score + 1e-12 < current_score ||
-                       (std::abs(neighbor_score - current_score) <= 1e-12 &&
-                        neighbor.total_makespan + 1e-12 < current_cost)) {
-                current_sol = neighbor;
-                current_cost = neighbor.total_makespan;
-                score[selected_neighbor] += gamma2;
-            } else {
-/*                   double T = T0 * pow(alpha, iter);
-                double delta = current_score - neighbor_score;
-                double ap = exp(delta / T);
-                double rand_val = ((double) rand() / (RAND_MAX));
-                if (rand_val < ap) {
-                    current_sol = neighbor;
-                    current_cost = neighbor.total_makespan;
-                }  */
-                score[selected_neighbor] += gamma3;
-                no_improve_iters++;
-            }
-            if (is_feasible(current_sol) &&
-                current_sol.total_makespan + 1e-12 < best_feasible_makespan) {
-                best_feasible_makespan = current_sol.total_makespan;
-                best_feasible_solution = current_sol;
-                best_cost = best_feasible_makespan;
-                scoring_mode_segment = 1;
-            } else if (neighbor_feasible &&
-                       neighbor.total_makespan + 1e-12 < best_feasible_makespan) {
-                best_feasible_makespan = neighbor.total_makespan;
-                best_feasible_solution = neighbor;
-                best_cost = best_feasible_makespan;
-                scoring_mode_segment = 1;
-            }
-            if (neighbor_score + 1e-12 < best_segment_score ||
-                (std::abs(neighbor_score - best_segment_score) <= 1e-12 &&
-                 neighbor.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
-                best_segment_sol = neighbor;
-                best_segment_score = neighbor_score;
-            }
-            if (is_feasible(neighbor) &&
-                    neighbor.total_makespan + 1e-12 < best_feasible_makespan) {
-                best_feasible_makespan = neighbor.total_makespan;
-                best_feasible_solution = neighbor;
-                best_cost = best_feasible_makespan;
-            }
-            update_penalties(current_sol);
-            iter++;
-            if (no_improve_iters >= CFG_MAX_NO_IMPROVE || iter >= CFG_MAX_ITER_PER_SEGMENT){
-                if (no_improve_iters >= CFG_MAX_NO_IMPROVE) {
-                    //if (scoring_mode_iter == 1) scoring_mode_segment = 0;
-                    //else if (scoring_mode_iter == 0) scoring_mode_segment = 1;
-                    cout << "No improvement in " << CFG_MAX_NO_IMPROVE << " iters, switching scoring mode to "
-                         << scoring_mode_segment << "\n";
-                }
-                else {
-                    cout << "Reached max iterations for segment.\n";
-                    scoring_mode_segment = 1;
-                }
-                tabu_list_10.clear();
-                tabu_list_11.clear();
-                tabu_list_20.clear();
-                tabu_list_2opt.clear();
-                tabu_list_2opt_star.clear();
-                tabu_list_22.clear();
-                tabu_list_21.clear();
-                tabu_list_ejection.clear();
-                /*if (!elite_set.empty()) {
-                    // Debug: print restart info
-                    Solution tmp = current_sol;
-                    std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-                    std::uniform_int_distribution<int> dist(0, elite_set.size() - 1);
-                    int rand_idx = dist(rng);
-                    current_sol = elite_set[rand_idx];
-                    cout << "Pushing sol with makespan " << tmp.total_makespan << " to elite set;";
-                    Solution pushed_out_sol = updated_elite_set(tmp);
-                    cout << " replacing sol with makespan " << pushed_out_sol.total_makespan << "\n";
-                    current_cost = current_sol.total_makespan;
-                    cout.setf(std::ios::fixed); cout << setprecision(6);
-                    cout << "[Restart] from no-improve solution " << tmp.total_makespan << " to elite solution with cost: " << current_sol.total_makespan << " ";
-                    current_sol = destroy_and_repair(current_sol);
-                    current_cost = current_sol.total_makespan;
-                }
-                int local_iter = 0;
-                for (int i = 0; i < EJECTION_CHAIN_ITERS; ++i) {
-                    if (total_score_iter){
-                        current_sol = local_search_all_vehicle(current_sol, 0, local_iter, best_solution_score_now);
-                        current_cost = current_sol.total_makespan;
-                    }
-                    else {
-                        current_sol = local_search(current_sol, 0, local_iter, best_solution_score_now);
-                        current_cost = solution_score(current_sol);
-                    }
-                    if (is_feasible(current_sol) &&
-                        current_sol.total_makespan + 1e-12 < best_feasible_makespan) {
-                        best_feasible_makespan = current_sol.total_makespan;
-                        best_feasible_solution = current_sol;
-                        best_cost = best_feasible_makespan;
-                        //updated_edge_records(current_sol);
-                        //updated_elite_set(current_sol);
-                        best_solution_score_now = neighbor_score;
-                    }
-                    update_penalties(current_sol);
-                    local_iter++;
-                }*/
-                // Intensification via local search on all neighborhoods
-                if (no_improve_iters >= CFG_MAX_NO_IMPROVE){
-                    vector<int> neighborhood_order(NUM_NEIGHBORHOODS);;
-                    for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-                        neighborhood_order[i] = i;
-                    }
-                    sort(neighborhood_order.begin(), neighborhood_order.end(), [&](int a, int b) {
-                        return weight[a] > weight[b];
-                    });
-                    //testing: no intentification
-                    //bool improved = true;
-                    bool improved = false;
-                    int limit_intensification = 0;
-                    while (improved && limit_intensification < 20){ 
-                        improved = false;
-                        for (int ni : neighborhood_order) {
-                            Solution neighbor;
-                            limit_intensification++;
-                            if (limit_intensification >= 21) break;
-                            if (11 == 2){
-                                neighbor = local_search_all_vehicle(current_sol, ni, 0, best_solution_score_now, solution_score_l2_norm);
-                                //neighbor = recalculate_solution(neighbor);
-                                double neighbor_score = solution_score_l2_norm(neighbor);
-                                double current_sol_score = solution_score_l2_norm(current_sol);
-                                if (neighbor_score + 1e-12 < current_sol_score ||
-                                    (std::abs(neighbor_score - current_sol_score) <= 1e-12 &&
-                                    neighbor.total_makespan + 1e-12 < current_sol.total_makespan)) {
-                                    
-                                    current_sol = neighbor;
-                                    improved = true;
-                                    cout << "Improved on neighborhood " << ni << " to total score " << neighbor_score << " with makespan " << neighbor.total_makespan << "\n";
-                                    //updated_edge_records(neighbor);
-                                    
-                                    // [FIX] Update best score tracker for subsequent searches
-                                    if (neighbor_score < best_solution_score_now) {
-                                        best_solution_score_now = neighbor_score;
-                                    }
-                                }
-                            }
-                            else {
-                                neighbor = local_search(current_sol, ni, 0, best_solution_score_now, solution_score_makespan);
-                                //neighbor = recalculate_solution(neighbor);
-                                double neighbor_score = solution_score_makespan(neighbor);
-                                double current_sol_score = solution_score_makespan(current_sol);
-
-                                if (neighbor_score + 1e-12 < current_sol_score ||
-                                    (std::abs(neighbor_score - current_sol_score) <= 1e-12 &&
-                                    neighbor.total_makespan + 1e-12 < current_sol.total_makespan)) {
-                                    
-                                    current_sol = neighbor;
-                                    improved = true;
-                                    //updated_edge_records(neighbor);
-                                    cout << "Improved on neighborhood " << ni << " to total score " << neighbor_score << " with makespan " << neighbor.total_makespan << "\n";
-
-                                    // [FIX] Update best score tracker for subsequent searches
-                                    if (neighbor_score < best_solution_score_now) {
-                                        best_solution_score_now = neighbor_score;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (scoring_mode_iter == 1) {
-                        if (solution_score_l2_norm(current_sol) + 1e-12 < best_segment_score ||
-                            (std::abs(solution_score_l2_norm(current_sol) - best_segment_score) <= 1e-12 &&
-                             current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
-                            best_segment_sol = current_sol;
-                            best_segment_score = solution_score_l2_norm(current_sol);
-                        }
-                    }
-                    else if (scoring_mode_iter == 0){
-                        if (solution_score_makespan(current_sol) + 1e-12 < best_segment_score ||
-                            (std::abs(solution_score_makespan(current_sol) - best_segment_score) <= 1e-12 &&
-                             current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
-                            best_segment_sol = current_sol;
-                            best_segment_score = solution_score_makespan(current_sol);
-                        }
-                    }
-                    else if (scoring_mode_iter == 2){
-                        if (solution_score_total_time(current_sol) + 1e-12 < best_segment_score ||
-                            (std::abs(solution_score_total_time(current_sol) - best_segment_score) <= 1e-12 &&
-                             current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
-                            best_segment_sol = current_sol;
-                            best_segment_score = solution_score_total_time(current_sol);
-                        }
-                    }
-                    print_solution_stream(current_sol, cout);
-                    //current_sol = destroy_worst_repair_random(current_sol);
-                    current_sol = destroy_and_repair(current_sol);
-                    current_cost = current_sol.total_makespan;
-                    tabu_list_ejection.clear();
-                }
-                no_improve_iters = 0;
-                break;
-                //cout << "after destroy-and-repair and ejection chain: " << current_sol.total_makespan << "\n";
-            }
-            // Debug: print iteration info
-            //cout.setf(std::ios::fixed); cout << setprecision(6);
-            //cout << "Lambda_D=" << PENALTY_LAMBDA_DEADLINE << ", Lambda_C=" << PENALTY_LAMBDA_CAPACITY << ", Lambda_E=" << PENALTY_LAMBDA_ENERGY << "\n";
-        }
-        //recalculate solution
-        current_sol = recalculate_solution(current_sol);
-        current_cost = current_sol.total_makespan;
-        best_solution = recalculate_solution(best_solution);
+    while (iter <= total_iters) {
         if (CFG_TIME_LIMIT_SEC > 0.0) {
             double elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - ts_start).count();
             if (elapsed >= CFG_TIME_LIMIT_SEC) break;
         }
-        // Update weights based on scores
+
+        double current_score = solution_score_cost(current_sol);
+
+        // Roulette Wheel Selection
+        double total_weight = 0.0;
         for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-            if (count[i] != 0) {
-                weight[i] = (1.0 - gamma4) * weight[i] + gamma4 * (score[i] / count[i]);
+            total_weight += weight[i];
+        }
+        double r = ((double) rand() / (RAND_MAX));
+        int selected_neighbor = 0;
+        double cumulative = 0.0;
+        for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+            cumulative += weight[i] / total_weight;
+            if (r < cumulative) {
+                selected_neighbor = i;
+                break;
             }
         }
-        double sum_weights = 0.0;
-        for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-            sum_weights += weight[i];
+        if (selected_neighbor == 0 && r >= cumulative) {
+            selected_neighbor = NUM_NEIGHBORHOODS - 1;
         }
-        if (sum_weights > 0.0) {
-            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-                weight[i] /= sum_weights;
-            }
+        //if (selected_neighbor > 7) selected_neighbor = 7; // For debugging
+        count[selected_neighbor]++;
+
+        // Local Search - Always use all_vehicle with Cost
+        Solution init_neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_cost);
+        Solution neighbor = recalculate_solution(init_neighbor);
+
+        bool integrity_ok = true;
+        
+        if (std::abs(neighbor.deadline_violation - init_neighbor.deadline_violation) > 1e-8 ||
+            std::abs(neighbor.capacity_violation - init_neighbor.capacity_violation) > 1e-8 ||
+            std::abs(neighbor.energy_violation - init_neighbor.energy_violation) > 1e-8 ||
+            std::abs(neighbor.total_makespan - init_neighbor.total_makespan) > 1e-8) {
+             cout << "Iter " << iter << " Recalc deviation detected. Skipping.\n";
+             integrity_ok = false;
+        } 
+
+        if (integrity_ok && !check_solution_integrity(neighbor)) {
+            cout << "Iter " << iter << " Integrity Check Failed. Skipping.\n";
+             integrity_ok = false;
+        }
+
+        if (!integrity_ok) {
+            neighbor = current_sol;
+        }
+
+        bool neighbor_feasible = is_feasible(neighbor);
+        double neighbor_score = solution_score_cost(neighbor);
+
+        // Acceptance
+        if (neighbor_score + 1e-12 < best_solution_score_now || 
+           (std::abs(neighbor_score - best_solution_score_now) <= 1e-12 && neighbor.total_time < best_solution.total_time)) {
+            
+            current_sol = neighbor;
+            best_solution = neighbor;
+            best_solution_score_now = neighbor_score;
+            score[selected_neighbor] += gamma1;
+            no_improve_iters = 0;
+            
+        } else if (neighbor_score + 1e-12 < current_score) {
+            current_sol = neighbor;
+            score[selected_neighbor] += gamma2;
         } else {
-            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-                weight[i] = 1.0 / NUM_NEIGHBORHOODS;
+            score[selected_neighbor] += gamma3;
+            no_improve_iters++;
+        }
+
+        // Update Feasible Best
+        if (neighbor_feasible) {
+             double n_cost = solution_score_cost(neighbor);
+             if (n_cost + 1e-12 < best_feasible_cost) {
+                 best_feasible_solution = neighbor;
+                 best_feasible_cost = n_cost;
+             }
+        }
+        
+        update_penalties(current_sol);
+
+        // Perturbation (Destroy/Repair)
+        if (no_improve_iters >= CFG_MAX_NO_IMPROVE) {
+            cout << "[Iter " << iter << "] No Improve for " << CFG_MAX_NO_IMPROVE << ". Perturbing (Destroy/Repair)...\n";
+            current_sol = destroy_worst_repair_random(current_sol);
+            current_sol = recalculate_solution(current_sol);
+            no_improve_iters = 0;
+
+            int n7_iters = max(10, int(sqrt(n)));
+            for (int i = 0; i < n7_iters; ++i) {
+                current_sol = local_search_all_vehicle(current_sol, 7, iter, best_solution_score_now, solution_score_cost);
+                current_sol = recalculate_solution(current_sol);
             }
-        }
-        for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-            score[i] = 0.0;
-            count[i] = 0;
+            
+            // Clear Tabu Lists
+            tabu_list_10.clear();
+            tabu_list_11.clear();
+            tabu_list_20.clear();
+            tabu_list_2opt.clear();
+            tabu_list_2opt_star.clear();
+            tabu_list_22.clear();
+            tabu_list_21.clear();
+            tabu_list_ejection.clear();
         }
 
-        if (is_feasible(best_solution) &&
-            best_solution.total_makespan + 1e-12 < best_feasible_makespan) {
-            best_feasible_makespan = best_solution.total_makespan;
-            best_feasible_solution = best_solution;
-            best_cost = best_feasible_makespan;
+        // Periodic Weight Update
+        if (iter % CFG_MAX_ITER_PER_SEGMENT == 0) {
+            cout << "[Iter " << iter << "] Periodic Weight Update. Best Cost: " << best_solution_score_now << "\n";
+            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+                if (count[i] != 0) {
+                    weight[i] = (1.0 - gamma4) * weight[i] + gamma4 * (score[i] / count[i]);
+                }
+            }
+            double sum_weights = 0.0;
+            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) sum_weights += weight[i];
+            if (sum_weights > 0.0) {
+                for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) weight[i] /= sum_weights;
+            } else {
+                 for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) weight[i] = 1.0 / NUM_NEIGHBORHOODS;
+            }
+            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+                score[i] = 0.0;
+                count[i] = 0;
+            }
+            cout << "Updated Weights: ";
+            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+                cout << "N" << i << ": " << weight[i] << " ";
+            }
+            cout << "\n";
         }
 
-        /*if (!elite_set.empty()) {
-            std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-            std::uniform_int_distribution<int> dist(0, elite_set.size() - 1);
-            int rand_idx = dist(rng);
-            current_sol = elite_set[rand_idx];
-            current_cost = current_sol.total_makespan;
-        }*/
-
-        // Debug: print neighborhood weights after each segment
-        cout.setf(std::ios::fixed); cout << setprecision(6);
-        cout << "[Segment " << (segment + 1) << "] weights:";
-         for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-            cout << " w" << i << "=" << weight[i];
-        }
-        cout << endl;
-        cout << "Best segment solution score: " << best_segment_score
-             << ", Makespan: " << best_segment_sol.total_makespan << "\n";
-        print_solution_stream(best_segment_sol, cout);
-        //print current elite set makespans
-        cout << endl;
+        iter++;
     }
-    if (best_feasible_makespan < std::numeric_limits<double>::infinity()) {
+    if (best_feasible_cost < std::numeric_limits<double>::infinity()) {
         return best_feasible_solution;
     }
     return best_solution;
@@ -6066,6 +3647,61 @@ void print_distance_matrix(){
         cout << "\n";
     }
     cout << "END_DISTANCE_MATRIX\n";
+}
+
+void check_benchmark_solution(const std::string& benchmark_string) {
+    std::cout << "\n--- Checking Benchmark Solution ---\n";
+    std::stringstream ss(benchmark_string);
+    std::string line;
+    Solution sol;
+
+    // Dynamically resize routes as we parse, instead of pre-assigning.
+    sol.truck_routes.clear();
+    sol.drone_routes.clear();
+
+    while (std::getline(ss, line)) {
+        std::stringstream line_ss(line);
+        std::string type;
+        line_ss >> type;
+
+        if (type.empty() || (type[0] != 'T' && type[0] != 'D')) continue;
+
+        int vehicle_id = std::stoi(type.substr(1));
+        double route_time; // This is the time from the benchmark file, we'll ignore it and recalculate
+        line_ss >> route_time;
+
+        std::vector<int> route;
+        int customer_id;
+        while (line_ss >> customer_id) {
+            route.push_back(customer_id);
+        }
+
+        if (type[0] == 'T') {
+            if (vehicle_id >= sol.truck_routes.size()) {
+                sol.truck_routes.resize(vehicle_id + 1);
+            }
+            sol.truck_routes[vehicle_id] = route;
+        } else { // Drone
+            if (vehicle_id >= sol.drone_routes.size()) {
+                sol.drone_routes.resize(vehicle_id + 1);
+            }
+            sol.drone_routes[vehicle_id] = route;
+        }
+    }
+
+    // After parsing, we need to initialize the other solution vectors based on the new route sizes
+    sol.truck_route_times.assign(sol.truck_routes.size(), 0.0);
+    sol.truck_route_cap.assign(sol.truck_routes.size(), 0.0);
+    sol.drone_route_times.assign(sol.drone_routes.size(), 0.0);
+    sol.drone_route_cap.assign(sol.drone_routes.size(), 0.0);
+
+
+    // Recalculate all metrics for the parsed solution
+    Solution recalculated_sol = recalculate_solution(sol);
+
+    std::cout << "Parsed and Recalculated Benchmark Solution:\n";
+    print_solution_stream(recalculated_sol, std::cout);
+    std::cout << "--- Finished Checking Benchmark Solution ---\n\n";
 }
 
 
@@ -6111,12 +3747,16 @@ int main(int argc, char* argv[]) {
         if (parse_kv_flag(arg, "--knn-window", v)) { CFG_KNN_WINDOW = max(0, stoi(v)); continue; }
         if (arg == "--auto-tune") { auto_tune = true; continue; }
     }
-
+    cout << "Reading input file: " << input_file << "\n";
     // Read input instance
     input(input_file);
+    cout << "Instance has " << n << " customers, "
+         << h << " trucks, " << d << " drones.\n";
+    
     // Recalculate tenures based on instance size
     update_tabu_tenures();
     // Build distance matrix for downstream time computations
+    cout << "Precomputing distance matrix...\n";
     compute_distance_matrices(loc);
     if (print_dist_matrix) {
         print_distance_matrix();
@@ -6127,7 +3767,7 @@ int main(int argc, char* argv[]) {
     // For now, set auto-tune to always true
     auto_tune = true;
     if (auto_tune) {
-        if (n <= 20) {
+        if (n <= 50) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
@@ -6140,11 +3780,11 @@ int main(int argc, char* argv[]) {
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
         } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
-            CFG_KNN_K = min(CFG_KNN_K, int(n/2));
+            CFG_KNN_K = min(CFG_KNN_K, int(n));
         }
     }
 
@@ -6156,14 +3796,13 @@ int main(int argc, char* argv[]) {
 
     update_served_by_drone();
     //print test the served by drone
-    /* cout << "Customers that can be served by drone:\n";
+    cout << "Customers that can be served by drone:\n";
     for (int i = 1; i <= n; ++i) {
         if (served_by_drone[i]) {
             cout << i << " "; 
         }
     }
     cout << "\n";
-    exit(1); */
 
     // Track best across attempts
     bool have_best = false;
@@ -6174,25 +3813,29 @@ int main(int argc, char* argv[]) {
 
     auto start_time = std::chrono::high_resolution_clock::now();
     for (int attempt = 0; attempt < CFG_NUM_INITIAL; ++attempt) {
+        cout << "\n=== Attempt " << (attempt + 1) << " of " << CFG_NUM_INITIAL << " ===\n";
         Solution initial_solution = generate_initial_solution();
         Solution improved_sol = tabu_search(initial_solution, CFG_NUM_INITIAL);
+        double initial_cost_val = solution_score_cost(initial_solution);
+        double current_cost_val = solution_score_cost(improved_sol);
+
         // Output both to stdout and to file
         cout.setf(std::ios::fixed); cout << setprecision(6);
-        cout << "Improved Solution Cost: " << improved_sol.total_makespan << "\n";
+        cout << "Improved Solution Cost: " << current_cost_val << "\n";
         print_solution_stream(improved_sol, cout);
         
         // Update stats
-        double current_makespan = improved_sol.total_makespan;
-        sum_overall_cost += current_makespan;
-        if (worst_overall_cost < 0 || current_makespan > worst_overall_cost) {
-            worst_overall_cost = current_makespan;
+        sum_overall_cost += current_cost_val;
+        if (worst_overall_cost < 0 || current_cost_val > worst_overall_cost) {
+            worst_overall_cost = current_cost_val;
         }
 
         // Update best across attempts
-        if (!have_best || improved_sol.total_makespan + 1e-12 < best_overall_sol.total_makespan) {
+        double best_val = have_best ? solution_score_cost(best_overall_sol) : 1e18;
+        if (!have_best || current_cost_val + 1e-12 < best_val) {
             have_best = true;
             best_overall_sol = improved_sol;
-            best_overall_initial_cost = initial_solution.total_makespan;
+            best_overall_initial_cost = initial_cost_val;
         }
     }
     // Emit best across all attempts
@@ -6203,10 +3846,10 @@ int main(int argc, char* argv[]) {
     if (have_best) {
         cout << "\n=== Best Across Attempts ===\n";
         cout << "Initial Solution Cost: " << best_overall_initial_cost << "\n";
-        cout << "Improved Solution Cost: " << best_overall_sol.total_makespan << "\n";
+        cout << "Improved Solution Cost: " << solution_score_cost(best_overall_sol) << "\n";
         cout << "Worst Solution Cost: " << worst_overall_cost << "\n";
         cout << "Mean Solution Cost: " << mean_overall_cost << "\n";
-        cout << "Elapsed Time: " << elapsed_seconds << " seconds\n";
+        cout << "Mean Elapsed Time: " << elapsed_seconds / CFG_NUM_INITIAL << " seconds\n";
         print_solution_stream(best_overall_sol, cout);
         // check final feasibility
         bool final_feas = true;
@@ -6233,5 +3876,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
+
+
     return 0;
 }
+
+// Run with: g++ -O3 -std=c++20 tabubu_benchmark.cpp -o tabubu_benchmark && ./tabubu_benchmark instances/min-cost/100-c-0-c.txt
