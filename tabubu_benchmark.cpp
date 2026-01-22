@@ -108,11 +108,11 @@ static double CFG_TIME_LIMIT_SEC = 0.0; // 0 = unlimited
 static double PENALTY_LAMBDA_CAPACITY = 1.0;      // λ for capacity violations
 static double PENALTY_LAMBDA_ENERGY = 1.0;        // λ for energy violations  
 static double PENALTY_LAMBDA_DEADLINE = 1.0;      // λ for deadline violations
-static double PENALTY_EXPONENT = 0.5;             // exponent for penalty term *
+static double PENALTY_EXPONENT = 1.0;             // exponent for penalty term *
 
 static const double PENALTY_INCREASE = 1.2;       // multiply when violated *
 static const double PENALTY_DECREASE = 1.2;       // divide when satisfied *
-static const double PENALTY_MIN = 0.5;            // minimum λ value
+static const double PENALTY_MIN = 1.0;            // minimum λ value
 static const double PENALTY_MAX = 1000.0;
 
 // Destroy and repair helper
@@ -1747,8 +1747,10 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             // 1. Remove cust1 and cust2 from their original route
             for(int v=0; v<h+d; ++v) {
                 auto& r = (v < h) ? candidate.truck_routes[v] : candidate.drone_routes[v-h];
+                if (r.size() < 2) continue;
+
                 bool found_pair = false;
-                for(size_t i = 0; i < r.size() -1; ++i) {
+                for(size_t i = 0; i + 1 < r.size(); ++i) {
                     if (r[i] == best_cust1 && r[i+1] == best_cust2) {
                         r.erase(r.begin() + i, r.begin() + i + 2);
                         found_pair = true;
@@ -2719,6 +2721,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
         }
 
         int filtered_n_routes = (int)route_indices.size();
+        if (filtered_n_routes < 3) return initial_solution;
 
         for (int attempt = 0; attempt < NUM_RANDOM_TRIPLETS; ++attempt) {
             int rA = rand() % filtered_n_routes;
@@ -3518,8 +3521,27 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
         count[selected_neighbor]++;
 
         // Local Search - Always use all_vehicle with Cost
-        Solution init_neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_cost);
-        Solution neighbor = recalculate_solution(init_neighbor);
+        Solution init_neighbor;
+        Solution neighbor;
+        try {
+            init_neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_cost);
+            neighbor = recalculate_solution(init_neighbor);
+        } catch (const std::exception& e) {
+            cerr << "\n========== EXCEPTION CAUGHT ==========\n";
+            cerr << "Iter: " << iter << " | Neighbor ID: " << selected_neighbor << "\n";
+            cerr << "Error: " << e.what() << "\n";
+            cerr << "Solution State causing error:\n";
+            print_solution_stream(current_sol, cerr);
+            cerr << "======================================\n";
+            throw; // Re-throw to allow program termination/analysis
+        } catch (...) {
+            cerr << "\n========== UNKNOWN CRASH/EXCEPTION ==========\n";
+            cerr << "Iter: " << iter << " | Neighbor ID: " << selected_neighbor << "\n";
+            cerr << "Solution State causing error:\n";
+            print_solution_stream(current_sol, cerr);
+            cerr << "=============================================\n";
+            throw;
+        }
 
         bool integrity_ok = true;
         
