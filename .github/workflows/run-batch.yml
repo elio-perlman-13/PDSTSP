@@ -17,12 +17,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build JSON matrix from instances/min-cost/*.txt
+      - name: Build JSON matrix from instance_modified/*.txt
         id: set-matrix
         run: |
           items=()
-          # Changed path to instances/min-cost/*.txt
-          for f in instances/min-cost/*.txt; do
+          # Changed path to instance_modified/*.txt
+          for f in instance_modified/*.txt; do
             if [ -f "$f" ]; then
               base=$(basename "$f" .txt)
 
@@ -33,7 +33,7 @@ jobs:
             fi
           done
           if [ ${#items[@]} -eq 0 ]; then
-            echo "No instance files found under instances/min-cost/ matching criteria"; exit 1
+            echo "No instance files found under instance_modified/ matching criteria"; exit 1
           fi
           # join items with commas to produce valid JSON array
           matrix_json="$(printf '%s,' "${items[@]}")"
