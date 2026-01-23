@@ -523,6 +523,11 @@ double solution_score_cost(const Solution& sol) {
     return (cost) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
+double solution_pure_cost(const Solution& sol) {
+    double cost = sol.total_distance_truck * COST_TRUCK_KM + sol.total_distance_drone * COST_DRONE_KM;
+    return cost;
+}
+
 void update_penalties(const Solution& sol) {
     // Capacity penalty
     if (sol.capacity_violation > 1e-9) {
@@ -3122,98 +3127,12 @@ bool check_solution_integrity(const Solution& sol) {
     return (served_count == n);
 }
 
-Solution destroy_worst_repair_random(Solution sol) {
-    unordered_set<int> to_destroy;
-    int destroy_count = static_cast<int>(n * 0.3); // Destroy 30%
-    
-    Solution current_sol = sol;
+// Common Repair Logic
+Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destroy) {
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-
-    // --- 1. Destroy: Randomized Worst Removal (Global) ---
-    // We want to remove customers that contribute most to the COST (distance).
-    // To prevent cycles, we calculate "savings" for all, sort them, and pick randomly from the top.
-    
-    // Structure to hold removal candidates
-    struct Candidate {
-        int cust;
-        int veh_idx;
-        bool is_truck;
-        double saving;
-    };
-    
-    for (int k = 0; k < destroy_count; ++k) {
-        vector<Candidate> candidates;
-        candidates.reserve(n); // rough upper bound
-
-        // Scan ALL trucks
-        for (int i = 0; i < h; ++i) {
-            const vi& route = current_sol.truck_routes[i]; 
-            if (route.size() <= 2) continue; // 0-0 or empty
-
-            for (int p = 1; p < (int)route.size() - 1; ++p) { // Skip depots
-                int cust = route[p];
-                if (cust == 0) continue;
-                if (to_destroy.count(cust)) continue;
-
-                // Truck Delta (Manhattan)
-                int prev = route[p-1];
-                int next = route[p+1];
-                double saving = distance_matrix_manhattan[prev][cust] 
-                              + distance_matrix_manhattan[cust][next]
-                              - distance_matrix_manhattan[prev][next];
-                // Weight by truck cost
-                candidates.push_back({cust, i, true, saving * COST_TRUCK_KM});
-            }
-        }
-
-        // Scan ALL drones
-        for (int i = 0; i < d; ++i) {
-            const vi& route = current_sol.drone_routes[i];
-            if (route.size() <= 1) continue; // {0}
-
-            for (int p = 1; p < (int)route.size(); ++p) { // Drones might not have end depot in storage, standard is list of customers
-                int cust = route[p];
-                if (cust == 0) continue;
-                if (to_destroy.count(cust)) continue;
-
-                // Drone Delta (Euclidean Sortie)
-                double saving = distance_matrix_euclid[0][cust] * 2.0;
-                // Weight by drone cost
-                candidates.push_back({cust, i, false, saving * COST_DRONE_KM});
-            }
-        }
-
-        if (candidates.empty()) break;
-
-        // Sort by saving descending (Best removal first)
-        std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b){
-            return a.saving > b.saving;
-        });
-
-        // Randomized Selection (Shaw's heuristic)
-        // Pick index = |Candidates| * y^p, where y in [0,1], p is high (e.g. 6) to favor top
-        // Simplified: Pick from top roughly 20% or size 5
-        int range = max(1, min((int)candidates.size(), 6)); 
-        std::uniform_int_distribution<int> pick_dist(0, range - 1);
-        const Candidate& selected = candidates[pick_dist(rng)];
-
-        to_destroy.insert(selected.cust);
-
-        // Apply removal to current_sol immediately so next iteration sees accurate hole
-        if (selected.is_truck) {
-             vi& r = current_sol.truck_routes[selected.veh_idx];
-             r.erase(std::remove(r.begin(), r.end(), selected.cust), r.end());
-             // Update time? For destruction selection we only care about distance/cost savings roughly.
-             // We don't strictly need to update times here unless we use them for selection criteria.
-             // Since we use Pure Cost now, we can skip full time recalc optimization here for speed.
-        } else {
-             vi& r = current_sol.drone_routes[selected.veh_idx];
-             r.erase(std::remove(r.begin(), r.end(), selected.cust), r.end());
-        }
-    }
-
-    // 2. Apply removal to a fresh copy of the original solution (clean slate)
     Solution new_sol = sol;
+    
+    // Remove destroyed customers
     for (int i = 0; i < h; ++i) {
         vi& route = new_sol.truck_routes[i];
         route.erase(remove_if(route.begin(), route.end(), [&](int c) {
@@ -3227,109 +3146,71 @@ Solution destroy_worst_repair_random(Solution sol) {
         }), route.end());
     }
     new_sol = recalculate_solution(new_sol);
-
-     vector<int> customers_to_insert(to_destroy.begin(), to_destroy.end());
-    // Shuffle order of insertion to add diversity in the construction sequence itself
+    
+    vector<int> customers_to_insert(to_destroy.begin(), to_destroy.end());
     std::shuffle(customers_to_insert.begin(), customers_to_insert.end(), rng);
-
+    
     for (int cust : customers_to_insert) {
-        
         struct InsertionOption {
             int veh_idx;
             bool is_truck;
             int pos;
-            double score; // Cost + Penalty
-            vi resulting_route; // Stored to avoid re-simulating
+            double score;
+            vi resulting_route;
             double route_time;
         };
-
         vector<InsertionOption> options;
         
-        // 1. Evaluate all Truck positions
+        // 1. Evaluate all useable Truck positions
         for (int i = 0; i < h; ++i) {
             const vi& route = new_sol.truck_routes[i];
-            if (route.size() < 2) continue; // Should be 0-0
-            
-            // Try all relevant truck positions (1 to size-1)
-            for (int p = 1; p < (int)route.size(); ++p) {
-                // Heuristic trim: if truck is far from cust, maybe skip? (Skipped for correctness now)
-                
+            // Safe loop limit
+            for (int p = 1; p < (int)route.size(); ++p) { 
                 vi temp_route = route;
                 temp_route.insert(temp_route.begin() + p, cust);
-                
-                // Check Feasibility & Cost
-                // Returns: [0]=total_time, [1]=dead_viol, [2]=energy_viol, [3]=cap_viol
                 vd m = check_route_feasibility(temp_route, 0.0, true);
                 
-                // Calculate Delta Cost
-                double old_dist = 0;
-                // Optimization: Local delta is faster, but for now we do full route dist diff
-                // to be safe and consistent with "check_route_feasibility"
                 double new_dist = 0;
                 for(size_t k=0; k+1<temp_route.size(); ++k) new_dist += distance_matrix_manhattan[temp_route[k]][temp_route[k+1]];
-                
                 double current_dist = 0; 
                 for(size_t k=0; k+1<route.size(); ++k) current_dist += distance_matrix_manhattan[route[k]][route[k+1]];
-                
                 double delta_cost = (new_dist - current_dist) * COST_TRUCK_KM;
-
-                // Penalty Term
-                double penalties = PENALTY_LAMBDA_DEADLINE * m[1] 
-                                 + PENALTY_LAMBDA_ENERGY * m[2] 
-                                 + PENALTY_LAMBDA_CAPACITY * m[3];
                 
-                // Score = Delta + Penalties^Exp
+                double penalties = PENALTY_LAMBDA_DEADLINE * m[1] + PENALTY_LAMBDA_ENERGY * m[2] + PENALTY_LAMBDA_CAPACITY * m[3];
                 double score = delta_cost + pow(1.0 + penalties, PENALTY_EXPONENT) * 10000.0 * (penalties > 1e-6 ? 1.0 : 0.0);
-                // If feasible, score is just delta cost. If not, it's boosted.
-                
                 options.push_back({i, true, p, score, temp_route, m[0]});
             }
         }
-
-        // 2. Evaluate all Drone positions
+        
+        // 2. Evaluate Drone positions
         if (served_by_drone[cust]) {
              for (int i = 0; i < d; ++i) {
                 const vi& route = new_sol.drone_routes[i];
-                // Drones append at end (simplification for "route" = list of customers)
-                
                 int p = (int)route.size(); 
                 vi temp_route = route;
                 temp_route.push_back(cust);
-
                 vd m = check_route_feasibility(temp_route, 0.0, false);
-
+                
                 double new_dist = 0;
                 for(int c : temp_route) if(c!=0) new_dist += distance_matrix_euclid[0][c]*2.0;
                 double curr_dist = 0;
                 for(int c : route) if(c!=0) curr_dist += distance_matrix_euclid[0][c]*2.0;
-
                 double delta_cost = (new_dist - curr_dist) * COST_DRONE_KM;
-
-                double penalties = PENALTY_LAMBDA_DEADLINE * m[1] 
-                                    + PENALTY_LAMBDA_ENERGY * m[2] 
-                                    + PENALTY_LAMBDA_CAPACITY * m[3];
                 
+                double penalties = PENALTY_LAMBDA_DEADLINE * m[1] + PENALTY_LAMBDA_ENERGY * m[2] + PENALTY_LAMBDA_CAPACITY * m[3];
                 double score = delta_cost + pow(1.0 + penalties, PENALTY_EXPONENT) * 100.0 * (penalties > 1e-6 ? 1.0 : 0.0);
-                
                 options.push_back({i, false, p, score, temp_route, m[0]});
              }
         }
-
+        
         if (options.empty()) {
-             // Fallback if no options found (shouldn't happen unless constraints are weird)
              new_sol = greedy_insert_customer(new_sol, cust, true);
              continue;
         }
 
-        // 3. Probabilistic Selection (Softmax / Boltzmann)
-        // We want min score. So weight ~ exp( - beta * score )
-        // Normalize scores to avoid overflow.
         double min_score = 1e18;
         for(const auto& opt : options) if(opt.score < min_score) min_score = opt.score;
-        
-        // Beta parameter determines greediness. High beta = greedy. Low beta = random.
-        double beta = 0.5; // Tunable parameter for repair randomness
-        
+        double beta = 0.5; 
         vector<double> weights;
         double total_weight = 0.0;
         for(const auto& opt : options) {
@@ -3340,37 +3221,29 @@ Solution destroy_worst_repair_random(Solution sol) {
         
         double r = std::uniform_real_distribution<double>(0.0, total_weight)(rng);
         double cum = 0.0;
-        int selected_idx = 0; // Default best/first
+        int selected_idx = 0; 
         for(size_t k=0; k<weights.size(); ++k) {
             cum += weights[k];
-            if (r <= cum) {
-                selected_idx = k;
-                break;
-            }
+            if (r <= cum) { selected_idx = k; break; }
         }
-
-        // Apply Selection
+        
         const auto& choice = options[selected_idx];
         if (choice.is_truck) {
             new_sol.truck_routes[choice.veh_idx] = choice.resulting_route;
             new_sol.truck_route_times[choice.veh_idx] = choice.route_time;
-            // Update total dist? Loop at end handles full recalc
         } else {
             new_sol.drone_routes[choice.veh_idx] = choice.resulting_route;
             new_sol.drone_route_times[choice.veh_idx] = choice.route_time;
         }
     }
     
-    // Normalize and finalize
+    // Finalize
     for (int i = 0; i < h; ++i) {
         vi& route = new_sol.truck_routes[i];
         if (route.empty() || route.front() != 0) route.insert(route.begin(), 0);
         if (route.back() != 0) route.push_back(0);
-        
-        // Final Feasibility Update
         vd m = check_route_feasibility(route, 0.0, true);
         new_sol.truck_route_times[i] = m[0];
-        // Dist calc
         double km = 0; 
         for(size_t k=0; k+1<route.size(); ++k) km += distance_matrix_manhattan[route[k]][route[k+1]];
         new_sol.total_distance_truck += km;
@@ -3378,24 +3251,15 @@ Solution destroy_worst_repair_random(Solution sol) {
     new_sol.total_distance_drone = 0;
     for (int i = 0; i < d; ++i) {
         vi& route = new_sol.drone_routes[i];
-        // Drones usually don't need 0-0 padding in this struct but let's be safe
-        if (!route.empty() && route.front() == 0) route.erase(route.begin()); // clean leading 0? 
-        // Logic in N0 assumes 0->C->0 implication. But check_feasibility assumes list of customers.
-        // Let's stick to standard: Drones are just list of customers.
-        
+        if (!route.empty() && route.front() == 0) route.erase(route.begin()); 
         vd m = check_route_feasibility(route, 0.0, false);
         new_sol.drone_route_times[i] = m[0];
-        // Dist calc
         for(int c : route) if(c!=0) new_sol.total_distance_drone += distance_matrix_euclid[0][c]*2.0; 
     }
-    
-    // Recalculate totals
     new_sol.deadline_violation = 0; 
     new_sol.capacity_violation = 0;
     new_sol.energy_violation = 0;
     new_sol.total_time = 0; 
-
-    // Proper summation
     for(int i=0; i<h; ++i) {
          vd m = check_route_feasibility(new_sol.truck_routes[i], 0.0, true);
          new_sol.deadline_violation += m[1];
@@ -3410,11 +3274,96 @@ Solution destroy_worst_repair_random(Solution sol) {
          new_sol.capacity_violation += m[3];
          new_sol.total_time += m[0];
     }
-
     return new_sol;
 }
 
-Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
+Solution destroy_worst_repair_random(Solution sol) {
+    unordered_set<int> to_destroy;
+    int destroy_count = static_cast<int>(n * 0.3); 
+    Solution current_sol = sol;
+    std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
+    
+    struct Candidate { int cust; int veh_idx; bool is_truck; double saving; };
+    for (int k = 0; k < destroy_count; ++k) {
+        vector<Candidate> candidates;
+        candidates.reserve(n);
+        for (int i = 0; i < h; ++i) {
+            const vi& route = current_sol.truck_routes[i]; 
+            if (route.size() <= 2) continue; 
+            for (int p = 1; p < (int)route.size() - 1; ++p) { 
+                int cust = route[p];
+                if (cust == 0 || to_destroy.count(cust)) continue;
+                int prev = route[p-1];
+                int next = route[p+1];
+                double saving = distance_matrix_manhattan[prev][cust] + distance_matrix_manhattan[cust][next] - distance_matrix_manhattan[prev][next];
+                candidates.push_back({cust, i, true, saving * COST_TRUCK_KM});
+            }
+        }
+        for (int i = 0; i < d; ++i) {
+            const vi& route = current_sol.drone_routes[i];
+            if (route.size() <= 1) continue; 
+            for (int p = 1; p < (int)route.size(); ++p) { 
+                int cust = route[p];
+                if (cust == 0 || to_destroy.count(cust)) continue;
+                double saving = distance_matrix_euclid[0][cust] * 2.0;
+                candidates.push_back({cust, i, false, saving * COST_DRONE_KM});
+            }
+        }
+        if (candidates.empty()) break;
+        std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b){ return a.saving > b.saving; });
+        int range = max(1, min((int)candidates.size(), 6)); 
+        std::uniform_int_distribution<int> pick_dist(0, range - 1);
+        const Candidate& selected = candidates[pick_dist(rng)];
+        to_destroy.insert(selected.cust);
+        if (selected.is_truck) {
+             vi& r = current_sol.truck_routes[selected.veh_idx];
+             r.erase(std::remove(r.begin(), r.end(), selected.cust), r.end());
+        } else {
+             vi& r = current_sol.drone_routes[selected.veh_idx];
+             r.erase(std::remove(r.begin(), r.end(), selected.cust), r.end());
+        }
+    }
+    return repair_solution_common(sol, to_destroy);
+}
+
+Solution destroy_shortest_route_repair_random(Solution sol) {
+    unordered_set<int> to_destroy;
+    std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
+    
+    // Identify shortest non-empty truck route
+    int target_idx = -1;
+    size_t min_size = 100000;
+    int active_trucks = 0;
+    for (int i = 0; i < h; ++i) {
+        if (sol.truck_routes[i].size() > 2) { 
+             active_trucks++;
+             if (sol.truck_routes[i].size() < min_size) {
+                 min_size = sol.truck_routes[i].size();
+                 target_idx = i;
+             }
+        }
+    }
+    
+    if (active_trucks <= 1 || target_idx == -1) {
+        return destroy_worst_repair_random(sol);
+    }
+    
+    // Empty target route
+    for (int c : sol.truck_routes[target_idx]) {
+        if (c != 0) to_destroy.insert(c);
+    }
+    // Also destroy 15% random others
+    int random_count = static_cast<int>(n * 0.15);
+    std::uniform_int_distribution<int> dist_idx(1, n);
+    for(int k=0; k<random_count; ++k){
+        int c = dist_idx(rng);
+        to_destroy.insert(c);
+    }
+    
+    return repair_solution_common(sol, to_destroy);
+}
+
+Solution tabu_search(const Solution& initial_solution, vector<double>& iter_current, vector<double>& iter_best) {
     auto ts_start = std::chrono::high_resolution_clock::now();
     auto is_feasible = [](const Solution& sol) {
         return sol.deadline_violation <= 1e-8 &&
@@ -3435,52 +3384,9 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
     Solution current_sol = initial_solution;
     double current_cost = solution_score_cost(current_sol);
 
-    /* for (int i = 0; i < num_initial_sol; i++){
-        Solution initial_sol = generate_initial_solution();
-        updated_edge_records(initial_sol);
-        Solution best_local_solution = initial_sol;
-        for (int j = 0; j < 10; j++){
-            int selected_neighbor = rand() % NUM_NEIGHBORHOODS;
-            initial_sol = local_search(initial_sol, selected_neighbor, 0, solution_score(best_solution));
-            if (solution_score(initial_sol) + 1e-12 < solution_score(best_local_solution) ||
-                (std::abs(solution_score(initial_sol) - solution_score(best_local_solution)) <= 1e-12 &&
-                 initial_sol.total_makespan + 1e-12 < best_local_solution.total_makespan)) {
-                best_local_solution = initial_sol;
-            }
-            if (is_feasible(initial_sol) &&
-                initial_sol.total_makespan + 1e-12 < best_feasible_makespan) {
-                best_feasible_makespan = initial_sol.total_makespan;
-                best_feasible_solution = initial_sol;
-                best_cost = best_feasible_makespan;
-            }
-        }
-        // if it's better than the worst solution in elite set, add it
-        if (elite_set.size() < ELITE_SET_SIZE) {
-            elite_set.push_back(best_local_solution);
-        } else {
-            double worst_score = -1.0;
-            int worst_idx = -1;
-            for (size_t j = 0; j < elite_set.size(); ++j) {
-                double s = solution_score(elite_set[j]);
-                if (s > worst_score) {
-                    worst_score = s;
-                    worst_idx = j;
-                }
-            }
-            if (solution_score(best_local_solution) + 1e-12 < worst_score) {
-                elite_set[worst_idx] = best_local_solution;
-            }
-        }
-    } 
-
-    // Pick current solution from elite set randomly
-    if (!elite_set.empty()) {
-        int rand_idx = rand() % elite_set.size();
-        current_sol = elite_set[rand_idx];
-        current_cost = current_sol.total_makespan;
-    }*/
     current_sol = initial_solution;
-    
+    iter_current.clear();
+    iter_best.clear();
     // Unified Tabu Search on Cost
     int iter = 1;
     int total_iters = CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT;
@@ -3498,6 +3404,11 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
         }
 
         double current_score = solution_score_cost(current_sol);
+        double current_pure_cost = solution_pure_cost(current_sol);
+        iter_current.push_back(current_pure_cost);
+        double best_pure_cost = solution_pure_cost(best_solution);
+        iter_best.push_back(best_pure_cost);
+
 
         // Roulette Wheel Selection
         double total_weight = 0.0;
@@ -3581,6 +3492,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
         } else {
             score[selected_neighbor] += gamma3;
             no_improve_iters++;
+            if (selected_neighbor == 8) current_sol = neighbor; // Always accept Greedy Truck -> Optimal Drone
         }
 
         // Update Feasible Best
@@ -3589,6 +3501,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
              if (n_cost + 1e-12 < best_feasible_cost) {
                  best_feasible_solution = neighbor;
                  best_feasible_cost = n_cost;
+                 cout << "Iter " << iter << " New Best Feasible Cost: " << best_feasible_cost << "\n";
              }
         }
         
@@ -3596,8 +3509,9 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
 
         // Perturbation (Destroy/Repair)
         if (no_improve_iters >= CFG_MAX_NO_IMPROVE) {
-            cout << "[Iter " << iter << "] No Improve for " << CFG_MAX_NO_IMPROVE << ". Perturbing (Destroy/Repair)...\n";
+
             current_sol = destroy_worst_repair_random(current_sol);
+            
             current_sol = recalculate_solution(current_sol);
             no_improve_iters = 0;
 
@@ -3620,7 +3534,6 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
 
         // Periodic Weight Update
         if (iter % CFG_MAX_ITER_PER_SEGMENT == 0) {
-            cout << "[Iter " << iter << "] Periodic Weight Update. Best Cost: " << best_solution_score_now << "\n";
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
                 if (count[i] != 0) {
                     weight[i] = (1.0 - gamma4) * weight[i] + gamma4 * (score[i] / count[i]);
@@ -3637,11 +3550,6 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol) {
                 score[i] = 0.0;
                 count[i] = 0;
             }
-            cout << "Updated Weights: ";
-            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-                cout << "N" << i << ": " << weight[i] << " ";
-            }
-            cout << "\n";
         }
 
         iter++;
@@ -3726,17 +3634,26 @@ void check_benchmark_solution(const std::string& benchmark_string) {
     std::cout << "--- Finished Checking Benchmark Solution ---\n\n";
 }
 
-
+static bool write_iteration_file(const std::string& out_path, const vd& iter_current, const vd& iter_best) {
+    std::ofstream ofs(out_path);
+    if (!ofs) return false;
+    ofs.setf(std::ios::fixed); ofs << setprecision(6);
+    ofs << "iter,current_cost,best_cost\n";
+    for (size_t i = 0; i < iter_current.size(); ++i) {
+        ofs << i + 1 << "," << iter_current[i] << "," << iter_best[i] << "\n";
+    }
+    return true;
+}
 
 static bool write_output_file(const std::string& out_path, const Solution& sol, double cost, double elapsed_sec, bool final_feasibility, double worst_cost, double mean_cost) {
     std::ofstream ofs(out_path);
     if (!ofs) return false;
     ofs.setf(std::ios::fixed); ofs << setprecision(6);
     ofs << "Initial solution cost: " << cost << "\n";
-    ofs << "Improved solution cost: " << sol.total_makespan << "\n";
+    ofs << "Improved solution cost: " << solution_score_cost(sol) << "\n";
     ofs << "Worst solution cost: " << worst_cost << "\n";
     ofs << "Mean solution cost: " << mean_cost << "\n";
-    ofs << "Elapsed time: " << elapsed_sec << " seconds\n";
+    ofs << "Mean elapsed time: " << elapsed_sec / CFG_NUM_INITIAL << " seconds\n";
     ofs << "Final solution feasibility: " << (final_feasibility ? "FEASIBLE" : "INFEASIBLE") << "\n";
     ofs << "Solution Details:\n";
     print_solution_stream(sol, ofs);
@@ -3790,22 +3707,22 @@ int main(int argc, char* argv[]) {
     auto_tune = true;
     if (auto_tune) {
         if (n <= 50) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 3);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 3);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
         } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 3);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 100);
+            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         }
     }
@@ -3832,12 +3749,14 @@ int main(int argc, char* argv[]) {
     double best_overall_initial_cost = 0.0;
     double worst_overall_cost = -1.0;
     double sum_overall_cost = 0.0;
+    vd best_overall_iter_current, best_overall_iter_best;
 
     auto start_time = std::chrono::high_resolution_clock::now();
     for (int attempt = 0; attempt < CFG_NUM_INITIAL; ++attempt) {
         cout << "\n=== Attempt " << (attempt + 1) << " of " << CFG_NUM_INITIAL << " ===\n";
         Solution initial_solution = generate_initial_solution();
-        Solution improved_sol = tabu_search(initial_solution, CFG_NUM_INITIAL);
+        vd iter_current, iter_best;
+        Solution improved_sol = tabu_search(initial_solution, iter_current, iter_best);
         double initial_cost_val = solution_score_cost(initial_solution);
         double current_cost_val = solution_score_cost(improved_sol);
 
@@ -3858,6 +3777,8 @@ int main(int argc, char* argv[]) {
             have_best = true;
             best_overall_sol = improved_sol;
             best_overall_initial_cost = initial_cost_val;
+            best_overall_iter_current = iter_current;
+            best_overall_iter_best = iter_best;
         }
     }
     // Emit best across all attempts
@@ -3896,6 +3817,12 @@ int main(int argc, char* argv[]) {
         } else {
             cout << "Failed to write best solution to " << out_best << "\n";
         }
+        string out_iter = "output.txt";
+        if (write_iteration_file(out_iter, best_overall_iter_current, best_overall_iter_best)) {
+            cout << "Iteration data written to " << out_iter << "\n";
+        } else {
+            cout << "Failed to write iteration data to " << out_iter << "\n";
+        }
     }
 
 
@@ -3903,4 +3830,15 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-// Run with: g++ -O3 -std=c++20 tabubu_benchmark.cpp -o tabubu_benchmark && ./tabubu_benchmark instances/min-cost/100-c-0-c.txt
+// Run with: g++ -O3 -std=c++20 tabubu_benchmark.cpp -o tabubu_benchmark && ./tabubu_benchmark instance_modified/100-r-1-c.txt
+/*100-r-1-c.txt
+Cost = 302.457
+T0	1.946	0 3 62 63 71 84 67 46 98 75 16 2 83 95 78 4 49 72 19 24 0 
+T1	1.999	0 100 82 61 21 38 7 80 9 29 76 26 17 96 53 45 86 81 90 20 23 50 15 0 
+T2	1.933	0 74 56 99 73 31 5 30 44 64 43 41 91 25 22 12 65 88 0 
+T3	1.871	0 77 52 1 27 89 68 93 28 8 14 55 11 57 10 85 92 18 34 47 0 
+D0	1.987	48 36 60 58 33 
+D1	1.968	87 32 13 69 97 
+D2	1.987	79 51 70 66 
+D3	1.983	39 40 35 37 
+D4	1.998	94 54 6 59 42 */
