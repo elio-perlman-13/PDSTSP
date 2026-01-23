@@ -3363,7 +3363,122 @@ Solution destroy_shortest_route_repair_random(Solution sol) {
     return repair_solution_common(sol, to_destroy);
 }
 
-Solution tabu_search(const Solution& initial_solution, vector<double>& iter_current, vector<double>& iter_best) {
+// SISR (Slack Induction by Substring Removal) Implementation
+Solution destroy_sisr_repair(Solution sol) {
+    const int MAX_STRING_REMOVALS = 3; 
+    const int MAX_STRING_SIZE_BASE = 12; 
+    
+    unordered_set<int> to_destroy;
+    std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
+    
+    // 1. Calculate Average Route Size (Trucks only)
+    double total_len = 0;
+    int truck_routes_active = 0;
+    for(const auto& r : sol.truck_routes) {
+        if(r.size() > 2) { 
+            total_len += (r.size() - 2); 
+            truck_routes_active++;
+        }
+    }
+    int avg_route_size = (truck_routes_active > 0) ? (int)(total_len / truck_routes_active) : 5;
+    int max_string_size = max(MAX_STRING_SIZE_BASE, avg_route_size);
+    
+    // 2. Pick Center
+    std::uniform_int_distribution<int> dist_n(1, n);
+    int center = dist_n(rng);
+    
+    // 3. Map customers to vehicles for fast lookups
+    struct Locator { bool is_truck; int v_idx; int pos; };
+    vector<Locator> cust_loc(n+1, {false, -1, -1});
+    for(int i=0; i<h; ++i) {
+        for(int p=0; p<(int)sol.truck_routes[i].size(); ++p) {
+            int c = sol.truck_routes[i][p];
+            if(c!=0) cust_loc[c] = {true, i, p};
+        }
+    }
+    for(int i=0; i<d; ++i) {
+        if (sol.drone_routes[i].empty()) continue;
+        for(size_t p=0; p<sol.drone_routes[i].size(); ++p) {
+             int c = sol.drone_routes[i][p];
+             if(c!=0) cust_loc[c] = {false, i, (int)p};
+        }
+    }
+
+    // 4. Neighbors loop
+    vector<int> candidate_neighbors;
+    if (center <= n && !KNN_LIST[center].empty()) {
+        candidate_neighbors = KNN_LIST[center];
+    } else {
+        // Fallback if KNN empty 
+        for(int i=1; i<=n; ++i) if(i!=center) candidate_neighbors.push_back(i);
+        std::shuffle(candidate_neighbors.begin(), candidate_neighbors.end(), rng);
+    }
+    
+    unordered_set<int> destroyed_routes_id; 
+    int removal_count = 0;
+
+    // Prioritize center, then neighbors
+    vector<int> process_queue;
+    process_queue.push_back(center);
+    process_queue.insert(process_queue.end(), candidate_neighbors.begin(), candidate_neighbors.end());
+
+    for(int neighbor_cust : process_queue) {
+        if(to_destroy.count(neighbor_cust)) continue; // Already marked
+        if(removal_count >= MAX_STRING_REMOVALS) break;
+        
+        Locator l = cust_loc[neighbor_cust];
+        if(l.v_idx == -1) continue; 
+        
+        // Identify unique vehicle ID (Trucks: 0..h-1, Drones: h..h+d-1)
+        int unique_id = l.is_truck ? l.v_idx : (h + l.v_idx);
+        if(destroyed_routes_id.count(unique_id)) continue;
+        
+        destroyed_routes_id.insert(unique_id);
+        removal_count++;
+        
+        if(!l.is_truck) {
+             // Remove all customers on this drone route
+             for(int c : sol.drone_routes[l.v_idx]) if(c!=0) to_destroy.insert(c);
+        } else {
+             // Truck String Removal
+             const vi& route = sol.truck_routes[l.v_idx];
+             // Limit string size
+             int actual_max = min((int)route.size()-2, max_string_size);
+             if (actual_max < 1) actual_max = 1;
+             
+             std::uniform_int_distribution<int> size_dist(1, actual_max);
+             int str_len = size_dist(rng);
+             
+             // We need a window [s, s+len-1] that contains l.pos
+             // Constraints:
+             // 1. s >= 1 (start after depot)
+             // 2. s + str_len - 1 <= route.size() - 2 (end before depot)
+             // 3. s <= l.pos
+             // 4. s + str_len - 1 >= l.pos => s >= l.pos - str_len + 1
+             
+             int min_s = max(1, l.pos - str_len + 1);
+             int max_s = min(l.pos, (int)route.size() - 1 - str_len); // Ensures end doesn't exceed bounds
+
+             if (min_s > max_s) {
+                 // Fallback: just remove the neighbor if math fails
+                 to_destroy.insert(neighbor_cust);
+             } else {
+                 std::uniform_int_distribution<int> start_dist(min_s, max_s);
+                 int s = start_dist(rng);
+                 for(int k=0; k<str_len; ++k) {
+                     int idx = s + k;
+                     if (idx < route.size()) {
+                        int c = route[idx];
+                        if(c!=0) to_destroy.insert(c);
+                     }
+                 }
+             }
+        }
+    }
+    return repair_solution_common(sol, to_destroy);
+}
+
+Solution tabu_search(const Solution& initial_solution, vector<double>& iter_current, vector<double>& iter_best, vector<bool>& iter_feasible) {
     auto ts_start = std::chrono::high_resolution_clock::now();
     auto is_feasible = [](const Solution& sol) {
         return sol.deadline_violation <= 1e-8 &&
@@ -3387,6 +3502,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
     current_sol = initial_solution;
     iter_current.clear();
     iter_best.clear();
+    iter_feasible.clear();
     // Unified Tabu Search on Cost
     int iter = 1;
     int total_iters = CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT;
@@ -3405,9 +3521,9 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
 
         double current_score = solution_score_cost(current_sol);
         double current_pure_cost = solution_pure_cost(current_sol);
-        iter_current.push_back(current_pure_cost);
-        double best_pure_cost = solution_pure_cost(best_solution);
-        iter_best.push_back(best_pure_cost);
+        iter_current.push_back(current_pure_cost);;
+        iter_best.push_back(best_feasible_cost);
+        iter_feasible.push_back(is_feasible(current_sol));
 
 
         // Roulette Wheel Selection
@@ -3509,17 +3625,23 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
 
         // Perturbation (Destroy/Repair)
         if (no_improve_iters >= CFG_MAX_NO_IMPROVE) {
-
-            current_sol = destroy_worst_repair_random(current_sol);
+            // Destroy and repair current solution or starting over from best solution with a few force N7 iterations
+            // Chance to restart from best solution:
+            double restart_chance = 0.0;
+            if (((double) rand() / (RAND_MAX)) < restart_chance) {
+                current_sol = best_solution;
+                int n7_iters = max(10, int(sqrt(n)));
+                for (int i = 0; i < n7_iters; ++i) {
+                    current_sol = local_search_all_vehicle(current_sol, 7, iter, best_solution_score_now, solution_score_cost);
+                    current_sol = recalculate_solution(current_sol);
+                }
+            }
+            else {
+                current_sol = destroy_sisr_repair(current_sol);
+            }
             
             current_sol = recalculate_solution(current_sol);
             no_improve_iters = 0;
-
-            int n7_iters = max(10, int(sqrt(n)));
-            for (int i = 0; i < n7_iters; ++i) {
-                current_sol = local_search_all_vehicle(current_sol, 7, iter, best_solution_score_now, solution_score_cost);
-                current_sol = recalculate_solution(current_sol);
-            }
             
             // Clear Tabu Lists
             tabu_list_10.clear();
@@ -3634,13 +3756,13 @@ void check_benchmark_solution(const std::string& benchmark_string) {
     std::cout << "--- Finished Checking Benchmark Solution ---\n\n";
 }
 
-static bool write_iteration_file(const std::string& out_path, const vd& iter_current, const vd& iter_best) {
+static bool write_iteration_file(const std::string& out_path, const vd& iter_current, const vd& iter_best, const vector<bool>& iter_feasible) {
     std::ofstream ofs(out_path);
     if (!ofs) return false;
     ofs.setf(std::ios::fixed); ofs << setprecision(6);
-    ofs << "iter,current_cost,best_cost\n";
+    ofs << "iter,current_cost,best_cost,feasible\n";
     for (size_t i = 0; i < iter_current.size(); ++i) {
-        ofs << i + 1 << "," << iter_current[i] << "," << iter_best[i] << "\n";
+        ofs << i + 1 << "," << iter_current[i] << "," << iter_best[i] << "," << (iter_feasible[i] ? "true" : "false") << "\n";
     }
     return true;
 }
@@ -3750,13 +3872,15 @@ int main(int argc, char* argv[]) {
     double worst_overall_cost = -1.0;
     double sum_overall_cost = 0.0;
     vd best_overall_iter_current, best_overall_iter_best;
+    vector<bool> best_overall_current_feasibility;
 
     auto start_time = std::chrono::high_resolution_clock::now();
     for (int attempt = 0; attempt < CFG_NUM_INITIAL; ++attempt) {
         cout << "\n=== Attempt " << (attempt + 1) << " of " << CFG_NUM_INITIAL << " ===\n";
         Solution initial_solution = generate_initial_solution();
         vd iter_current, iter_best;
-        Solution improved_sol = tabu_search(initial_solution, iter_current, iter_best);
+        vector<bool> current_feasibility;
+        Solution improved_sol = tabu_search(initial_solution, iter_current, iter_best, current_feasibility);
         double initial_cost_val = solution_score_cost(initial_solution);
         double current_cost_val = solution_score_cost(improved_sol);
 
@@ -3779,6 +3903,7 @@ int main(int argc, char* argv[]) {
             best_overall_initial_cost = initial_cost_val;
             best_overall_iter_current = iter_current;
             best_overall_iter_best = iter_best;
+            best_overall_current_feasibility = current_feasibility;
         }
     }
     // Emit best across all attempts
@@ -3818,20 +3943,18 @@ int main(int argc, char* argv[]) {
             cout << "Failed to write best solution to " << out_best << "\n";
         }
         string out_iter = "output.txt";
-        if (write_iteration_file(out_iter, best_overall_iter_current, best_overall_iter_best)) {
+        if (write_iteration_file(out_iter, best_overall_iter_current, best_overall_iter_best, best_overall_current_feasibility)) {
             cout << "Iteration data written to " << out_iter << "\n";
         } else {
             cout << "Failed to write iteration data to " << out_iter << "\n";
         }
     }
-
-
-
     return 0;
 }
 
 // Run with: g++ -O3 -std=c++20 tabubu_benchmark.cpp -o tabubu_benchmark && ./tabubu_benchmark instance_modified/100-r-1-c.txt
 /*100-r-1-c.txt
+// Plotting: python plot_iteration.py --input output.txt --save iterations.png
 Cost = 302.457
 T0	1.946	0 3 62 63 71 84 67 46 98 75 16 2 83 95 78 4 49 72 19 24 0 
 T1	1.999	0 100 82 61 21 38 7 80 9 29 76 26 17 96 53 45 86 81 90 20 23 50 15 0 
