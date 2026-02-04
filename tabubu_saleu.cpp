@@ -3975,7 +3975,7 @@ static bool write_output_file(const std::string& out_path, const Solution& sol, 
     if (!ofs) return false;
     ofs.setf(std::ios::fixed); ofs << setprecision(6);
     ofs << "Initial solution cost: " << cost << "\n";
-    ofs << "Improved solution cost: " << solution_score_l2_norm(sol) << "\n";
+    ofs << "Improved solution cost: " << solution_score_makespan(sol) << "\n";
     ofs << "Worst solution cost: " << worst_cost << "\n";
     ofs << "Mean solution cost: " << mean_cost << "\n";
     ofs << "Mean elapsed time: " << elapsed_sec / CFG_NUM_INITIAL << " seconds\n";
@@ -4158,24 +4158,24 @@ int main(int argc, char* argv[]) {
 // Run with: g++ -O3 -std=c++20 tabubu_saleu.cpp -o tabubu_saleu && ./tabubu_saleu /workspaces/PDSTSP/saleu-2022/saleu-2022/CMT1.vrp
 // Plotting: python plot_iteration.py --input output.txt --save iterations.png
 /*    saleu = {
-        "CMT1": 168,
+        "CMT1": 166,
         "CMT2": 130.23,
         "CMT3": 184,
         "CMT4": 160.38,
         "CMT5": 138,
         "E-n51-k5": 168,
         "E-n76-k8": 154,
-        "E-n101-k8": 186,
+        "E-n101-k8": 184,
         "M-n151-k12": 154,
         "M-n200-k16": 144,
         "P-n51-k10": 111.07,
-        "P-n55-k7": 128,
+        "P-n55-k7": 126,
         "P-n60-k10": 114,
         "P-n65-k10": 126,
         "P-n70-k10": 129.29,
-        "P-n76-k5": 202,
-        "P-n101-k4": 342.69,
+        "P-n76-k5": 200,
+        "P-n101-k4": 342,
         "X-n110-k13": 1864,
         "X-n115-k10": 2258,
-        "X-n139-k10": 2928.64,
+        "X-n139-k10": 2492,
     } */
