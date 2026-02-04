@@ -35,20 +35,20 @@ vd serve_truck, serve_drone; // time taken by truck and drone to serve each cust
 vi served_by_drone; //whether each customer can be served by drone or not, 1 if yes, 0 if no
 vd deadline; //customer deadlines
 vd demand; // demand[i]: demand of customer i
-double Dh = 1300.0; // truck capacity (all trucks) (kg)
-double vmax = 30.0; // truck base speed (km/h)
-double drone_limit = 3.0;
-double truck_limit = 3.0;
+double Dh = 130000.0; // truck capacity (all trucks) (kg)
+double vmax = 1.0; // truck base speed (km/h)
+double drone_limit = 10000.0;
+double truck_limit = 10000.0;
 int L = 24; //number of time segments in a day
 vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
 vd time_segments_sigma = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}; //sigma (truck velocity coefficient) for each time segments
 //vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
 //vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
-double Dd = 2.27, E = 0.6; //drone's weight and energy capacities (for all drones). E in Hours.
-double v_fly_drone = 40.0; // speed of the drone (km/h)
-double v_take_off = 20.0; // km/h
-double v_landing = 10.0; // km/h
-double height = 0.05; // km (50m)
+double Dd = 20000.0, E = 100000; //drone's weight and energy capacities (for all drones). E in Hours.
+double v_fly_drone = 1.0; // speed of the drone (km/h)
+double v_take_off = 1000.0; // km/h
+double v_landing = 1000.0; // km/h
+double height = 0.0; // km (50m)
 double power_beta = 0, power_gamma = 1.0; //coefficients for drone energy consumption per second
 //double power_beta = 24.2, power_gamma = 1329.0; //coefficients for drone energy consumption per second
 double COST_TRUCK_KM = 1.25;
@@ -87,7 +87,7 @@ static map<vector<int>, int> tabu_list_22; // keyed by (a,b,c,d) for (2,2) moves
 static int TABU_TENURE_22 = 0; // default tenure for (2,2) moves
 static map<vector<int>, int> tabu_list_ejection; // keyed by sorted customer sequence
 static int TABU_TENURE_EJECTION = 0; // default tenure for ejection chain moves
-const int NUM_NEIGHBORHOODS = 9;
+const int NUM_NEIGHBORHOODS = 8;
 const int NUM_OF_INITIAL_SOLUTIONS = 200;
 const int MAX_SEGMENT = 200;
 const int MAX_NO_IMPROVE = 1000;
@@ -183,119 +183,137 @@ static void compute_knn_lists(int k) {
 
 // Separate tabu list for 2-opt-star (inter-route exchange) moves: keyed by unordered edge endpoints (min(u,v), max(u,v))
 
+// Returns pair of distance matrices
+void compute_distance_matrices(const vector<Point>& loc) {
+    int n = loc.size() - 1; // assuming loc[0] is depot
+    for (int i = 0; i <= n; ++i) {
+        for (int j = 0; j <= n; ++j) {
+            distance_matrix_euclid[i][j] = sqrt((loc[i].x - loc[j].x) * (loc[i].x - loc[j].x)
+                                         + (loc[i].y - loc[j].y) * (loc[i].y - loc[j].y)); // Euclidean
+            distance_matrix_manhattan[i][j] = abs(loc[i].x - loc[j].x) + abs(loc[i].y - loc[j].y); // Manhattan
+        }
+    }
+}
 
 void input(string filepath){
-    // Open the file
     ifstream fin(filepath);
     if (!fin) {
         cerr << "Error: Cannot open " << filepath << endl;
         exit(1);
     }
-    string line;
-    n = h = d = -1;
 
-    // Default params (if not in file)
-    vmax = 30.0;
-    v_fly_drone = 40.0;
-    Dd = 2.27;
-    Dh = 1300.0;
-    E = 0.6;
+    // Defaults
+    vmax = 1.0;
+    v_fly_drone = 1.0;
+    Dd = 20000.0;
+    Dh = 130000.0;
+    E = 100000;
+    truck_limit = 10000.0;
+    drone_limit = 10000.0;
 
-    // Read headers (Key,Value) until a line starts with a digit (data)
-    vector<string> data_lines;
-    bool reading_data = false;
-
-    while (getline(fin, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        
-        // Check if this line is data (starts with digit)
-        if (isdigit(line[0])) {
-            reading_data = true;
-            data_lines.push_back(line); // First data line
-            continue; 
+    // Fleet size from filename
+    static const unordered_map<string, int> FLEET_SIZE = {
+        {"CMT1", 5}, {"CMT2", 10}, {"CMT3", 8}, {"CMT4", 12}, {"CMT5", 17},
+    };
+    filesystem::path p(filepath);
+    string stem = p.stem().string();
+    int fleet_size = 0;
+    if (auto it = FLEET_SIZE.find(stem); it != FLEET_SIZE.end()) {
+        fleet_size = it->second;
+    } else {
+        regex rx("^[A-Z]-n\\d+-k(\\d+)$");
+        smatch m;
+        if (regex_match(stem, m, rx)) {
+            fleet_size = stoi(m[1]);
         }
+    }
+    if (fleet_size <= 0) {
+        cerr << "Error: Cannot infer fleet size from filename " << stem << endl;
+        exit(1);
+    }
+    h = (fleet_size + 1) / 2;
+    d = fleet_size / 2;
 
-        if (reading_data) {
-            data_lines.push_back(line);
+    // Parse VRP
+    enum Section { NONE, NODE, DEMAND, DEPOT };
+    Section section = NONE;
+    int dimension = -1;
+    int depot_vrp_id = 1;
+    vector<pair<double,double>> coords;
+    vector<double> dem_vals;
+    string line;
+    while (getline(fin, line)) {
+        if (line.empty()) continue;
+        if (line.find("DIMENSION") != string::npos) {
+            size_t pos = line.find(':');
+            if (pos == string::npos) pos = line.find(' ');
+            dimension = stoi(line.substr(pos + 1));
+            coords.assign(dimension + 1, {0.0, 0.0});
+            dem_vals.assign(dimension + 1, 0.0);
             continue;
         }
+        if (line.find("NODE_COORD_SECTION") != string::npos) { section = NODE; continue; }
+        if (line.find("DEMAND_SECTION") != string::npos) { section = DEMAND; continue; }
+        if (line.find("DEPOT_SECTION") != string::npos) { section = DEPOT; continue; }
+        if (line.find("EOF") != string::npos) break;
 
-        // Header parsing
-        size_t comma_pos = line.find(',');
-        if (comma_pos != string::npos) {
-            string key = line.substr(0, comma_pos);
-            string val_str = line.substr(comma_pos + 1);
-            double val = 0.0;
-            try { val = stod(val_str); } catch(...) {}
-
-            if (key == "NUM DRONES") d = (int)val;
-            else if (key == "NUM TRUCKS") h = (int)val;
-            else if (key == "TRUCK CAP") Dh = val;
-            else if (key == "DRONE CAP") Dd = val;
-            else if (key == "TRUCK SPEED") vmax = val;
-            else if (key == "DRONE SPEED") v_fly_drone = val;
-            else if (key == "DRONE ENDURANCE") E = val;
-            else if (key == "DRONE TIME LIMIT") drone_limit = val;
-            else if (key == "TRUCK TIME LIMIT") truck_limit = val;
-            else if (key == "TRUCK UNIT COST") COST_TRUCK_KM = val;
-            else if (key == "DRONE UNIT COST") COST_DRONE_KM = val;
-            else if (key == "NUM CUSTOMERS") n = (int)val;
-        }
-    }
-
-    // Process data lines
-    // If 'NUM CUSTOMERS' key was missing, infer n from data lines
-    // Assumption: data_lines[0] is depot (ID 0), others are customers. n = size - 1.
-    if (n == -1) n = (int)data_lines.size() - 1;
-
-    // Resize globals
-    served_by_drone.assign(n+1, 0);
-    serve_truck.assign(n+1, 0.0);
-    serve_drone.assign(n+1, 0.0);
-    deadline.assign(n+1, 0.0);
-    demand.assign(n+1, 0.0);
-    loc.assign(n+1, Point());
-    distance_matrix.assign(n+1, vd(n+1, 0.0));
-    distance_matrix_euclid.assign(n+1, vd(n+1, 0.0));
-    distance_matrix_manhattan.assign(n+1, vd(n+1, 0.0));
-
-    double depot_x = 0, depot_y = 0;
-    
-    // Parse data
-    for (const string& dline : data_lines) {
-        stringstream ss(dline);
-        int id;
-        double x_km, y_km, dem;
-        ss >> id >> x_km >> y_km >> dem;
-        
-        // Coords kept in km to match km/h speeds and E in hours
-        loc[id] = {x_km, y_km, id};
-        demand[id] = dem;
-        
-        if (id == 0) {
-            depot_x = x_km;
-            depot_y = y_km;
-        } else {
-            // Determine Dronable
-            // 1. Demand <= Drone Cap
-            bool dem_ok = (dem <= Dd);
-            
-            // 2. Distance <= Endurance/2 * Speed
-            // E in hours, Speed in km/h -> Range in km
-            double dist_to_depot = sqrt(pow(x_km - depot_x, 2) + pow(y_km - depot_y, 2));
-            double max_radius = (v_fly_drone * E) / 2.0;
-
-            if (dem_ok && dist_to_depot <= max_radius) {
-                served_by_drone[id] = 1;
-            } else {
-                served_by_drone[id] = 0;
+        stringstream ss(line);
+        if (section == NODE) {
+            int id; double x, y;
+            if (ss >> id >> x >> y) {
+                if ((int)coords.size() <= id) coords.resize(id + 1, {0.0, 0.0});
+                coords[id] = {x, y};
             }
-            
-            // Service times set to 0 as per paper
-            serve_truck[id] = 0.0;
-            serve_drone[id] = 0.0;
+        } else if (section == DEMAND) {
+            int id; double dem;
+            if (ss >> id >> dem) {
+                if ((int)dem_vals.size() <= id) dem_vals.resize(id + 1, 0.0);
+                dem_vals[id] = dem;
+            }
+        } else if (section == DEPOT) {
+            int id;
+            if (ss >> id) {
+                if (id > 0) depot_vrp_id = id;
+            }
         }
     }
+
+    if (dimension < 0) {
+        dimension = (int)max(coords.size(), dem_vals.size()) - 1;
+    }
+    if (dimension <= 0) {
+        cerr << "Error: invalid DIMENSION in " << filepath << endl;
+        exit(1);
+    }
+    if ((int)coords.size() <= dimension) coords.resize(dimension + 1, {0.0, 0.0});
+    if ((int)dem_vals.size() <= dimension) dem_vals.resize(dimension + 1, 0.0);
+
+    n = dimension - 1;
+    served_by_drone.assign(n + 1, 0);
+    serve_truck.assign(n + 1, 0.0);
+    serve_drone.assign(n + 1, 0.0);
+    deadline.assign(n + 1, 0.0);
+    demand.assign(n + 1, 0.0);
+    loc.assign(n + 1, Point());
+
+    int next_idx = 1;
+    double depot_x = coords[depot_vrp_id].first;
+    double depot_y = coords[depot_vrp_id].second;
+    for (int id = 1; id <= dimension; ++id) {
+        int idx = (id == depot_vrp_id) ? 0 : next_idx++;
+        loc[idx] = {coords[id].first, coords[id].second, idx};
+        demand[idx] = (idx == 0) ? 0.0 : dem_vals[id];
+
+        if (idx == 0) continue;
+        served_by_drone[idx] = 1;
+        serve_truck[idx] = 0.0;
+        serve_drone[idx] = 0.0;
+    }
+
+    distance_matrix.assign(n + 1, vd(n + 1, 0.0));
+    distance_matrix_euclid.assign(n + 1, vd(n + 1, 0.0));
+    distance_matrix_manhattan.assign(n + 1, vd(n + 1, 0.0));
+    compute_distance_matrices(loc);
 }
 
 void update_tabu_tenures() {
@@ -316,35 +334,6 @@ void update_tabu_tenures() {
     /* cout << "Dynamic Tabu Tenures set to: " << base 
          << " (2-opt: " << TABU_TENURE_2OPT 
          << ", Ejection: " << TABU_TENURE_EJECTION << ")" << endl; */
-}
-
-// Returns pair of distance matrices
-void compute_distance_matrices(const vector<Point>& loc) {
-    int n = loc.size() - 1; // assuming loc[0] is depot
-    for (int i = 0; i <= n; ++i) {
-        for (int j = 0; j <= n; ++j) {
-            distance_matrix_euclid[i][j] = sqrt((loc[i].x - loc[j].x) * (loc[i].x - loc[j].x)
-                                         + (loc[i].y - loc[j].y) * (loc[i].y - loc[j].y)); // Euclidean
-            distance_matrix_manhattan[i][j] = abs(loc[i].x - loc[j].x) + abs(loc[i].y - loc[j].y); // Manhattan
-        }
-    }
-}
-
-// Helper: get time segment index for a given time t (in hours)
-int get_time_segment(double t) {
-    // t is in hours. Use custom time_segment boundaries (in hours):
-    // time_segment: [b0, b1, ..., bk] defines k segments [b0,b1), [b1,b2), ... [b{k-1}, b{k}]
-    // Return 0-based segment index in [0, k-1].
-    // If outside boundaries, loop back to the start segment.
-    t = fmod(t, 12.0);
-    if (time_segment.size() < 2) return 0;
-    // Find first boundary strictly greater than t
-    auto it = upper_bound(time_segment.begin(), time_segment.end(), t);
-    int idx = static_cast<int>(it - time_segment.begin()) - 1; // index of segment start
-    if (idx < 0) idx = 0;
-    int max_idx = static_cast<int>(time_segment.size()) - 2; // last valid segment index
-    if (idx > max_idx) idx = max_idx;
-    return idx;
 }
 
 pair<double, double> compute_truck_route_time(const vi& route, double start=0) {
@@ -500,10 +489,10 @@ double solution_score_l2_norm(const Solution& sol) {
     double sum_sq = 0.0;
     for (double t : sol.truck_route_times) sum_sq += t * t;
     for (double t : sol.drone_route_times) sum_sq += t * t;
-    double l2_norm = std::sqrt(sum_sq);
+    double l2_norm = std::sqrt(sum_sq / (h + d));
 
     // 1e-3 ensures it acts as a tie-breaker without overriding the primary Makespan objective
-    return (sol.total_makespan + l2_norm * 1e-3) * pow(penalty_multiplier, PENALTY_EXPONENT);
+    return (sol.total_makespan + l2_norm * 1e-4) * pow(penalty_multiplier, PENALTY_EXPONENT);
 }
 
 double solution_score_makespan(const Solution& sol) {
@@ -786,6 +775,7 @@ Solution recalculate_solution(Solution sol) {
     sol.total_distance_drone = 0.0;
     sol.truck_route_times.resize(h, 0.0);
     sol.drone_route_times.resize(d, 0.0);
+    sol.total_makespan = 0.0;
 
     for (size_t i = 0; i < sol.truck_routes.size(); ++i) {
         vd metrics = check_route_feasibility(sol.truck_routes[i], 0.0, true);
@@ -799,6 +789,7 @@ Solution recalculate_solution(Solution sol) {
         for (size_t j = 0; j + 1 < route.size(); ++j) {
             sol.total_distance_truck += distance_matrix_manhattan[route[j]][route[j+1]];
         }
+        sol.total_makespan = max(sol.total_makespan, sol.truck_route_times[i]);
     }
     for (size_t i = 0; i < sol.drone_routes.size(); ++i) {
         vd metrics = check_route_feasibility(sol.drone_routes[i], 0.0, false);
@@ -812,6 +803,7 @@ Solution recalculate_solution(Solution sol) {
         for (int c : route) {
             sol.total_distance_drone += (2 * distance_matrix_euclid[0][c]);
         }
+        sol.total_makespan = max(sol.total_makespan, sol.drone_route_times[i]);
     }
 
     sol.total_time = 0.0;
@@ -844,6 +836,8 @@ Solution generate_initial_solution(){
     mt19937 rng(std::random_device{}());
     shuffle(customers_to_insert.begin(), customers_to_insert.end(), rng);
 
+    double current_total_time_squared = 0.0;
+
     for (int cust : customers_to_insert) {
         double best_insertion_cost = 1e18;
         int best_vehicle_type = -1; // 0 for truck, 1 for drone
@@ -859,14 +853,15 @@ Solution generate_initial_solution(){
                 if (temp_route.size() > 2 && temp_route[0] == 0 && temp_route[1] == 0) temp_route.erase(temp_route.begin());
                 int u = sol.truck_routes[i][j-1];
                 int v = (j == sol.truck_routes[i].size()) ? 0 : sol.truck_routes[i][j];
-                double cost_delta = (distance_matrix_manhattan[u][cust] + distance_matrix_manhattan[cust][v] - distance_matrix_manhattan[u][v]) * COST_TRUCK_KM;
-                double new_cost = sol.total_distance_truck * COST_TRUCK_KM + sol.total_distance_drone * COST_DRONE_KM + cost_delta;
-                double time_delta = (distance_matrix_manhattan[u][cust] + distance_matrix_manhattan[cust][v] - distance_matrix_manhattan[u][v]) / vmax;
+                double dist_delta = distance_matrix_manhattan[u][cust] + distance_matrix_manhattan[cust][v] - distance_matrix_manhattan[u][v];
+                double time_delta = dist_delta / vmax;
                 double new_time = time_delta + sol.truck_route_times[i];
+                double new_makespan = max(sol.total_makespan, new_time);
+                double new_total_time_squared = current_total_time_squared - (sol.truck_route_times[i] * sol.truck_route_times[i]) + (new_time * new_time);
                 double tmp_deadline_violation = max(0.0, (new_time - truck_limit) / truck_limit);
-                double tmp_capacity_violation = 0.0; // fix later
-                double tmp_energy_violation = 0.0;
-                double score = new_cost * pow((1.0 + tmp_deadline_violation * 1e6 + tmp_capacity_violation * 1e6 + tmp_energy_violation * 1e6), PENALTY_EXPONENT);
+                double tmp_capacity_violation = 0.0;
+                double tmp_energy_violation = 0.0; // Trucks don't have energy constraints
+                double score = (new_time + 1e-4 * sqrt(new_total_time_squared)) * pow((1.0 + tmp_deadline_violation * 1e6 + tmp_capacity_violation * 1e6 + tmp_energy_violation * 1e6), PENALTY_EXPONENT);
                 if (score < best_insertion_cost) {
                     best_insertion_cost = score;
                     best_vehicle_type = 0;
@@ -881,10 +876,11 @@ Solution generate_initial_solution(){
             vi temp_route = sol.drone_routes[i];
             temp_route.push_back(cust);
             double dist = distance_matrix_euclid[0][cust] * 2;
-            double cost_delta = dist * COST_DRONE_KM;
-            double new_cost = sol.total_distance_truck * COST_TRUCK_KM + sol.total_distance_drone * COST_DRONE_KM + cost_delta;
             double time_delta = dist / v_fly_drone;
             double new_time = time_delta + sol.drone_route_times[i];
+            double new_makespan = max(sol.total_makespan, new_time);
+            double new_total_time_squared = current_total_time_squared - (sol.drone_route_times[i] * sol.drone_route_times[i]) + (new_time * new_time);
+            double new_cost = new_time + 1e-4 * sqrt(new_total_time_squared);
             double tmp_deadline_violation = max(0.0, (new_time - drone_limit) / drone_limit);
             double tmp_capacity_violation = max(0.0, (demand[cust] - Dd) / Dd);
             double tmp_energy_violation = max(0.0, (dist / v_fly_drone - E) / E);
@@ -900,14 +896,19 @@ Solution generate_initial_solution(){
         if (best_vehicle_type != -1) {
             if (best_vehicle_type == 0) { // Truck
                 vi& route = sol.truck_routes[best_vehicle_idx];
+                vd old_metrics = check_truck_route_feasibility(route, 0.0);
                 route.insert(route.begin() + best_insertion_pos, cust);
+                if (route.back() != 0) route.push_back(0);
                 vd metrics = check_truck_route_feasibility(route, 0.0);
                 sol.truck_route_times[best_vehicle_idx] = metrics[0];
                 sol.total_distance_truck += (distance_matrix_manhattan[route[best_insertion_pos - 1]][cust] + distance_matrix_manhattan[cust][route[best_insertion_pos + 1]] - distance_matrix_manhattan[route[best_insertion_pos - 1]][route[best_insertion_pos + 1]]);
                 sol.capacity_violation += metrics[3];
                 sol.deadline_violation += metrics[1];
+                sol.total_makespan = max(sol.total_makespan, sol.truck_route_times[best_vehicle_idx]);
+                current_total_time_squared += (sol.truck_route_times[best_vehicle_idx] * sol.truck_route_times[best_vehicle_idx]) - (old_metrics[0] * old_metrics[0]);
             } else { // Drone
                 vi& route = sol.drone_routes[best_vehicle_idx];
+                vd old_metrics = check_drone_route_feasibility(route);
                 route.insert(route.begin() + best_insertion_pos, cust);
                 vd metrics = check_drone_route_feasibility(route);
                 sol.drone_route_times[best_vehicle_idx] = metrics[0];
@@ -915,6 +916,8 @@ Solution generate_initial_solution(){
                 sol.capacity_violation += metrics[3];
                 sol.energy_violation += metrics[2];
                 sol.deadline_violation += metrics[1];
+                sol.total_makespan = max(sol.total_makespan, sol.drone_route_times[best_vehicle_idx]);
+                current_total_time_squared += (sol.drone_route_times[best_vehicle_idx] * sol.drone_route_times[best_vehicle_idx]) - (old_metrics[0] * old_metrics[0]);
             }
         } else {
             cerr << "Warning: No feasible insertion found for customer " << cust << ". It will be left unserved." << endl;
@@ -926,6 +929,7 @@ Solution generate_initial_solution(){
     sol.capacity_violation = 0;
     sol.energy_violation = 0;
     sol.total_time = 0.0;
+    sol.total_makespan = 0.0;
     double total_truck_dist = 0.0;
     double total_drone_dist = 0.0;
 
@@ -943,6 +947,7 @@ Solution generate_initial_solution(){
             total_truck_dist += distance_matrix_manhattan[sol.truck_routes[i][k]][sol.truck_routes[i][k+1]];
             sol.truck_route_cap[i] += demand[sol.truck_routes[i][k]];
         }
+        sol.total_makespan = max(sol.total_makespan, sol.truck_route_times[i]);
     }
 
     for (int i = 0; i < d; ++i) {
@@ -957,6 +962,7 @@ Solution generate_initial_solution(){
             total_drone_dist += distance_matrix_euclid[0][sol.drone_routes[i][k]] * 2;
             sol.drone_route_cap[i] += demand[sol.drone_routes[i][k]];
         }
+        sol.total_makespan = max(sol.total_makespan, sol.drone_route_times[i]);
     }
     sol.total_distance_drone = total_drone_dist;
     sol.total_distance_truck = total_truck_dist;
@@ -988,17 +994,18 @@ static void print_solution_stream(const Solution& sol, std::ostream& os) {
     os << "Total truck distance: " << sol.total_distance_truck << " km\n";
     os << "Total drone distance: " << sol.total_distance_drone << " km\n";
     os
-       << " Total cost=" << solution_pure_cost(sol)
+       << " Total cost=" << solution_score_makespan(sol)
        << ", Deadline violation=" << sol.deadline_violation
        << ", Energy violation=" << sol.energy_violation
        << ", Capacity violation=" << sol.capacity_violation
+       << ", Makespan=" << sol.total_makespan
        << "\n";
 }
 
 
 pair<int, bool> critical_solution_index(const Solution& sol) {
     // Identify the vehicle (truck or drone) that contributes most to the penalized objective.
-    // Drone 3 is indexed as h + 2. => returns (2, false)
+    // Drone 3 is indexed as 2. => returns (2, false)
     double best_violation_weight = -1.0;
     double best_score = -1.0;
     bool is_truck = true;
@@ -1100,6 +1107,9 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             base_capacity_violation += metrics[3];
             for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
         }
+        double current_total_time_squared = 0.0;
+        for (int v = 0; v < h; ++v) current_total_time_squared += (base_truck_time[v] * base_truck_time[v]);
+        for (int v = 0; v < d; ++v) current_total_time_squared += (base_drone_time[v] * base_drone_time[v]);
 
         auto consider_relocate = [&](const vi& base_route, bool is_truck_mode, int critical_vehicle_id) {
             
@@ -1145,6 +1155,14 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                 for (int target_veh = 0; target_veh < h + d; ++target_veh) {
                     if (served_by_drone[cust] == 0 && target_veh >= h) continue;
 
+                    double other_vehicle_makespan = 0.0;
+                    for (int t = 0; t < h + d; t++){
+                        if (t == critical_vehicle_id) continue;
+                        if (t == target_veh) continue;
+                        double t_time = (t < h) ? base_truck_time[t] : base_drone_time[t - h];
+                        other_vehicle_makespan = max(other_vehicle_makespan, t_time);
+                    }
+
                     // [INTENTION] Explicitly PROHIBIT Intra-route moves for Drones
                     if (!is_truck_mode && target_veh == critical_vehicle_id) continue;
 
@@ -1189,18 +1207,29 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         
                         double insertion_time_delta = insertion_dist_delta / (target_is_truck ? vmax : v_fly_drone);
                         
-                        // --- 3. Compute New Totals ---
-                        double new_dist_truck = base_truck_dist;
-                        double new_dist_drone = base_drone_dist;
-                        
-                        // Apply Removal
-                        if (is_truck_mode) new_dist_truck += removal_dist_delta;
-                        else new_dist_drone += removal_dist_delta;
-                        
-                        // Apply Insertion
-                        if (target_is_truck) new_dist_truck += insertion_dist_delta;
-                        else new_dist_drone += insertion_dist_delta;
-                        
+                        // --- 3. Compute New makespan ---
+                        double new_makespan = other_vehicle_makespan;
+                        if (target_veh == critical_vehicle_id) {
+                            // Single vehicle affected
+                            double new_time = (is_truck_mode ? base_truck_time[critical_vehicle_id] : base_drone_time[critical_vehicle_id - h])
+                                              + removal_time_delta + insertion_time_delta;
+                            new_makespan = max(new_makespan, new_time);
+                        } else {
+                            // Two vehicles affected
+                            double new_time_source = (is_truck_mode ? base_truck_time[critical_vehicle_id] : base_drone_time[critical_vehicle_id - h])
+                                                     + removal_time_delta;
+                            double new_time_target = (target_is_truck ? base_truck_time[target_veh] : base_drone_time[target_veh - h])
+                                                     + insertion_time_delta;
+                            new_makespan = max(new_makespan, max(new_time_source, new_time_target));
+                        }
+                        double new_total_time_squared = current_total_time_squared -
+                            pow(is_truck_mode ? base_truck_time[critical_vehicle_id] : base_drone_time[critical_vehicle_id - h], 2.0) +
+                            pow(is_truck_mode ? base_truck_time[critical_vehicle_id] : base_drone_time[critical_vehicle_id - h] + removal_time_delta, 2.0);
+                        if (target_veh != critical_vehicle_id) {
+                            new_total_time_squared -= pow(target_is_truck ? base_truck_time[target_veh] : base_drone_time[target_veh - h], 2.0);
+                            new_total_time_squared += pow(target_is_truck ? base_truck_time[target_veh] : base_drone_time[target_veh - h] + insertion_time_delta, 2.0);
+                        }
+
                         // Penalties
                         double cap_delta = 0.0; 
                         double energy_delta = 0.0;
@@ -1276,7 +1305,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             PENALTY_EXPONENT);
 
                         // Pure Cost Score (Cost x Penalty)
-                        double new_score = (new_dist_truck * COST_TRUCK_KM + new_dist_drone * COST_DRONE_KM) * penalty;
+                        double new_score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
 
                         if (is_tabu && !(new_score + 1e-8 < best_cost && new_deadline_violation < 1e-8 && new_cap_violation < 1e-8)) {
                             continue;
@@ -1335,18 +1364,20 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             candidate.deadline_violation = 0.0;
             candidate.energy_violation = 0.0;
             candidate.total_time = 0.0;
+            candidate.total_makespan = 0.0;
 
             for(int v=0; v<h; ++v) {
             vd m = check_route_feasibility(candidate.truck_routes[v], 0.0, true);
-            candidate.truck_route_times[v] = m[0];
-            candidate.truck_route_cap[v] = accumulate(candidate.truck_routes[v].begin(), candidate.truck_routes[v].end(), 0.0, [&](double sum, int c){ return sum + demand[c]; });
-            candidate.deadline_violation += m[1];
-            candidate.energy_violation += m[2];
-            candidate.capacity_violation += m[3];
-            candidate.total_time += m[0];
-            const auto& r = candidate.truck_routes[v];
-            for(size_t i=0; i+1<r.size(); ++i) 
-                candidate.total_distance_truck += distance_matrix_manhattan[r[i]][r[i+1]];
+                candidate.truck_route_times[v] = m[0];
+                candidate.truck_route_cap[v] = accumulate(candidate.truck_routes[v].begin(), candidate.truck_routes[v].end(), 0.0, [&](double sum, int c){ return sum + demand[c]; });
+                candidate.deadline_violation += m[1];
+                candidate.energy_violation += m[2];
+                candidate.capacity_violation += m[3];
+                candidate.total_time += m[0];
+                const auto& r = candidate.truck_routes[v];
+                for(size_t i=0; i+1<r.size(); ++i) 
+                    candidate.total_distance_truck += distance_matrix_manhattan[r[i]][r[i+1]];
+                candidate.total_makespan = max(candidate.total_makespan, m[0]);
             }
             for(int v=0; v<d; ++v) {
                 vd m = check_route_feasibility(candidate.drone_routes[v], 0.0, false);
@@ -1361,6 +1392,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                     if (cust_id > 0) // Ignore depot if it's in the list
                         candidate.total_distance_drone += distance_matrix_euclid[0][cust_id] * 2.0;
                 }
+                candidate.total_makespan = max(candidate.total_makespan, m[0]);
             }
             best_candidate_neighbor = candidate;
         }
@@ -1383,6 +1415,8 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
         int best_veh_a = -1, best_veh_b = -1;
         double best_neighbor_cost_local = 1e10;
 
+        double current_total_time_squared = 0.0;
+
         // 1. Pre-calculate metric vectors for all routes
         vector<vd> route_metrics(h + d);
         double base_truck_dist = 0.0, base_drone_dist = 0.0;
@@ -1390,15 +1424,22 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             route_metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
             const auto& r = initial_solution.truck_routes[i];
             for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+            current_total_time_squared += route_metrics[i][0] * route_metrics[i][0];
         }
         for (int i = 0; i < d; ++i) {
             route_metrics[h + i] = check_drone_route_feasibility(initial_solution.drone_routes[i]);
             const auto& r = initial_solution.drone_routes[i];
             for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
+            current_total_time_squared += route_metrics[h + i][0] * route_metrics[h + i][0];
         }
 
         // --- 2. Intra-route Swaps (Trucks only) ---
         for (int v_idx = 0; v_idx < h; ++v_idx) {
+            double other_vehicle_makespan = 0.0;
+            for (int t = 0; t < h + d; t++){
+                if (t == v_idx) continue;
+                other_vehicle_makespan = max(other_vehicle_makespan, route_metrics[t][0]);
+            }
             const auto& route = initial_solution.truck_routes[v_idx];
             if (route.size() <= 3) continue; // Not enough customers to swap
 
@@ -1424,6 +1465,9 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                     double delta_time = delta_dist / vmax;
                     auto old_metrics = route_metrics[v_idx];
                     double new_route_time = old_metrics[0] + delta_time;
+
+                    double new_makespan = max(other_vehicle_makespan, new_route_time);
+                    double new_total_time_squared = current_total_time_squared - (old_metrics[0] * old_metrics[0]) + (new_route_time * new_route_time);
                     
                     double old_route_viol = old_metrics[1];
                     double new_route_viol = max(0.0, (new_route_time - truck_limit) / truck_limit);
@@ -1434,7 +1478,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
 
                     double new_truck_dist = base_truck_dist + delta_dist;
                     double penalty = pow(1.0 + PENALTY_LAMBDA_DEADLINE * total_deadline_viol + PENALTY_LAMBDA_CAPACITY * total_cap_viol + PENALTY_LAMBDA_ENERGY * total_energy_viol, PENALTY_EXPONENT);
-                    double cand_cost = (new_truck_dist * COST_TRUCK_KM + base_drone_dist * COST_DRONE_KM) * penalty;
+                    double cand_cost = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
 
                     if (is_tabu && !(cand_cost + 1e-8 < best_cost && total_deadline_viol < 1e-8 && total_cap_viol < 1e-8)) continue;
                     
@@ -1458,6 +1502,11 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                 bool is_truck_b = v_idx_b < h;
                 const auto& route_b = is_truck_b ? initial_solution.truck_routes[v_idx_b] : initial_solution.drone_routes[v_idx_b - h];
                 if (route_b.empty() || (is_truck_b && route_b.size() <= 2)) continue;
+                double other_vehicle_makespan = 0.0;
+                for (int t = 0; t < h + d; t++){
+                    if (t == v_idx_a || t == v_idx_b) continue;
+                    other_vehicle_makespan = max(other_vehicle_makespan, route_metrics[t][0]);
+                }
 
                 for (size_t i = (is_truck_a ? 1 : 0); i < (is_truck_a ? route_a.size() - 1 : route_a.size()); ++i) {
                     for (size_t j = (is_truck_b ? 1 : 0); j < (is_truck_b ? route_b.size() - 1 : route_b.size()); ++j) {
@@ -1472,6 +1521,8 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         double delta_truck_dist = 0.0, delta_drone_dist = 0.0;
                         double delta_time_a = 0.0, delta_time_b = 0.0;
                         double delta_cap_viol = 0.0, delta_energy_viol = 0.0;
+
+                        double new_makespan = other_vehicle_makespan;
 
                         // --- Distance & Time Deltas ---
                         if (is_truck_a) {
@@ -1519,6 +1570,10 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         // --- Deadline & Energy Violation Delta ---
                         auto old_metrics_a = route_metrics[v_idx_a], old_metrics_b = route_metrics[v_idx_b];
                         double new_time_a = old_metrics_a[0] + delta_time_a, new_time_b = old_metrics_b[0] + delta_time_b;
+                        new_makespan = max(new_makespan, max(new_time_a, new_time_b));
+                        double new_total_time_squared = current_total_time_squared
+                            - (old_metrics_a[0] * old_metrics_a[0]) - (old_metrics_b[0] * old_metrics_b[0])
+                            + (new_time_a * new_time_a) + (new_time_b * new_time_b);
                         double limit_time_a = is_truck_a ? truck_limit : drone_limit, limit_time_b = is_truck_b ? truck_limit : drone_limit;
                         double delta_deadline_viol = (max(0.0, (new_time_a - limit_time_a) / limit_time_a) - old_metrics_a[1]) + (max(0.0, (new_time_b - limit_time_b) / limit_time_b) - old_metrics_b[1]);
                         
@@ -1541,7 +1596,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         double new_drone_dist = base_drone_dist + delta_drone_dist;
 
                         double penalty = pow(1.0 + PENALTY_LAMBDA_DEADLINE * total_deadline_viol + PENALTY_LAMBDA_CAPACITY * total_cap_viol + PENALTY_LAMBDA_ENERGY * total_energy_viol, PENALTY_EXPONENT);
-                        double cand_cost = (new_truck_dist * COST_TRUCK_KM + new_drone_dist * COST_DRONE_KM) * penalty;
+                        double cand_cost = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
 
                         bool is_feasible_cand = total_deadline_viol < 1e-8 && total_cap_viol < 1e-8 && total_energy_viol < 1e-8;
                         if (is_tabu && !(cand_cost + 1e-8 < best_cost && is_feasible_cand)) continue;
@@ -1588,6 +1643,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
         // 1. Pre-calculate metric vectors for all routes
         vector<vd> route_metrics(h + d);
         double base_truck_dist = 0.0, base_drone_dist = 0.0;
+        double current_total_time_squared = 0.0;
         vd total_capacity_truck(h, 0.0);
         for (int i = 0; i < h; ++i) {
             route_metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
@@ -1595,11 +1651,13 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
             if (!r.empty() && r.back() != 0) base_truck_dist += distance_matrix_manhattan[r.back()][0];
             for (int c : r) total_capacity_truck[i] += demand[c];
+            current_total_time_squared += route_metrics[i][0] * route_metrics[i][0];
         }
         for (int i = 0; i < d; ++i) {
             route_metrics[h + i] = check_drone_route_feasibility(initial_solution.drone_routes[i]);
             const auto& r = initial_solution.drone_routes[i];
             for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
+            current_total_time_squared += route_metrics[h + i][0] * route_metrics[h + i][0];
         }
 
         for (int v1 = 0; v1 < h + d; ++v1) {
@@ -1643,6 +1701,12 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                 else tmp_total_dist_drone += removal_dist_delta;
 
                 for (int v2 = 0; v2 < h + d; ++v2) {
+                    double other_vehicle_makespan = 0.0;
+                    for (int t = 0; t < h + d; t++){
+                        if (t == v1) continue;
+                        if (t == v2) continue;
+                        other_vehicle_makespan = max(other_vehicle_makespan, route_metrics[t][0]);
+                    }
                     bool is_v2_truck = v2 < h;
                     if ((!served_by_drone[cust1] || !served_by_drone[cust2]) && !is_v2_truck) continue;
                     // If both are drones, they must go to separate vehicles
@@ -1679,6 +1743,8 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         double new_dist_drone = tmp_total_dist_drone;
                         if (is_v2_truck) new_dist_truck += insertion_dist_delta;
                         else new_dist_drone += insertion_dist_delta;
+                        double new_makespan = other_vehicle_makespan;
+                        double new_total_time_squared = current_total_time_squared;
 
                         // Violations
                         double base_cap_violation = initial_solution.capacity_violation;
@@ -1693,6 +1759,10 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             double new_route_time = route_metrics[v1][0] + removal_time_delta + insertion_time_delta;
                             double new_viol = max(0.0, (new_route_time - (is_v1_truck ? truck_limit : drone_limit)) / (is_v1_truck ? truck_limit : drone_limit));
                             time_viol_delta += (new_viol - old_viol);
+                            new_makespan = max(new_makespan, new_route_time);
+                            new_total_time_squared = current_total_time_squared
+                                - (route_metrics[v1][0] * route_metrics[v1][0])
+                                + (new_route_time * new_route_time);
                         }
                         else {
                             // Capacity & Energy Violation Delta
@@ -1717,6 +1787,12 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             double new_route_time_tgt = route_metrics[v2][0] + insertion_time_delta;
                             double new_viol_tgt = max(0.0, (new_route_time_tgt - (is_v2_truck ? truck_limit : drone_limit)) / (is_v2_truck ? truck_limit : drone_limit));
                             time_viol_delta += (new_viol_tgt - old_viol_tgt);
+                            new_makespan = max(new_makespan, max(new_route_time_src, new_route_time_tgt));
+                            new_total_time_squared = current_total_time_squared
+                                - (route_metrics[v1][0] * route_metrics[v1][0])
+                                - (route_metrics[v2][0] * route_metrics[v2][0])
+                                + (new_route_time_src * new_route_time_src)
+                                + (new_route_time_tgt * new_route_time_tgt);
                         }
                         double new_cap_violation = base_cap_violation + cap_delta;
                         double new_energy_violation = base_energy_violation + energy_delta;
@@ -1728,7 +1804,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             + PENALTY_LAMBDA_DEADLINE * max(0.0, new_deadline_violation),
                             PENALTY_EXPONENT);
 
-                        double new_score = (new_dist_truck * COST_TRUCK_KM + new_dist_drone * COST_DRONE_KM) * penalty;
+                        double new_score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
                         
                         if (is_tabu && !(new_score + 1e-8 < best_cost && new_deadline_violation < 1e-8 && new_cap_violation < 1e-8)) {
                             continue;
@@ -1777,7 +1853,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             }
 
             best_neighbor = recalculate_solution(candidate);
-            best_neighbor_cost = solution_score_cost(best_neighbor);
+            best_neighbor_cost = solution_score_l2_norm(best_neighbor);
             
             if (best_neighbor_cost_local + 1e-8 < best_neighbor_cost) {
                  best_neighbor_cost = best_neighbor_cost_local;
@@ -1805,7 +1881,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
         // Pre-compute truck route metrics
         vector<vd> truck_route_metrics(h);
         vd base_route_dist(h, 0.0);
-        double base_truck_dist = 0.0, base_drone_dist = 0.0;
+        double base_truck_dist = 0.0, base_drone_dist = 0.0, current_total_time_squared = 0.0;
         for (int i = 0; i < h; ++i) {
             truck_route_metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
             const auto& r = initial_solution.truck_routes[i];
@@ -1813,16 +1889,24 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                 base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
                 base_route_dist[i] += distance_matrix_manhattan[r[k]][r[k+1]];
             }
+            current_total_time_squared += truck_route_metrics[i][0] * truck_route_metrics[i][0];
         }
         for (int i = 0; i < d; ++i) {
             const auto& r = initial_solution.drone_routes[i];
-            for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
+            vd drone_metrics = check_drone_route_feasibility(r);
+            current_total_time_squared += drone_metrics[0] * drone_metrics[0];
+            base_drone_dist += drone_metrics[0] * v_fly_drone;
         }
 
         for (int v = 0; v < h; ++v) {
             const auto& route = initial_solution.truck_routes[v];
             int m = (int)route.size();
             if (m <= 3) continue; // Not enough customers for 2-opt
+            double other_vehicle_makespan = 0.0;
+            for (int t = 0; t < h + d; t++){
+                if (t == v) continue;
+                other_vehicle_makespan = max(other_vehicle_makespan, (t < h ? best_neighbor.truck_route_times[t] : best_neighbor.drone_route_times[t - h]));
+            }
 
             for (int i = 1; i < m - 2; ++i) {
                 for (int j = i + 1; j < m -1; ++j) {
@@ -1852,8 +1936,13 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
 
                     double new_truck_dist = base_truck_dist + delta_dist;
 
+                    double new_makespan = max(other_vehicle_makespan, new_route_time);
+                    double new_total_time_squared = current_total_time_squared
+                        - (old_metrics[0] * old_metrics[0])
+                        + (new_route_time * new_route_time);
+
                     double penalty = pow(1.0 + PENALTY_LAMBDA_DEADLINE * total_deadline_viol + PENALTY_LAMBDA_CAPACITY * total_cap_viol + PENALTY_LAMBDA_ENERGY * total_energy_viol, PENALTY_EXPONENT);
-                    double cand_cost = (new_truck_dist * COST_TRUCK_KM + base_drone_dist * COST_DRONE_KM) * penalty;
+                    double cand_cost = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
                     if (is_tabu && !(cand_cost + 1e-8 < best_cost && total_deadline_viol < 1e-8 && total_cap_viol < 1e-8)) continue;
                     if (cand_cost < best_neighbor_cost_local) {
                         best_neighbor_cost_local = cand_cost;
@@ -1902,6 +1991,17 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
         vector<int> r_size(h);
         double current_total_truck_dist = 0;
 
+        double current_total_time_squared = 0.0;
+        for (int i = 0; i < h; ++i) {
+            vd truck_metrics = check_truck_route_feasibility(initial_solution.truck_routes[i]);
+            current_total_time_squared += truck_metrics[0] * truck_metrics[0];
+        }
+
+        for (int i = 0; i < d; ++i) {
+            vd drone_metrics = check_drone_route_feasibility(initial_solution.drone_routes[i]);
+            current_total_time_squared += drone_metrics[0] * drone_metrics[0];
+        }
+
         for (int i=0; i<h; ++i) {
             const vi& r = initial_solution.truck_routes[i];
             int m = r.size();
@@ -1942,6 +2042,13 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                 const vi& route2 = initial_solution.truck_routes[r2];
                 if (route2.size() < 2) continue;
                 vd route2_feas = check_truck_route_feasibility(route2);
+
+                double other_vehicle_makespan = 0.0;
+                for (int t = 0; t < h + d; t++){
+                    if (t == r1) continue;
+                    if (t == r2) continue;
+                    other_vehicle_makespan = max(other_vehicle_makespan, (t < h ? best_neighbor.truck_route_times[t] : best_neighbor.drone_route_times[t - h]));
+                }
 
                 // Try all cut positions
                 // Cut i in route1 means: New route 1 ends at i, connects to route2[j+1]
@@ -2007,6 +2114,13 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         // 3. Time Feasibility 
                         double r1_new_time = r1_new_dist / vmax;
                         double r2_new_time = r2_new_dist / vmax;
+                        double new_makespan = other_vehicle_makespan;
+                        new_makespan = max(new_makespan, max(r1_new_time, r2_new_time));
+                        double new_total_time_squared = current_total_time_squared
+                            - (best_neighbor.truck_route_times[r1] * best_neighbor.truck_route_times[r1])
+                            - (best_neighbor.truck_route_times[r2] * best_neighbor.truck_route_times[r2])
+                            + (r1_new_time * r1_new_time)
+                            + (r2_new_time * r2_new_time);
                         double r1_old_viol = route1_feas[1];
                         double r2_old_viol = route2_feas[1];
                         double r1_new_viol = max(0.0, (r1_new_time - truck_limit) / truck_limit);
@@ -2020,7 +2134,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             + PENALTY_LAMBDA_CAPACITY * max(0.0, new_capacity_violation)
                             + PENALTY_LAMBDA_ENERGY * max(0.0, new_energy_violation),
                             PENALTY_EXPONENT);
-                        double cand_cost = (new_total_truck_dist * COST_TRUCK_KM + base_drone_cost) * penalty;
+                        double cand_cost = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
 
                         // Aspiration
                         if (is_tabu && cand_cost >= best_cost) continue;
@@ -2075,6 +2189,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
         int best_pos_pair = -1, best_pos_single = -1;
         double best_cost_local = 1e18;
         vector<int> best_triple; // For tabu update
+        double current_total_time_squared = 0.0;
         
         // 1. Pre-calculate metrics (Reuse N1 logic)
         vector<vd> metrics(h + d);
@@ -2083,11 +2198,13 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
             const auto& r = initial_solution.truck_routes[i];
             for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+            current_total_time_squared += metrics[i][0] * metrics[i][0];
         }
         for (int i = 0; i < d; ++i) {
             metrics[h + i] = check_drone_route_feasibility(initial_solution.drone_routes[i]);
             const auto& r = initial_solution.drone_routes[i];
             for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
+            current_total_time_squared += metrics[h + i][0] * metrics[h + i][0];
         }
 
         // Loop pairs of routes
@@ -2103,6 +2220,12 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             if (max_i < start_i) continue;
 
             for (int rB = 0; rB < h + d; ++rB) {
+                double other_vehicle_makespan = 0.0;
+                for (int t = 0; t < h + d; t++){
+                    if (t == rA) continue;
+                    if (t == rB) continue;
+                    other_vehicle_makespan = max(other_vehicle_makespan, (t < h ? best_neighbor.truck_route_times[t] : best_neighbor.drone_route_times[t - h]));
+                }
                 if (rA == rB) {
                     // INTRA-ROUTE, FOR TRUCKS
                     if (!is_truck_a) continue; // Drones cannot do intra-route 2-1 swap
@@ -2168,6 +2291,12 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             double new_t_a = metrics[rA][0] + delta_time_a;
                             delta_dead += max(0.0, (new_t_a - lim_a)/lim_a) - max(0.0, (metrics[rA][0] - lim_a)/lim_a);
 
+                            double new_makespan = other_vehicle_makespan;
+                            new_makespan = max(new_makespan, new_t_a);
+                            double new_total_time_squared = current_total_time_squared
+                                - (metrics[rA][0] * metrics[rA][0])
+                                + (new_t_a * new_t_a);
+
                             double new_cap_violation = initial_solution.capacity_violation + delta_cap;
                             double new_energy_violation = initial_solution.energy_violation;
                             double new_deadline_violation = initial_solution.deadline_violation + delta_dead;
@@ -2178,7 +2307,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                                 + PENALTY_LAMBDA_DEADLINE * max(0.0, new_deadline_violation),
                                 PENALTY_EXPONENT);
                             
-                            double new_score = (new_total_truck_dist * COST_TRUCK_KM + new_total_drone_dist * COST_DRONE_KM) * penalty;
+                            double new_score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
                             
                             if (is_tabu && !(new_score + 1e-8 < best_cost && new_deadline_violation < 1e-8 && new_cap_violation < 1e-8)) {
                                 continue;
@@ -2293,12 +2422,21 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                              delta_energy += (e_u + e_v - e_w);
                         }
 
+                        double new_makespan = other_vehicle_makespan;
+                        new_makespan = max(new_makespan, new_t_a);
+                        new_makespan = max(new_makespan, new_t_b);
+                        double new_total_time_squared = current_total_time_squared
+                            - (metrics[rA][0] * metrics[rA][0])
+                            - (metrics[rB][0] * metrics[rB][0])
+                            + (new_t_a * new_t_a)
+                            + (new_t_b * new_t_b);
+
                         double total_dead = initial_solution.deadline_violation + delta_dead;
                         double total_cap = initial_solution.capacity_violation + delta_cap;
                         double total_en = initial_solution.energy_violation + delta_energy;
                         
                         double penalty = pow(1.0 + PENALTY_LAMBDA_DEADLINE*total_dead + PENALTY_LAMBDA_CAPACITY*total_cap + PENALTY_LAMBDA_ENERGY*total_en, PENALTY_EXPONENT);
-                        double score = (new_total_truck_dist * COST_TRUCK_KM + new_total_drone_dist * COST_DRONE_KM) * penalty;
+                        double score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
                         
                         bool is_feas = (total_dead < 1e-8 && total_cap < 1e-8 && total_en < 1e-8);
 
@@ -2380,15 +2518,20 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
         // 1. Pre-calculate metrics (Reuse logic)
         vector<vd> metrics(h + d);
         double base_truck_dist = 0.0, base_drone_dist = 0.0;
+        double current_total_time_squared = 0.0;
         for (int i = 0; i < h; ++i) {
             metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
             const auto& r = initial_solution.truck_routes[i];
             for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+            double t = metrics[i][0];
+            current_total_time_squared += t * t;
         }
         for (int i = 0; i < d; ++i) {
             metrics[h + i] = check_drone_route_feasibility(initial_solution.drone_routes[i]);
             const auto& r = initial_solution.drone_routes[i];
             for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
+            double t = metrics[h + i][0];
+            current_total_time_squared += t * t;
         }
 
         // Loop pairs of routes
@@ -2404,6 +2547,12 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
 
             for (int rB = 0; rB < h + d; ++rB) {
                 // Determine limits for rB
+                double other_vehicle_makespan = 0.0;
+                for (int t = 0; t < h + d; t++){
+                    if (t == rA) continue;
+                    if (t == rB) continue;
+                    other_vehicle_makespan = max(other_vehicle_makespan, (t < h ? best_neighbor.truck_route_times[t] : best_neighbor.drone_route_times[t - h]));
+                }
                 bool is_truck_b = rB < h;
                 const vi& route_b = is_truck_b ? initial_solution.truck_routes[rB] : initial_solution.drone_routes[rB - h];
                 if (route_b.empty() || route_b.size() < (is_truck_b ? 4 : 2)) continue;
@@ -2489,6 +2638,12 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             double new_t_a = metrics[rA][0] + delta_time_a;
                             delta_dead = max(0.0, (new_t_a - truck_limit)/truck_limit) - metrics[rA][1];
 
+                            double new_makespan = other_vehicle_makespan;
+                            new_makespan = max(new_makespan, new_t_a);
+                            double new_total_time_squared = current_total_time_squared
+                                - (metrics[rA][0] * metrics[rA][0])
+                                + (new_t_a * new_t_a);
+
                             double new_cap_violation = initial_solution.capacity_violation - metrics[rA][3] + new_route_cap_violation;
                             double new_energy_violation = initial_solution.energy_violation; // Unchanged for truck
                             double new_deadline_violation = initial_solution.deadline_violation + delta_dead;
@@ -2499,7 +2654,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                                 + PENALTY_LAMBDA_DEADLINE * max(0.0, new_deadline_violation),
                                 PENALTY_EXPONENT);
                             
-                            double score = (new_total_truck_dist * COST_TRUCK_KM + new_total_drone_dist * COST_DRONE_KM) * penalty;
+                            double score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
                             bool is_feas = (new_deadline_violation < 1e-8 && new_cap_violation < 1e-8 && new_energy_violation < 1e-8);
                             if (is_tabu && !(score < best_cost && is_feas)) continue;
 
@@ -2613,6 +2768,15 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             if (!is_truck_a) delta_en += (calc_e(v1) + calc_e(v2)) - (calc_e(u1) + calc_e(u2));
                             if (!is_truck_b) delta_en += (calc_e(u1) + calc_e(u2)) - (calc_e(v1) + calc_e(v2));
 
+                            double new_makespan = other_vehicle_makespan;
+                            new_makespan = max(new_makespan, t_a);
+                            new_makespan = max(new_makespan, t_b);
+                            double new_total_time_squared = current_total_time_squared
+                                - (metrics[rA][0] * metrics[rA][0])
+                                - (metrics[rB][0] * metrics[rB][0])
+                                + (t_a * t_a)
+                                + (t_b * t_b);
+
                             double new_cap_violation = initial_solution.capacity_violation + delta_cap;
                             double new_en_violation = initial_solution.energy_violation + delta_en;
                             double new_dead_violation = initial_solution.deadline_violation + delta_dead;
@@ -2623,7 +2787,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                                 + PENALTY_LAMBDA_DEADLINE * max(0.0, new_dead_violation),
                                 PENALTY_EXPONENT);
 
-                            double score = (new_total_truck_dist * COST_TRUCK_KM + new_total_drone_dist * COST_DRONE_KM) * penalty;
+                            double score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
 
                             bool is_feas = (new_dead_violation < 1e-8 && new_cap_violation < 1e-8 && new_en_violation < 1e-8);
                             if (is_tabu && !(score < best_cost && is_feas)) continue;
@@ -2694,6 +2858,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
         int best_pos_u = -1, best_pos_v = -1, best_pos_k = -1;
         double best_cost_local = 1e18;
         vector<int> best_tabu_key; // {u, v}
+        double current_total_time_squared = 0.0;
         
         // 1. Pre-calculate metrics
         vector<vd> metrics(h + d);
@@ -2702,11 +2867,13 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
             const auto& r = initial_solution.truck_routes[i];
             for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+            current_total_time_squared += metrics[i][0] * metrics[i][0];
         }
         for (int i = 0; i < d; ++i) {
             metrics[h + i] = check_drone_route_feasibility(initial_solution.drone_routes[i]);
             const auto& r = initial_solution.drone_routes[i];
             for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
+            current_total_time_squared += metrics[h + i][0] * metrics[h + i][0];
         }
 
         const int NUM_RANDOM_TRIPLETS = 1; // Limit attempts
@@ -2737,6 +2904,13 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             rA = route_indices[rA];
             rB = route_indices[rB];
             rC = route_indices[rC];
+            double other_vehicle_makespan = 0.0;
+            for (int t = 0; t < h + d; t++){
+                if (t == rA) continue;
+                if (t == rB) continue;
+                if (t == rC) continue;
+                other_vehicle_makespan = max(other_vehicle_makespan, (t < h ? best_neighbor.truck_route_times[t] : best_neighbor.drone_route_times[t - h]));
+            }
             bool is_truck_a = rA < h;
             const vi& route_a = is_truck_a ? initial_solution.truck_routes[rA] : initial_solution.drone_routes[rA - h];
 
@@ -2880,6 +3054,18 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         if (!is_truck_b) tot_en_viol += en_cost(u) - en_cost(v);
                         if (!is_truck_c) tot_en_viol += en_cost(v);
 
+                        double new_tot_time_squared = current_total_time_squared
+                            - (metrics[rA][0] * metrics[rA][0])
+                            - (metrics[rB][0] * metrics[rB][0])
+                            - (metrics[rC][0] * metrics[rC][0])
+                            + ((metrics[rA][0] + delta_time_a) * (metrics[rA][0] + delta_time_a))
+                            + ((metrics[rB][0] + delta_time_b) * (metrics[rB][0] + delta_time_b))
+                            + ((metrics[rC][0] + delta_time_c) * (metrics[rC][0] + delta_time_c));
+                        double new_makespan = other_vehicle_makespan;
+                        new_makespan = max(new_makespan, metrics[rA][0] + delta_time_a);
+                        new_makespan = max(new_makespan, metrics[rB][0] + delta_time_b);
+                        new_makespan = max(new_makespan, metrics[rC][0] + delta_time_c);
+
                         // Score
                         double penalty = pow(1.0 
                             + PENALTY_LAMBDA_CAPACITY * max(0.0, tot_cap_viol)
@@ -2887,7 +3073,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             + PENALTY_LAMBDA_DEADLINE * max(0.0, tot_dead_viol),
                             PENALTY_EXPONENT);
 
-                        double score = (new_tot_truck*COST_TRUCK_KM + new_tot_drone*COST_DRONE_KM) * penalty;
+                        double score = (new_makespan + 1e-4 * sqrt(new_tot_time_squared / (h + d))) * penalty;
 
                         bool is_feas = (tot_dead_viol < 1e-8 && tot_cap_viol < 1e-8 && tot_en_viol < 1e-8);
                         if (is_tabu && !(score < best_cost && is_feas)) continue;
@@ -2975,16 +3161,19 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
         // 1. Pre-calculate metrics for all vehicles (needed for Delta)
         vector<vd> metrics(h + d);
         double base_truck_dist = 0.0, base_drone_dist = 0.0;
+        double current_total_time_squared = 0.0;
         for (int i = 0; i < h; ++i) {
             metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
             const auto& r = initial_solution.truck_routes[i];
             for (size_t k = 0; k + 1 < r.size(); ++k) base_truck_dist += distance_matrix_manhattan[r[k]][r[k+1]];
+            current_total_time_squared += metrics[i][0] * metrics[i][0];
         }
         for (int i = 0; i < d; ++i) {
             metrics[h + i] = check_drone_route_feasibility(initial_solution.drone_routes[i]);
             // Use metrics[h+i][0] as accurate time if available, but our loop calc above is fine for selection
             const auto& r = initial_solution.drone_routes[i];
             for (int c : r) base_drone_dist += (2.0 * distance_matrix_euclid[0][c]);
+            current_total_time_squared += metrics[h + i][0] * metrics[h + i][0];
         }
 
         // Loop Truck Routes
@@ -3160,6 +3349,14 @@ Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destr
             double route_time;
         };
         vector<InsertionOption> options;
+
+        double current_total_time_squared = 0.0;
+        for (int i = 0; i < h; ++i) {
+            current_total_time_squared += new_sol.truck_route_times[i] * new_sol.truck_route_times[i];
+        }
+        for (int i = 0; i < d; ++i) {
+            current_total_time_squared += new_sol.drone_route_times[i] * new_sol.drone_route_times[i];
+        }
         
         // 1. Evaluate all useable Truck positions
         for (int i = 0; i < h; ++i) {
@@ -3169,15 +3366,11 @@ Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destr
                 vi temp_route = route;
                 temp_route.insert(temp_route.begin() + p, cust);
                 vd m = check_route_feasibility(temp_route, 0.0, true);
-                
-                double new_dist = 0;
-                for(size_t k=0; k+1<temp_route.size(); ++k) new_dist += distance_matrix_manhattan[temp_route[k]][temp_route[k+1]];
-                double current_dist = 0; 
-                for(size_t k=0; k+1<route.size(); ++k) current_dist += distance_matrix_manhattan[route[k]][route[k+1]];
-                double delta_cost = (new_dist - current_dist) * COST_TRUCK_KM;
+                double new_makespan = max(new_sol.total_makespan, m[0]);
+                double new_total_time_squared = current_total_time_squared - (new_sol.truck_route_times[i] * new_sol.truck_route_times[i]) + (m[0] * m[0]);
                 
                 double penalties = PENALTY_LAMBDA_DEADLINE * m[1] + PENALTY_LAMBDA_ENERGY * m[2] + PENALTY_LAMBDA_CAPACITY * m[3];
-                double score = delta_cost + pow(1.0 + penalties, PENALTY_EXPONENT) * 10000.0 * (penalties > 1e-6 ? 1.0 : 0.0);
+                double score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * pow(1.0 + penalties, PENALTY_EXPONENT);
                 options.push_back({i, true, p, score, temp_route, m[0]});
             }
         }
@@ -3190,6 +3383,9 @@ Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destr
                 vi temp_route = route;
                 temp_route.push_back(cust);
                 vd m = check_route_feasibility(temp_route, 0.0, false);
+
+                double new_makespan = max(new_sol.total_makespan, m[0]);
+                double new_total_time_squared = current_total_time_squared - (new_sol.drone_route_times[i] * new_sol.drone_route_times[i]) + (m[0] * m[0]);
                 
                 double new_dist = 0;
                 for(int c : temp_route) if(c!=0) new_dist += distance_matrix_euclid[0][c]*2.0;
@@ -3198,7 +3394,7 @@ Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destr
                 double delta_cost = (new_dist - curr_dist) * COST_DRONE_KM;
                 
                 double penalties = PENALTY_LAMBDA_DEADLINE * m[1] + PENALTY_LAMBDA_ENERGY * m[2] + PENALTY_LAMBDA_CAPACITY * m[3];
-                double score = delta_cost + pow(1.0 + penalties, PENALTY_EXPONENT) * 100.0 * (penalties > 1e-6 ? 1.0 : 0.0);
+                double score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * pow(1.0 + penalties, PENALTY_EXPONENT);
                 options.push_back({i, false, p, score, temp_route, m[0]});
              }
         }
@@ -3210,7 +3406,7 @@ Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destr
 
         double min_score = 1e18;
         for(const auto& opt : options) if(opt.score < min_score) min_score = opt.score;
-        double beta = 0.5; 
+        double beta = 1.0; 
         vector<double> weights;
         double total_weight = 0.0;
         for(const auto& opt : options) {
@@ -3231,9 +3427,13 @@ Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destr
         if (choice.is_truck) {
             new_sol.truck_routes[choice.veh_idx] = choice.resulting_route;
             new_sol.truck_route_times[choice.veh_idx] = choice.route_time;
+            current_total_time_squared = current_total_time_squared - (new_sol.truck_route_times[choice.veh_idx] * new_sol.truck_route_times[choice.veh_idx]) + (choice.route_time * choice.route_time);
+            new_sol.total_makespan = max(new_sol.total_makespan, choice.route_time);
         } else {
             new_sol.drone_routes[choice.veh_idx] = choice.resulting_route;
             new_sol.drone_route_times[choice.veh_idx] = choice.route_time;
+            current_total_time_squared = current_total_time_squared - (new_sol.drone_route_times[choice.veh_idx] * new_sol.drone_route_times[choice.veh_idx]) + (choice.route_time * choice.route_time);
+            new_sol.total_makespan = max(new_sol.total_makespan, choice.route_time);
         }
     }
     
@@ -3260,19 +3460,22 @@ Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destr
     new_sol.capacity_violation = 0;
     new_sol.energy_violation = 0;
     new_sol.total_time = 0; 
+    new_sol.total_makespan = 0;
     for(int i=0; i<h; ++i) {
-         vd m = check_route_feasibility(new_sol.truck_routes[i], 0.0, true);
-         new_sol.deadline_violation += m[1];
-         new_sol.energy_violation += m[2];
-         new_sol.capacity_violation += m[3];
-         new_sol.total_time += m[0];
+        vd m = check_route_feasibility(new_sol.truck_routes[i], 0.0, true);
+        new_sol.deadline_violation += m[1];
+        new_sol.energy_violation += m[2];
+        new_sol.capacity_violation += m[3];
+        new_sol.total_time += m[0];
+        new_sol.total_makespan = max(new_sol.total_makespan, m[0]);
     } 
     for(int i=0; i<d; ++i) {
-         vd m = check_route_feasibility(new_sol.drone_routes[i], 0.0, false);
-         new_sol.deadline_violation += m[1];
-         new_sol.energy_violation += m[2];
-         new_sol.capacity_violation += m[3];
-         new_sol.total_time += m[0];
+        vd m = check_route_feasibility(new_sol.drone_routes[i], 0.0, false);
+        new_sol.deadline_violation += m[1];
+        new_sol.energy_violation += m[2];
+        new_sol.capacity_violation += m[3];
+        new_sol.total_time += m[0];
+        new_sol.total_makespan = max(new_sol.total_makespan, m[0]);
     }
     return new_sol;
 }
@@ -3296,7 +3499,7 @@ Solution destroy_worst_repair_random(Solution sol) {
                 int prev = route[p-1];
                 int next = route[p+1];
                 double saving = distance_matrix_manhattan[prev][cust] + distance_matrix_manhattan[cust][next] - distance_matrix_manhattan[prev][next];
-                candidates.push_back({cust, i, true, saving * COST_TRUCK_KM});
+                candidates.push_back({cust, i, true, saving});
             }
         }
         for (int i = 0; i < d; ++i) {
@@ -3306,7 +3509,7 @@ Solution destroy_worst_repair_random(Solution sol) {
                 int cust = route[p];
                 if (cust == 0 || to_destroy.count(cust)) continue;
                 double saving = distance_matrix_euclid[0][cust] * 2.0;
-                candidates.push_back({cust, i, false, saving * COST_DRONE_KM});
+                candidates.push_back({cust, i, false, saving});
             }
         }
         if (candidates.empty()) break;
@@ -3489,7 +3692,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
     Solution best_feasible_solution = initial_solution;
     bool initial_feasible = is_feasible(initial_solution);
     double best_feasible_cost = initial_feasible
-        ? solution_score_cost(initial_solution)
+        ? solution_score_makespan(initial_solution)
         : std::numeric_limits<double>::infinity();
     double score[NUM_NEIGHBORHOODS] = {0.0};
     double weight[NUM_NEIGHBORHOODS];
@@ -3497,7 +3700,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
     int count[NUM_NEIGHBORHOODS] = {0};
 
     Solution current_sol = initial_solution;
-    double current_cost = solution_score_cost(current_sol);
+    double current_cost = solution_score_l2_norm(current_sol);
 
     current_sol = initial_solution;
     iter_current.clear();
@@ -3509,9 +3712,9 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
     int no_improve_iters = 0;
 
     cout << "=== Starting Unified Tabu Search (Minimizing Weighted Cost) ===\n";
-    cout << "Initial Cost: " << solution_score_cost(current_sol) << "\n";
+    cout << "Initial Cost: " << solution_score_l2_norm(current_sol) << "\n";
 
-    double best_solution_score_now = solution_score_cost(best_solution);
+    double best_solution_score_now = solution_score_l2_norm(best_solution);
 
     while (iter <= total_iters) {
         if (CFG_TIME_LIMIT_SEC > 0.0) {
@@ -3519,8 +3722,8 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
             if (elapsed >= CFG_TIME_LIMIT_SEC) break;
         }
 
-        double current_score = solution_score_cost(current_sol);
-        double current_pure_cost = solution_pure_cost(current_sol);
+        double current_score = solution_score_l2_norm(current_sol);
+        double current_pure_cost = solution_score_makespan(current_sol);
         iter_current.push_back(current_pure_cost);;
         iter_best.push_back(best_feasible_cost);
         iter_feasible.push_back(is_feasible(current_sol));
@@ -3551,7 +3754,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
         Solution init_neighbor;
         Solution neighbor;
         try {
-            init_neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_cost);
+            init_neighbor = local_search_all_vehicle(current_sol, selected_neighbor, iter, best_solution_score_now, solution_score_l2_norm);
             neighbor = recalculate_solution(init_neighbor);
         } catch (const std::exception& e) {
             cerr << "\n========== EXCEPTION CAUGHT ==========\n";
@@ -3590,7 +3793,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
         }
 
         bool neighbor_feasible = is_feasible(neighbor);
-        double neighbor_score = solution_score_cost(neighbor);
+        double neighbor_score = solution_score_l2_norm(neighbor);
 
         // Acceptance
         if (neighbor_score + 1e-12 < best_solution_score_now || 
@@ -3613,7 +3816,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
 
         // Update Feasible Best
         if (neighbor_feasible) {
-             double n_cost = solution_score_cost(neighbor);
+             double n_cost = solution_score_l2_norm(neighbor);
              if (n_cost + 1e-12 < best_feasible_cost) {
                  best_feasible_solution = neighbor;
                  best_feasible_cost = n_cost;
@@ -3632,12 +3835,12 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
                 current_sol = best_solution;
                 int n7_iters = max(10, int(sqrt(n)));
                 for (int i = 0; i < n7_iters; ++i) {
-                    current_sol = local_search_all_vehicle(current_sol, 7, iter, best_solution_score_now, solution_score_cost);
+                    current_sol = local_search_all_vehicle(current_sol, 7, iter, best_solution_score_now, solution_score_l2_norm);
                     current_sol = recalculate_solution(current_sol);
                 }
             }
             else {
-                current_sol = destroy_worst_repair_random(current_sol);
+                current_sol = destroy_sisr_repair(current_sol);
             }
             
             current_sol = recalculate_solution(current_sol);
@@ -3772,7 +3975,7 @@ static bool write_output_file(const std::string& out_path, const Solution& sol, 
     if (!ofs) return false;
     ofs.setf(std::ios::fixed); ofs << setprecision(6);
     ofs << "Initial solution cost: " << cost << "\n";
-    ofs << "Improved solution cost: " << solution_score_cost(sol) << "\n";
+    ofs << "Improved solution cost: " << solution_score_l2_norm(sol) << "\n";
     ofs << "Worst solution cost: " << worst_cost << "\n";
     ofs << "Mean solution cost: " << mean_cost << "\n";
     ofs << "Mean elapsed time: " << elapsed_sec / CFG_NUM_INITIAL << " seconds\n";
@@ -3881,8 +4084,8 @@ int main(int argc, char* argv[]) {
         vd iter_current, iter_best;
         vector<bool> current_feasibility;
         Solution improved_sol = tabu_search(initial_solution, iter_current, iter_best, current_feasibility);
-        double initial_cost_val = solution_pure_cost(initial_solution);
-        double current_cost_val = solution_pure_cost(improved_sol);
+        double initial_cost_val = solution_score_makespan(initial_solution);
+        double current_cost_val = solution_score_makespan(improved_sol);
 
         // Output both to stdout and to file
         cout.setf(std::ios::fixed); cout << setprecision(6);
@@ -3896,7 +4099,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Update best across attempts
-        double best_val = have_best ? solution_pure_cost(best_overall_sol) : 1e18;
+        double best_val = have_best ? solution_score_makespan(best_overall_sol) : 1e18;
         if (!have_best || current_cost_val + 1e-12 < best_val) {
             have_best = true;
             best_overall_sol = improved_sol;
@@ -3914,7 +4117,7 @@ int main(int argc, char* argv[]) {
     if (have_best) {
         cout << "\n=== Best Across Attempts ===\n";
         cout << "Initial Solution Cost: " << best_overall_initial_cost << "\n";
-        cout << "Improved Solution Cost: " << solution_pure_cost(best_overall_sol) << "\n";
+        cout << "Improved Solution Cost: " << solution_score_makespan(best_overall_sol) << "\n";
         cout << "Worst Solution Cost: " << worst_overall_cost << "\n";
         cout << "Mean Solution Cost: " << mean_overall_cost << "\n";
         cout << "Mean Elapsed Time: " << elapsed_seconds / CFG_NUM_INITIAL << " seconds\n";
@@ -3952,15 +4155,27 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-// Run with: g++ -O3 -std=c++20 tabubu_benchmark.cpp -o tabubu_benchmark && ./tabubu_benchmark instance_modified/100-c-1-e.txt
-/*100-c-1-e.txt
+// Run with: g++ -O3 -std=c++20 tabubu_saleu.cpp -o tabubu_saleu && ./tabubu_saleu /workspaces/PDSTSP/saleu-2022/saleu-2022/CMT1.vrp
 // Plotting: python plot_iteration.py --input output.txt --save iterations.png
-Cost = 222.153
-T0	2.039	0 12 17 10 25 27 26 11 13 19 9 1 18 8 6 0 
-T1	1.528	0 54 36 58 85 90 68 79 76 93 80 72 81 88 5 95 94 77 87 82 100 78 96 73 74 84 55 34 46 45 44 31 42 41 39 71 37 33 59 48 47 3 40 38 30 35 50 57 62 60 4 56 69 63 70 66 0 
-T2	2.057	0 7 24 20 21 22 2 28 23 16 14 15 0 
-D0	1.931	83 75 86 89 
-D1	1.892	67 51 97 91 
-D2	1.989	64 53 32 99 
-D3	1.887	98 52 92 49 
-D4	1.678	61 65 43 29 */
+/*    saleu = {
+        "CMT1": 168,
+        "CMT2": 130.23,
+        "CMT3": 184,
+        "CMT4": 160.38,
+        "CMT5": 138,
+        "E-n51-k5": 168,
+        "E-n76-k8": 154,
+        "E-n101-k8": 186,
+        "M-n151-k12": 154,
+        "M-n200-k16": 144,
+        "P-n51-k10": 111.07,
+        "P-n55-k7": 128,
+        "P-n60-k10": 114,
+        "P-n65-k10": 126,
+        "P-n70-k10": 129.29,
+        "P-n76-k5": 202,
+        "P-n101-k4": 342.69,
+        "X-n110-k13": 1864,
+        "X-n115-k10": 2258,
+        "X-n139-k10": 2928.64,
+    } */

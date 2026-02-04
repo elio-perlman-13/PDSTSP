@@ -1,4 +1,4 @@
-name: Run tabubu_benchmark per instance
+name: Run tabubu_saleu over saleu-2022 VRP set
 
 on:
   workflow_dispatch:
@@ -17,14 +17,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build JSON matrix from instance_modified/*.txt
+      - name: Build JSON matrix from saleu-2022/saleu-2022/*.vrp
         id: set-matrix
         run: |
           items=()
-          # Changed path to instance_modified/*.txt
-          for f in instance_modified/*.txt; do
+          for f in saleu-2022/saleu-2022/*.vrp; do
             if [ -f "$f" ]; then
-              base=$(basename "$f" .txt)
+              base=$(basename "$f" .vrp)
 
               # escape quotes in path just in case
               file=$(printf '%s' "$f" | sed 's/"/\\"/g')
@@ -33,14 +32,13 @@ jobs:
             fi
           done
           if [ ${#items[@]} -eq 0 ]; then
-            echo "No instance files found under instance_modified/ matching criteria"; exit 1
+            echo "No .vrp instance files found under saleu-2022/saleu-2022/"; exit 1
           fi
           # join items with commas to produce valid JSON array
           matrix_json="$(printf '%s,' "${items[@]}")"
           matrix_json="[${matrix_json%,}]"
           echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
 
-  # NEW: Build the solver once
   build:
     name: Build solver
     runs-on: ubuntu-latest
@@ -50,14 +48,13 @@ jobs:
 
       - name: Compile solver
         run: |
-          # Changed to compile tabubu_benchmark.cpp to tabubu_benchmark
-          g++ -O3 -std=c++20 -march=native -DNDEBUG -pthread -flto -pipe -funroll-loops -o tabubu_benchmark tabubu_benchmark.cpp
+          g++ -O3 -std=c++20 tabubu_saleu.cpp -o tabubu_saleu
 
       - name: Upload solver binary
         uses: actions/upload-artifact@v4
         with:
           name: solver-bin
-          path: tabubu_benchmark
+          path: tabubu_saleu
           retention-days: 1
 
   run-instance:
@@ -80,14 +77,13 @@ jobs:
           name: solver-bin
 
       - name: Make executable
-        run: chmod +x tabubu_benchmark
+        run: chmod +x tabubu_saleu
 
-      - name: Run tabubu_benchmark on instance
+      - name: Run tabubu_saleu on instance
         timeout-minutes: 355 # slightly less than job timeout to allow cleanup steps to run
         run: |
           mkdir -p outputs
-          # Changed binary name
-          ./tabubu_benchmark "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
+          ./tabubu_saleu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
 
       - name: Prepare outputs
         if: always()
