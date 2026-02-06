@@ -517,8 +517,15 @@ double solution_pure_cost(const Solution& sol) {
     return cost;
 }
 
+double calculate_score_with_penalties(const double makespan, const double sum_sq, const double capacity_violation, const double energy_violation, const double deadline_violation) {
+    double penalty_multiplier = 1.0 + PENALTY_LAMBDA_CAPACITY * capacity_violation
+                                + PENALTY_LAMBDA_ENERGY * energy_violation
+                                + PENALTY_LAMBDA_DEADLINE * deadline_violation;
+    return (makespan + 1e-4 * std::sqrt(sum_sq / (h + d))) * pow(penalty_multiplier, PENALTY_EXPONENT);
+}
+
 void update_penalties(const Solution& sol) {
-    // Capacity penalty
+    // Capacity penalty 
     if (sol.capacity_violation > 1e-9) {
         PENALTY_LAMBDA_CAPACITY = min(PENALTY_MAX, PENALTY_LAMBDA_CAPACITY * PENALTY_INCREASE);
     } else {
@@ -861,7 +868,7 @@ Solution generate_initial_solution(){
                 double tmp_deadline_violation = max(0.0, (new_time - truck_limit) / truck_limit);
                 double tmp_capacity_violation = 0.0;
                 double tmp_energy_violation = 0.0; // Trucks don't have energy constraints
-                double score = (new_time + 1e-4 * sqrt(new_total_time_squared)) * pow((1.0 + tmp_deadline_violation * 1e6 + tmp_capacity_violation * 1e6 + tmp_energy_violation * 1e6), PENALTY_EXPONENT);
+                double score = calculate_score_with_penalties(new_time, new_total_time_squared, tmp_capacity_violation, tmp_energy_violation, tmp_deadline_violation);
                 if (score < best_insertion_cost) {
                     best_insertion_cost = score;
                     best_vehicle_type = 0;
@@ -880,11 +887,10 @@ Solution generate_initial_solution(){
             double new_time = time_delta + sol.drone_route_times[i];
             double new_makespan = max(sol.total_makespan, new_time);
             double new_total_time_squared = current_total_time_squared - (sol.drone_route_times[i] * sol.drone_route_times[i]) + (new_time * new_time);
-            double new_cost = new_time + 1e-4 * sqrt(new_total_time_squared);
             double tmp_deadline_violation = max(0.0, (new_time - drone_limit) / drone_limit);
             double tmp_capacity_violation = max(0.0, (demand[cust] - Dd) / Dd);
             double tmp_energy_violation = max(0.0, (dist / v_fly_drone - E) / E);
-            double score = new_cost * pow((1.0 + tmp_deadline_violation * 1e6 + tmp_capacity_violation * 1e6 + tmp_energy_violation * 1e6), PENALTY_EXPONENT);
+            double score = calculate_score_with_penalties(new_time, new_total_time_squared, tmp_capacity_violation, tmp_energy_violation, tmp_deadline_violation);
             if (score < best_insertion_cost) {
                 best_insertion_cost = score;
                 best_vehicle_type = 1;
@@ -1298,14 +1304,14 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         double new_energy_violation = base_energy_violation + energy_delta;
                         double new_deadline_violation = base_deadline_violation + time_viol_delta;
 
-                        double penalty = pow(1.0 
-                            + PENALTY_LAMBDA_CAPACITY * max(0.0, new_cap_violation)
-                            + PENALTY_LAMBDA_ENERGY * max(0.0, new_energy_violation)
-                            + PENALTY_LAMBDA_DEADLINE * max(0.0, new_deadline_violation),
-                            PENALTY_EXPONENT);
-
                         // Pure Cost Score (Cost x Penalty)
-                        double new_score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
+                        double new_score = calculate_score_with_penalties(
+                            new_makespan,
+                            new_total_time_squared,
+                            max(0.0, new_cap_violation),
+                            max(0.0, new_energy_violation),
+                            max(0.0, new_deadline_violation)
+                        );
 
                         if (is_tabu && !(new_score + 1e-8 < best_cost && new_deadline_violation < 1e-8 && new_cap_violation < 1e-8)) {
                             continue;
@@ -1477,8 +1483,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                     double total_energy_viol = initial_solution.energy_violation; // No change
 
                     double new_truck_dist = base_truck_dist + delta_dist;
-                    double penalty = pow(1.0 + PENALTY_LAMBDA_DEADLINE * total_deadline_viol + PENALTY_LAMBDA_CAPACITY * total_cap_viol + PENALTY_LAMBDA_ENERGY * total_energy_viol, PENALTY_EXPONENT);
-                    double cand_cost = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
+                    double cand_cost = calculate_score_with_penalties(new_makespan, new_total_time_squared, total_cap_viol, total_energy_viol, total_deadline_viol);
 
                     if (is_tabu && !(cand_cost + 1e-8 < best_cost && total_deadline_viol < 1e-8 && total_cap_viol < 1e-8)) continue;
                     
@@ -1596,7 +1601,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         double new_drone_dist = base_drone_dist + delta_drone_dist;
 
                         double penalty = pow(1.0 + PENALTY_LAMBDA_DEADLINE * total_deadline_viol + PENALTY_LAMBDA_CAPACITY * total_cap_viol + PENALTY_LAMBDA_ENERGY * total_energy_viol, PENALTY_EXPONENT);
-                        double cand_cost = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
+                        double cand_cost = calculate_score_with_penalties(new_makespan, new_total_time_squared, total_cap_viol, total_energy_viol, total_deadline_viol);
 
                         bool is_feasible_cand = total_deadline_viol < 1e-8 && total_cap_viol < 1e-8 && total_energy_viol < 1e-8;
                         if (is_tabu && !(cand_cost + 1e-8 < best_cost && is_feasible_cand)) continue;
@@ -1804,7 +1809,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             + PENALTY_LAMBDA_DEADLINE * max(0.0, new_deadline_violation),
                             PENALTY_EXPONENT);
 
-                        double new_score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
+                        double new_score = calculate_score_with_penalties(new_makespan, new_total_time_squared, max(0.0, new_cap_violation), max(0.0, new_energy_violation), max(0.0, new_deadline_violation));
                         
                         if (is_tabu && !(new_score + 1e-8 < best_cost && new_deadline_violation < 1e-8 && new_cap_violation < 1e-8)) {
                             continue;
@@ -1941,8 +1946,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         - (old_metrics[0] * old_metrics[0])
                         + (new_route_time * new_route_time);
 
-                    double penalty = pow(1.0 + PENALTY_LAMBDA_DEADLINE * total_deadline_viol + PENALTY_LAMBDA_CAPACITY * total_cap_viol + PENALTY_LAMBDA_ENERGY * total_energy_viol, PENALTY_EXPONENT);
-                    double cand_cost = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
+                    double cand_cost = calculate_score_with_penalties(new_makespan, new_total_time_squared, total_cap_viol, total_energy_viol, total_deadline_viol);
                     if (is_tabu && !(cand_cost + 1e-8 < best_cost && total_deadline_viol < 1e-8 && total_cap_viol < 1e-8)) continue;
                     if (cand_cost < best_neighbor_cost_local) {
                         best_neighbor_cost_local = cand_cost;
@@ -2134,7 +2138,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             + PENALTY_LAMBDA_CAPACITY * max(0.0, new_capacity_violation)
                             + PENALTY_LAMBDA_ENERGY * max(0.0, new_energy_violation),
                             PENALTY_EXPONENT);
-                        double cand_cost = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
+                        double cand_cost = calculate_score_with_penalties(new_makespan, new_total_time_squared, max(0.0, new_capacity_violation), max(0.0, new_energy_violation), max(0.0, new_deadline_violation));
 
                         // Aspiration
                         if (is_tabu && cand_cost >= best_cost) continue;
@@ -2300,14 +2304,8 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                             double new_cap_violation = initial_solution.capacity_violation + delta_cap;
                             double new_energy_violation = initial_solution.energy_violation;
                             double new_deadline_violation = initial_solution.deadline_violation + delta_dead;
-
-                            double penalty = pow(1.0 
-                                + PENALTY_LAMBDA_CAPACITY * max(0.0, new_cap_violation)
-                                + PENALTY_LAMBDA_ENERGY * max(0.0, new_energy_violation)
-                                + PENALTY_LAMBDA_DEADLINE * max(0.0, new_deadline_violation),
-                                PENALTY_EXPONENT);
                             
-                            double new_score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
+                            double new_score = calculate_score_with_penalties(new_makespan, new_total_time_squared, max(0.0, new_cap_violation), max(0.0, new_energy_violation), max(0.0, new_deadline_violation));
                             
                             if (is_tabu && !(new_score + 1e-8 < best_cost && new_deadline_violation < 1e-8 && new_cap_violation < 1e-8)) {
                                 continue;
@@ -2436,7 +2434,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                         double total_en = initial_solution.energy_violation + delta_energy;
                         
                         double penalty = pow(1.0 + PENALTY_LAMBDA_DEADLINE*total_dead + PENALTY_LAMBDA_CAPACITY*total_cap + PENALTY_LAMBDA_ENERGY*total_en, PENALTY_EXPONENT);
-                        double score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
+                        double score = calculate_score_with_penalties(new_makespan, new_total_time_squared, max(0.0, total_cap), max(0.0, total_en), max(0.0, total_dead));
                         
                         bool is_feas = (total_dead < 1e-8 && total_cap < 1e-8 && total_en < 1e-8);
 
@@ -2654,7 +2652,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                                 + PENALTY_LAMBDA_DEADLINE * max(0.0, new_deadline_violation),
                                 PENALTY_EXPONENT);
                             
-                            double score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
+                            double score = calculate_score_with_penalties(new_makespan, new_total_time_squared, max(0.0, new_cap_violation), max(0.0, new_energy_violation), max(0.0, new_deadline_violation));
                             bool is_feas = (new_deadline_violation < 1e-8 && new_cap_violation < 1e-8 && new_energy_violation < 1e-8);
                             if (is_tabu && !(score < best_cost && is_feas)) continue;
 
@@ -2787,7 +2785,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                                 + PENALTY_LAMBDA_DEADLINE * max(0.0, new_dead_violation),
                                 PENALTY_EXPONENT);
 
-                            double score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * penalty;
+                            double score = calculate_score_with_penalties(new_makespan, new_total_time_squared, max(0.0, new_cap_violation), max(0.0, new_en_violation), max(0.0, new_dead_violation));
 
                             bool is_feas = (new_dead_violation < 1e-8 && new_cap_violation < 1e-8 && new_en_violation < 1e-8);
                             if (is_tabu && !(score < best_cost && is_feas)) continue;
@@ -3370,7 +3368,7 @@ Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destr
                 double new_total_time_squared = current_total_time_squared - (new_sol.truck_route_times[i] * new_sol.truck_route_times[i]) + (m[0] * m[0]);
                 
                 double penalties = PENALTY_LAMBDA_DEADLINE * m[1] + PENALTY_LAMBDA_ENERGY * m[2] + PENALTY_LAMBDA_CAPACITY * m[3];
-                double score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * pow(1.0 + penalties, PENALTY_EXPONENT);
+                double score = calculate_score_with_penalties(new_makespan, new_total_time_squared, max(0.0, m[3]), max(0.0, m[2]), max(0.0, m[1]));
                 options.push_back({i, true, p, score, temp_route, m[0]});
             }
         }
@@ -3394,7 +3392,7 @@ Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destr
                 double delta_cost = (new_dist - curr_dist) * COST_DRONE_KM;
                 
                 double penalties = PENALTY_LAMBDA_DEADLINE * m[1] + PENALTY_LAMBDA_ENERGY * m[2] + PENALTY_LAMBDA_CAPACITY * m[3];
-                double score = (new_makespan + 1e-4 * sqrt(new_total_time_squared / (h + d))) * pow(1.0 + penalties, PENALTY_EXPONENT);
+                double score = calculate_score_with_penalties(new_makespan, new_total_time_squared, max(0.0, m[3]), max(0.0, m[2]), max(0.0, m[1]));
                 options.push_back({i, false, p, score, temp_route, m[0]});
              }
         }
@@ -3840,7 +3838,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
                 }
             }
             else {
-                current_sol = destroy_sisr_repair(current_sol);
+                current_sol = destroy_sisr_repair(best_solution);
             }
             
             current_sol = recalculate_solution(current_sol);
@@ -4032,19 +4030,19 @@ int main(int argc, char* argv[]) {
     auto_tune = true;
     if (auto_tune) {
         if (n <= 50) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 3);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 3);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
         } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 3);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
@@ -4155,7 +4153,7 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-// Run with: g++ -O3 -std=c++20 tabubu_saleu.cpp -o tabubu_saleu && ./tabubu_saleu /workspaces/PDSTSP/saleu-2022/saleu-2022/CMT1.vrp
+// Run with: g++ -O3 -std=c++20 tabubu_saleu.cpp -o tabubu_saleu && ./tabubu_saleu /workspaces/PDSTSP/saleu-2022/saleu-2022/CMT3.vrp
 // Plotting: python plot_iteration.py --input output.txt --save iterations.png
 /*    saleu = {
         "CMT1": 166,
