@@ -3129,6 +3129,7 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
         int best_r_truck = -1;
         int best_pos_u = -1;
         int best_u_val = -1;
+        int best_r_drone = -1;
         
         // Find optimal target drone (min time, and must have remaining budget)
         int target_drone_idx = -1;
@@ -3153,13 +3154,13 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
 
         if (target_drone_idx == -1) return initial_solution; // No drone has time available
 
-        int rD = h + target_drone_idx;
         double best_cost_local = 1e18;
 
         // 1. Pre-calculate metrics for all vehicles (needed for Delta)
         vector<vd> metrics(h + d);
         double base_truck_dist = 0.0, base_drone_dist = 0.0;
         double current_total_time_squared = 0.0;
+        
         for (int i = 0; i < h; ++i) {
             metrics[i] = check_truck_route_feasibility(initial_solution.truck_routes[i]);
             const auto& r = initial_solution.truck_routes[i];
@@ -3182,75 +3183,88 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
                 int u = route_t[i];
                 if (!served_by_drone[u]) continue; 
 
-                // Tabu Check
-                bool is_tabu = false;
-                 if (!tabu_list_10.empty() && (int)tabu_list_10.size() > u && (int)tabu_list_10[u].size() > rD) {
-                    is_tabu = (tabu_list_10[u][rD] > current_iter);
-                }
-
-                // --- Delta Evaluation ---
-
-                // 1. Truck Removal Cost
-                int p = route_t[i-1], s = route_t[i+1];
-                double delta_dist_t = distance_matrix_manhattan[p][s] - distance_matrix_manhattan[p][u] - distance_matrix_manhattan[u][s];
-                double delta_time_t = delta_dist_t / vmax;
-
-                // 2. Drone Insertion Cost
-                double delta_dist_d = 2.0 * distance_matrix_euclid[0][u];
-                double delta_time_d = delta_dist_d / v_fly_drone;
-
-                // Pre-check basic feasibility for speed: if drone exceeds limit, skip immediately
-                if (metrics[rD][0] + delta_time_d > drone_limit) continue;
-
-                double new_truck_dist = base_truck_dist + delta_dist_t;
-                double new_drone_dist = base_drone_dist + delta_dist_d;
-
-                // 3. Violations
-                
-                // Deadline
-                double delta_dead = 0;
-                // Truck time decreases, so deadline violation reduces (or stays 0)
-                double t_t = metrics[rT][0] + delta_time_t;
-                delta_dead += max(0.0, (t_t - truck_limit)/truck_limit) - metrics[rT][1];
-                
-                // Drone time increases
-                double t_d = metrics[rD][0] + delta_time_d; 
-                delta_dead += max(0.0, (t_d - drone_limit)/drone_limit) - metrics[rD][1];
-
-                // Capacity (Truck reduced)
-                double new_truck_cap_viol = 0;
-                double load = 0;
-                for (int k_idx=0; k_idx<(int)route_t.size(); ++k_idx) {
-                    if (k_idx == i) continue; 
-                    int c = route_t[k_idx];
-                    if (c==0) load = 0;
-                    else {
-                        load += demand[c];
-                        if (load > Dh) new_truck_cap_viol += (load - Dh)/Dh;
+                for (int rD = h; rD < h + d; ++rD) {
+                    double other_vehicle_makespan = 0.0;
+                    for (int t = 0; t < h + d; t++){
+                        if (t == rT) continue;
+                        if (t == rD) continue;
+                        other_vehicle_makespan = max(other_vehicle_makespan, (t < h ? best_neighbor.truck_route_times[t] : best_neighbor.drone_route_times[t - h]));
                     }
-                }
-                double delta_cap = (new_truck_cap_viol - metrics[rT][3]); 
+                    // Tabu Check
+                    bool is_tabu = false;
+                    if (!tabu_list_10.empty() && (int)tabu_list_10.size() > u && (int)tabu_list_10[u].size() > rD) {
+                        is_tabu = (tabu_list_10[u][rD] > current_iter);
+                    }
+                    
+                    //insert to all drones
 
-                double new_cap_viol = initial_solution.capacity_violation + delta_cap;
-                double new_dead_viol = initial_solution.deadline_violation + delta_dead;
-                // Energy violation shouldn't change if u is feasible (served_by_drone check covers local u energy)
+                    // --- Delta Evaluation ---
 
-                double penalty = pow(1.0 
-                    + PENALTY_LAMBDA_CAPACITY * max(0.0, new_cap_viol)
-                    + PENALTY_LAMBDA_ENERGY * max(0.0, initial_solution.energy_violation)
-                    + PENALTY_LAMBDA_DEADLINE * max(0.0, new_dead_viol),
-                    PENALTY_EXPONENT);
+                    // 1. Truck Removal Cost
+                    int p = route_t[i-1], s = route_t[i+1];
+                    double delta_dist_t = distance_matrix_manhattan[p][s] - distance_matrix_manhattan[p][u] - distance_matrix_manhattan[u][s];
+                    double delta_time_t = delta_dist_t / vmax;
 
-                double score = (new_truck_dist * COST_TRUCK_KM + new_drone_dist * COST_DRONE_KM) * penalty;
+                    // 2. Drone Insertion Cost
+                    double delta_dist_d = 2.0 * distance_matrix_euclid[0][u];
+                    double delta_time_d = delta_dist_d / v_fly_drone;
 
-                bool is_feas = (new_dead_viol < 1e-8 && new_cap_viol < 1e-8 && initial_solution.energy_violation < 1e-8);
-                if (is_tabu && !(score < best_cost && is_feas)) continue;
+                    // Pre-check basic feasibility for speed: if drone exceeds limit, skip immediately
+                    if (metrics[rD][0] + delta_time_d > drone_limit) continue;
 
-                if (score < best_cost_local) {
-                    best_cost_local = score;
-                    best_r_truck = rT;
-                    best_pos_u = i;
-                    best_u_val = u;
+                    double new_truck_dist = base_truck_dist + delta_dist_t;
+                    double new_drone_dist = base_drone_dist + delta_dist_d;
+
+                    // 3. Violations
+                    
+                    // Deadline
+                    double delta_dead = 0;
+                    // Truck time decreases, so deadline violation reduces (or stays 0)
+                    double t_t = metrics[rT][0] + delta_time_t;
+                    delta_dead += max(0.0, (t_t - truck_limit)/truck_limit) - metrics[rT][1];
+                    
+                    // Drone time increases
+                    double t_d = metrics[rD][0] + delta_time_d; 
+                    delta_dead += max(0.0, (t_d - drone_limit)/drone_limit) - metrics[rD][1];
+
+                    // Capacity (Truck reduced)
+                    double new_truck_cap_viol = 0;
+                    double load = 0;
+
+                    double delta_cap = 0; 
+                    // Capacity violation shouldn't change on truck if u removal reduces load below capacity
+
+                    double new_cap_viol = initial_solution.capacity_violation + delta_cap;
+                    double new_dead_viol = initial_solution.deadline_violation + delta_dead;
+                    // Energy violation shouldn't change if u is feasible (served_by_drone check covers local u energy)
+                    double new_makespan = other_vehicle_makespan;
+                    new_makespan = max(new_makespan, t_t);
+                    new_makespan = max(new_makespan, t_d);
+
+                    double new_tot_time_squared = current_total_time_squared
+                        - (metrics[rT][0] * metrics[rT][0])
+                        - (metrics[rD][0] * metrics[rD][0])
+                        + (t_t * t_t)
+                        + (t_d * t_d);
+
+                    double penalty = pow(1.0 
+                        + PENALTY_LAMBDA_CAPACITY * max(0.0, new_cap_viol)
+                        + PENALTY_LAMBDA_ENERGY * max(0.0, initial_solution.energy_violation)
+                        + PENALTY_LAMBDA_DEADLINE * max(0.0, new_dead_viol),
+                        PENALTY_EXPONENT);
+
+                    double score = calculate_score_with_penalties(new_makespan, new_tot_time_squared, max(0.0, new_cap_viol), max(0.0, initial_solution.energy_violation), max(0.0, new_dead_viol));
+
+                    bool is_feas = (new_dead_viol < 1e-8 && new_cap_viol < 1e-8 && initial_solution.energy_violation < 1e-8);
+                    if (is_tabu && !(score < best_cost && is_feas)) continue;
+
+                    if (score < best_cost_local) {
+                        best_cost_local = score;
+                        best_r_truck = rT;
+                        best_pos_u = i;
+                        best_r_drone = rD - h;
+                        best_u_val = u;
+                    }
                 }
             }
         }
@@ -3263,14 +3277,14 @@ Solution local_search_all_vehicle(const Solution& initial_solution, int neighbor
             rt.erase(rt.begin() + best_pos_u);
             
             // 2. Add to Drone
-            vi& rd = best_neighbor.drone_routes[target_drone_idx];
+            vi& rd = best_neighbor.drone_routes[best_r_drone];
             rd.push_back(best_u_val);
 
             best_neighbor = recalculate_solution(best_neighbor);
 
             // Update Tabu
             if ((int)tabu_list_10.size() == n + 1) {
-            tabu_list_10[best_u_val][rD] = current_iter + TABU_TENURE_10;
+            tabu_list_10[best_u_val][best_r_drone + h] = current_iter + TABU_TENURE_10;
             }
             
             if (solution_cost(best_neighbor) < best_neighbor_cost) {
@@ -3877,6 +3891,24 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
 
         iter++;
     }
+    // Post optimize best feasible solution if found
+    int post_opt_iters = 100 * NUM_NEIGHBORHOODS;
+    if (best_feasible_cost < std::numeric_limits<double>::infinity()) {
+        for (int i = 0; i < post_opt_iters; ++i) {
+            Solution init_neighbor = best_feasible_solution;
+            for (int j = 0; j < NUM_NEIGHBORHOODS; ++j) {
+                init_neighbor = local_search_all_vehicle(init_neighbor, j, iter, best_feasible_cost, solution_score_l2_norm);
+                init_neighbor = recalculate_solution(init_neighbor);
+                if (solution_score_l2_norm(init_neighbor) + 1e-12 < best_feasible_cost) {
+                    best_feasible_solution = init_neighbor;
+                    best_feasible_cost = solution_score_l2_norm(init_neighbor);
+                    cout << "Post-Optimization Iter " << i + 1 << " New Best Feasible Cost: " << best_feasible_cost << "\n";
+                }
+                iter++;
+            }
+        }
+    }
+
     if (best_feasible_cost < std::numeric_limits<double>::infinity()) {
         return best_feasible_solution;
     }

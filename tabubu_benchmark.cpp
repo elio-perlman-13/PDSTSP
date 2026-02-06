@@ -3637,7 +3637,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
                 }
             }
             else {
-                current_sol = destroy_worst_repair_random(current_sol);
+                current_sol = destroy_sisr_repair(best_solution);
             }
             
             current_sol = recalculate_solution(current_sol);
