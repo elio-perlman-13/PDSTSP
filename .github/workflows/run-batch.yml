@@ -1,4 +1,4 @@
-name: Run tabubu_saleu over saleu-2022 VRP set
+name: Run tabubu over instance VRP set
 
 on:
   workflow_dispatch:
@@ -17,13 +17,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build JSON matrix from saleu-2022/saleu-2022/*.vrp
+      - name: Build JSON matrix from instance/*.txt
         id: set-matrix
         run: |
           items=()
-          for f in saleu-2022/saleu-2022/*.vrp; do
+          for f in instance/*.txt; do
             if [ -f "$f" ]; then
-              base=$(basename "$f" .vrp)
+              base=$(basename "$f" .txt)
 
               # escape quotes in path just in case
               file=$(printf '%s' "$f" | sed 's/"/\\"/g')
@@ -32,7 +32,7 @@ jobs:
             fi
           done
           if [ ${#items[@]} -eq 0 ]; then
-            echo "No .vrp instance files found under saleu-2022/saleu-2022/"; exit 1
+            echo "No .txt instance files found under instance/"; exit 1
           fi
           # join items with commas to produce valid JSON array
           matrix_json="$(printf '%s,' "${items[@]}")"
@@ -48,13 +48,13 @@ jobs:
 
       - name: Compile solver
         run: |
-          g++ -O3 -std=c++20 tabubu_saleu.cpp -o tabubu_saleu
+          g++ -O3 -std=c++20 tabubu.cpp -o tabubu
 
       - name: Upload solver binary
         uses: actions/upload-artifact@v4
         with:
           name: solver-bin
-          path: tabubu_saleu
+          path: tabubu
           retention-days: 1
 
   run-instance:
@@ -77,13 +77,13 @@ jobs:
           name: solver-bin
 
       - name: Make executable
-        run: chmod +x tabubu_saleu
+        run: chmod +x tabubu
 
-      - name: Run tabubu_saleu on instance
+      - name: Run tabubu on instance
         timeout-minutes: 355 # slightly less than job timeout to allow cleanup steps to run
         run: |
           mkdir -p outputs
-          ./tabubu_saleu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
+          ./tabubu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
 
       - name: Prepare outputs
         if: always()
