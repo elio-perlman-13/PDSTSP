@@ -5861,20 +5861,20 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
     int scoring_mode_segment = 1; // 0: makespan, 1: L2 norm, 2: total time on all vehicle
     int scoring_mode_iter = scoring_mode_segment;
     Solution best_segment_sol = current_sol;
-    double current_score = 1e10;
+    double best_segment_score;
         if (scoring_mode_iter == 1) {
-            current_score = solution_score_l2_norm(current_sol);
+            best_segment_score = solution_score_l2_norm(current_sol);
         }
         else if (scoring_mode_iter == 0){
-            current_score = solution_score_makespan(current_sol);
+            best_segment_score = solution_score_makespan(current_sol);
         }
         else if (scoring_mode_iter == 2){
-            current_score = solution_score_total_time(current_sol);
+            best_segment_score = solution_score_total_time(current_sol);
         }
     cout << "=== Starting Unified Tabu Search (Minimizing Weighted Cost) ===\n";
-    cout << "Initial Cost: " << current_score << "\n";
+    cout << "Initial Cost: " << best_segment_score << "\n";
 
-    double best_solution_score_now = current_score;
+    double best_solution_score_now = best_segment_score; // track global best for current scoring mode
 
     while (iter <= total_iters) {
         if (CFG_TIME_LIMIT_SEC > 0.0) {
@@ -6127,6 +6127,30 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                             }
                         }
                     }
+                }
+            }
+            if (scoring_mode_iter == 1) {
+                if (solution_score_l2_norm(current_sol) + 1e-12 < best_segment_score ||
+                    (std::abs(solution_score_l2_norm(current_sol) - best_segment_score) <= 1e-12 &&
+                        current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
+                    best_segment_sol = current_sol;
+                    best_segment_score = solution_score_l2_norm(current_sol);
+                }
+            }
+            else if (scoring_mode_iter == 0){
+                if (solution_score_makespan(current_sol) + 1e-12 < best_segment_score ||
+                    (std::abs(solution_score_makespan(current_sol) - best_segment_score) <= 1e-12 &&
+                        current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
+                    best_segment_sol = current_sol;
+                    best_segment_score = solution_score_makespan(current_sol);
+                }
+            }
+            else if (scoring_mode_iter == 2){
+                if (solution_score_total_time(current_sol) + 1e-12 < best_segment_score ||
+                    (std::abs(solution_score_total_time(current_sol) - best_segment_score) <= 1e-12 &&
+                        current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
+                    best_segment_sol = current_sol;
+                    best_segment_score = solution_score_total_time(current_sol);
                 }
             }
 
