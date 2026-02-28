@@ -93,8 +93,8 @@ const int MAX_SEGMENT = 200;
 const int MAX_NO_IMPROVE = 1000;
 const int MAX_ITER_PER_SEGMENT = 1000;
 const double gamma1 = 1.0;
-const double gamma2 = 0.3;
-const double gamma3 = 0.0;
+const double gamma2 = 0.5;
+const double gamma3 = 0.05;
 const double gamma4 = 0.3;
 
 // Runtime-configurable search knobs (initialized from compile-time defaults)
@@ -3736,7 +3736,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
 
         double current_score = solution_score_l2_norm(current_sol);
         double current_pure_cost = solution_score_makespan(current_sol);
-        iter_current.push_back(current_pure_cost);;
+        iter_current.push_back(current_pure_cost);
         iter_best.push_back(best_feasible_cost);
         iter_feasible.push_back(is_feasible(current_sol));
 
@@ -3808,8 +3808,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
         double neighbor_score = solution_score_l2_norm(neighbor);
 
         // Acceptance
-        if (neighbor_score + 1e-12 < best_solution_score_now || 
-           (std::abs(neighbor_score - best_solution_score_now) <= 1e-12 && neighbor.total_time < best_solution.total_time)) {
+        if (neighbor_score + 1e-12 < best_solution_score_now) {
             
             current_sol = neighbor;
             best_solution = neighbor;
@@ -3820,6 +3819,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
         } else if (neighbor_score + 1e-12 < current_score) {
             current_sol = neighbor;
             score[selected_neighbor] += gamma2;
+            no_improve_iters = 0;
         } else {
             score[selected_neighbor] += gamma3;
             no_improve_iters++;
