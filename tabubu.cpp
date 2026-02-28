@@ -5875,25 +5875,24 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
     cout << "Initial Cost: " << best_segment_score << "\n";
 
     double best_solution_score_now = best_segment_score;
-
+    double current_score = best_segment_score;
     while (iter <= total_iters) {
         if (CFG_TIME_LIMIT_SEC > 0.0) {
             double elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - ts_start).count();
             if (elapsed >= CFG_TIME_LIMIT_SEC) break;
         }
-
-        double best_solution_score_now = 1e10, current_score = 0.0;
+        
         if (scoring_mode_iter == 1) {
             current_score = solution_score_l2_norm(current_sol);
-            best_solution_score_now = solution_score_l2_norm(best_solution);
+            //best_solution_score_now = solution_score_l2_norm(best_solution);
         }
         else if (scoring_mode_iter == 0){
             current_score = solution_score_makespan(current_sol);
-            best_solution_score_now = solution_score_makespan(best_solution);
+            //best_solution_score_now = solution_score_makespan(best_solution);
         }
         else if (scoring_mode_iter == 2){
             current_score = solution_score_total_time(current_sol);
-            best_solution_score_now = solution_score_total_time(best_solution);
+            //best_solution_score_now = solution_score_total_time(best_solution);
         }
         double current_pure_cost = current_sol.total_makespan;
         iter_current.push_back(current_pure_cost);;
@@ -5993,12 +5992,14 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             best_solution = neighbor;
             best_solution_score_now = neighbor_score;
             score[selected_neighbor] += gamma1;
+            current_score = neighbor_score;
             no_improve_iters = 0;
             
         } else if (neighbor_score + 1e-12 < current_score) {
             current_sol = neighbor;
             score[selected_neighbor] += gamma2;
-            no_improve_iters = 0;
+            current_score = neighbor_score;
+            no_improve_iters++;
         } else {
             double T = T0 * pow(alpha, iter);
             double delta = current_score - neighbor_score;
@@ -6007,6 +6008,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             if (rand_val < ap) {
                 current_sol = neighbor;
                 current_cost = neighbor.total_makespan;
+                current_score = neighbor_score;
             }
             score[selected_neighbor] += gamma3;
             no_improve_iters++;

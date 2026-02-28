@@ -340,3 +340,5 @@ if __name__ == "__main__":
         else:
             # 3) Else fallback to served-by-drone scatter
             plot_served_by_drone(instance_file, 'output.txt')
+
+#Run with python3 plot_sol.py instance/50.20.4.txt output_solution_best.txt
