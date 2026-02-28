@@ -48,13 +48,13 @@ jobs:
 
       - name: Compile solver
         run: |
-          g++ -O3 -std=c++20 tabubu.cpp -o tabubu
+          g++ -O3 -std=c++20 tabubu_old_config.cpp -o tabubu_old_config
 
       - name: Upload solver binary
         uses: actions/upload-artifact@v4
         with:
-          name: solver-bin
-          path: tabubu
+          name: solver-bin-old
+          path: tabubu_old_config
           retention-days: 1
 
   run-instance:
@@ -74,16 +74,16 @@ jobs:
       - name: Download solver
         uses: actions/download-artifact@v4
         with:
-          name: solver-bin
+          name: solver-bin-old
 
       - name: Make executable
-        run: chmod +x tabubu
+        run: chmod +x tabubu_old_config
 
-      - name: Run tabubu on instance
+      - name: Run tabubu_old_config on instance
         timeout-minutes: 355 # slightly less than job timeout to allow cleanup steps to run
         run: |
           mkdir -p outputs
-          ./tabubu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
+          ./tabubu_old_config "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
 
       - name: Prepare outputs
         if: always()
@@ -97,7 +97,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.base }}-tabubu-results
+          name: ${{ matrix.base }}-tabubu-old-config-results
           path: |
             outputs/${{ matrix.base }}_best.txt
             outputs/${{ matrix.base }}.log
