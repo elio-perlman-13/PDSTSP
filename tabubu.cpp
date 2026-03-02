@@ -87,7 +87,7 @@ const int MAX_ITER_PER_SEGMENT = 1000;
 const double gamma1 = 1.0;
 const double gamma2 = 0.3;
 const double gamma3 = 0.05;
-const double gamma4 = 0.5;
+const double gamma4 = 0.25;
 
 // Runtime-configurable search knobs (initialized from compile-time defaults)
 static int CFG_NUM_INITIAL = NUM_OF_INITIAL_SOLUTIONS;
@@ -5898,7 +5898,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
 
 
         // Roulette Wheel Selection
-        double total_weight = 0.0;
+        /* double total_weight = 0.0;
         for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
             total_weight += weight[i];
         }
@@ -5914,7 +5914,10 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
         }
         if (selected_neighbor == 0 && r >= cumulative) {
             selected_neighbor = NUM_NEIGHBORHOODS - 1;
-        }
+        } */
+
+        int selected_neighbor = rand() % NUM_NEIGHBORHOODS;
+
         //if (selected_neighbor > 7) selected_neighbor = 7; // For debugging
         count[selected_neighbor]++;
 
