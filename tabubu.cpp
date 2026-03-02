@@ -85,8 +85,8 @@ const int MAX_SEGMENT = 200;
 const int MAX_NO_IMPROVE = 1000;
 const int MAX_ITER_PER_SEGMENT = 1000;
 const double gamma1 = 1.0;
-const double gamma2 = 0.5;
-const double gamma3 = 0.05;
+const double gamma2 = 0.3;
+const double gamma3 = 0.0;
 const double gamma4 = 0.25;
 
 // Runtime-configurable search knobs (initialized from compile-time defaults)
