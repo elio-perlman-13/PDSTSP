@@ -5853,7 +5853,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
         current_sol = elite_set[rand_idx];
         current_cost = current_sol.total_makespan;
     }*/
-    int iter = 1;
+    int iter = 0;
     int total_iters = CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT;
     int no_improve_iters = 0;
     int scoring_mode_segment = 1; // 0: makespan, 1: L2 norm, 2: total time on all vehicle
@@ -5873,7 +5873,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
     cout << "Initial Cost: " << best_solution_score_now << "\n";
 
     double current_score = best_solution_score_now;
-    while (iter <= total_iters) {
+    while (iter < total_iters) {
         if (CFG_TIME_LIMIT_SEC > 0.0) {
             double elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - ts_start).count();
             if (elapsed >= CFG_TIME_LIMIT_SEC) break;
@@ -5916,7 +5916,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             selected_neighbor = NUM_NEIGHBORHOODS - 1;
         } */
 
-        int selected_neighbor = rand() % NUM_NEIGHBORHOODS;
+        int selected_neighbor = iter % NUM_NEIGHBORHOODS;
 
         //if (selected_neighbor > 7) selected_neighbor = 7; // For debugging
         count[selected_neighbor]++;
