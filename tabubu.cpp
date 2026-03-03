@@ -5917,8 +5917,6 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
         } */
 
         int selected_neighbor = iter % NUM_NEIGHBORHOODS;
-
-        //if (selected_neighbor > 7) selected_neighbor = 7; // For debugging
         count[selected_neighbor]++;
 
         // Local Search
