@@ -6064,7 +6064,8 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 cout << "N" << i << ": " << weight[i] << " " << count[i] << " | ";
             }
             cout << "\n";
-            if (scoring_mode_iter == 0) scoring_mode_iter = 2;
+            if (scoring_mode_iter == 0) scoring_mode_iter = 1;
+            else if (scoring_mode_iter == 1) scoring_mode_iter = 2;
             else if (scoring_mode_iter == 2) scoring_mode_iter = 0;
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
                 if (count[i] != 0) {
