@@ -5856,7 +5856,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
     int iter = 0;
     int total_iters = CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT;
     int no_improve_iters = 0;
-    int scoring_mode_segment = 1; // 0: makespan, 1: L2 norm, 2: total time on all vehicle
+    int scoring_mode_segment = 0; // 0: makespan, 1: L2 norm, 2: total time on all vehicle
     int scoring_mode_iter = scoring_mode_segment;
     Solution best_segment_sol = current_sol;
     double best_solution_score_now;
@@ -6064,8 +6064,8 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 cout << "N" << i << ": " << weight[i] << " " << count[i] << " | ";
             }
             cout << "\n";
-            if (scoring_mode_iter == 1) scoring_mode_iter = 1;
-            else if (scoring_mode_iter == 0) scoring_mode_iter = 1;
+/*             if (scoring_mode_iter == 1) scoring_mode_iter = 1;
+            else if (scoring_mode_iter == 0) scoring_mode_iter = 1; */
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
                 if (count[i] != 0) {
                     weight[i] = (1.0 - gamma4) * weight[i] + gamma4 * (score[i] / count[i]);
