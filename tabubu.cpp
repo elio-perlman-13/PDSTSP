@@ -107,7 +107,7 @@ static const double PENALTY_DECREASE = 1.2;       // divide when satisfied *
 static const double PENALTY_MIN = 0.5;            // minimum λ value
 static const double PENALTY_MAX = 1000.0;
 
-static const double T0 = 100.0; // initial temperature for simulated annealing acceptance
+static const double T0 = 150.0; // initial temperature for simulated annealing acceptance
 double alpha = 0.9998; // cooling rate for simulated annealing
 
 // Destroy and repair helper
@@ -5628,38 +5628,14 @@ Solution destroy_worst_repair_random(Solution sol) {
     return repair_solution_common(sol, to_destroy);
 }
 
-Solution destroy_shortest_route_repair_random(Solution sol) {
+Solution destroy_random_repair_random(Solution sol) {
     unordered_set<int> to_destroy;
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-    
-    // Identify shortest non-empty truck route
-    int target_idx = -1;
-    size_t min_size = 100000;
-    int active_trucks = 0;
-    for (int i = 0; i < h; ++i) {
-        if (sol.truck_routes[i].size() > 2) { 
-             active_trucks++;
-             if (sol.truck_routes[i].size() < min_size) {
-                 min_size = sol.truck_routes[i].size();
-                 target_idx = i;
-             }
-        }
-    }
-    
-    if (active_trucks <= 1 || target_idx == -1) {
-        return destroy_worst_repair_random(sol);
-    }
-    
-    // Empty target route
-    for (int c : sol.truck_routes[target_idx]) {
-        if (c != 0) to_destroy.insert(c);
-    }
-    // Also destroy 15% random others
-    int random_count = static_cast<int>(n * 0.15);
-    std::uniform_int_distribution<int> dist_idx(1, n);
-    for(int k=0; k<random_count; ++k){
-        int c = dist_idx(rng);
-        to_destroy.insert(c);
+    int destroy_count = static_cast<int>(n * 0.3); // Destroy 30%
+    std::uniform_int_distribution<int> dist(1, n);
+    while ((int)to_destroy.size() < destroy_count) {
+        int r = dist(rng);
+        to_destroy.insert(r);
     }
     
     return repair_solution_common(sol, to_destroy);
