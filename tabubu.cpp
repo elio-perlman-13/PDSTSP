@@ -5643,7 +5643,7 @@ Solution destroy_random_repair_random(Solution sol) {
 
 // SISR (Slack Induction by Substring Removal) Implementation
 Solution destroy_sisr_repair(Solution sol) {
-    const double DESTROY_RATE = 0.1;
+    const double DESTROY_RATE = 0.3;
     const int MAX_STRING_SIZE_BASE = 12; 
     const int destroy_target = max(1, (int)(n * DESTROY_RATE));
     
