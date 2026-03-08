@@ -5643,7 +5643,7 @@ Solution destroy_random_repair_random(Solution sol) {
 
 // SISR (Slack Induction by Substring Removal) Implementation
 Solution destroy_sisr_repair(Solution sol) {
-    const double DESTROY_RATE = 0.30;
+    const double DESTROY_RATE = 0.1;
     const int MAX_STRING_SIZE_BASE = 12; 
     const int destroy_target = max(1, (int)(n * DESTROY_RATE));
     
@@ -6008,7 +6008,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
              no_improve_iters = 0;
 
             // Chance to restart from best solution or do destroy and repair:
-            current_sol = destroy_worst_repair_random(current_sol);
+            current_sol = destroy_sisr_repair(current_sol);
             
             current_sol = recalculate_solution(current_sol);
             cout << "Applied perturbation at iter " << iter << ", new makespan: " << current_sol.total_makespan << "\n";
