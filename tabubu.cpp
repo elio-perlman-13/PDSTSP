@@ -5643,8 +5643,9 @@ Solution destroy_random_repair_random(Solution sol) {
 
 // SISR (Slack Induction by Substring Removal) Implementation
 Solution destroy_sisr_repair(Solution sol) {
-    const int MAX_STRING_REMOVALS = 3; 
+    const double DESTROY_RATE = 0.30;
     const int MAX_STRING_SIZE_BASE = 12; 
+    const int destroy_target = max(1, (int)(n * DESTROY_RATE));
     
     unordered_set<int> to_destroy;
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -5692,8 +5693,7 @@ Solution destroy_sisr_repair(Solution sol) {
         std::shuffle(candidate_neighbors.begin(), candidate_neighbors.end(), rng);
     }
     
-    unordered_set<int> destroyed_routes_id; 
-    int removal_count = 0;
+    unordered_set<int> destroyed_routes_id;
 
     // Prioritize center, then neighbors
     vector<int> process_queue;
@@ -5701,8 +5701,8 @@ Solution destroy_sisr_repair(Solution sol) {
     process_queue.insert(process_queue.end(), candidate_neighbors.begin(), candidate_neighbors.end());
 
     for(int neighbor_cust : process_queue) {
+        if ((int)to_destroy.size() >= destroy_target) break;
         if(to_destroy.count(neighbor_cust)) continue; // Already marked
-        if(removal_count >= MAX_STRING_REMOVALS) break;
         
         Locator l = cust_loc[neighbor_cust];
         if(l.v_idx == -1) continue; 
@@ -5712,47 +5712,48 @@ Solution destroy_sisr_repair(Solution sol) {
         if(destroyed_routes_id.count(unique_id)) continue;
         
         destroyed_routes_id.insert(unique_id);
-        removal_count++;
         
-        if(!l.is_truck) {
-             // Remove all customers on this drone route
-             for(int c : sol.drone_routes[l.v_idx]) if(c!=0) to_destroy.insert(c);
-        } else {
-             // Truck String Removal
-             const vi& route = sol.truck_routes[l.v_idx];
-             // Limit string size
-             int actual_max = min((int)route.size()-2, max_string_size);
-             if (actual_max < 1) actual_max = 1;
-             
-             std::uniform_int_distribution<int> size_dist(1, actual_max);
-             int str_len = size_dist(rng);
-             
-             // We need a window [s, s+len-1] that contains l.pos
-             // Constraints:
-             // 1. s >= 1 (start after depot)
-             // 2. s + str_len - 1 <= route.size() - 2 (end before depot)
-             // 3. s <= l.pos
-             // 4. s + str_len - 1 >= l.pos => s >= l.pos - str_len + 1
-             
-             int min_s = max(1, l.pos - str_len + 1);
-             int max_s = min(l.pos, (int)route.size() - 1 - str_len); // Ensures end doesn't exceed bounds
+        // Apply the same substring-removal logic for both trucks and drones.
+        const vi& route = l.is_truck ? sol.truck_routes[l.v_idx] : sol.drone_routes[l.v_idx];
+        // Limit string size
+        int actual_max = min((int)route.size()-2, max_string_size);
+        if (actual_max < 1) actual_max = 1;
 
-             if (min_s > max_s) {
-                 // Fallback: just remove the neighbor if math fails
-                 to_destroy.insert(neighbor_cust);
-             } else {
-                 std::uniform_int_distribution<int> start_dist(min_s, max_s);
-                 int s = start_dist(rng);
-                 for(int k=0; k<str_len; ++k) {
-                     int idx = s + k;
-                     if (idx < route.size()) {
-                        int c = route[idx];
-                        if(c!=0) to_destroy.insert(c);
-                     }
-                 }
-             }
+        std::uniform_int_distribution<int> size_dist(1, actual_max);
+        int str_len = size_dist(rng);
+
+        // We need a window [s, s+len-1] that contains l.pos
+        // Constraints:
+        // 1. s >= 1 (start after depot)
+        // 2. s + str_len - 1 <= route.size() - 2 (end before depot)
+        // 3. s <= l.pos
+        // 4. s + str_len - 1 >= l.pos => s >= l.pos - str_len + 1
+        int min_s = max(1, l.pos - str_len + 1);
+        int max_s = min(l.pos, (int)route.size() - 1 - str_len); // Ensures end doesn't exceed bounds
+
+        if (min_s > max_s) {
+            // Fallback: just remove the neighbor if math fails
+            if ((int)to_destroy.size() < destroy_target) to_destroy.insert(neighbor_cust);
+        } else {
+            std::uniform_int_distribution<int> start_dist(min_s, max_s);
+            int s = start_dist(rng);
+            for(int k=0; k<str_len; ++k) {
+                if ((int)to_destroy.size() >= destroy_target) break;
+                int idx = s + k;
+                if (idx < route.size()) {
+                    int c = route[idx];
+                    if(c!=0) to_destroy.insert(c);
+                }
+            }
         }
     }
+
+    // Ensure fixed destroy rate if SISR candidate selection did not reach the target.
+    std::uniform_int_distribution<int> dist_fill(1, n);
+    while ((int)to_destroy.size() < destroy_target) {
+        to_destroy.insert(dist_fill(rng));
+    }
+
     return repair_solution_common(sol, to_destroy);
 }
 
