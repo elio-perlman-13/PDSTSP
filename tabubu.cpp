@@ -5631,7 +5631,7 @@ Solution destroy_worst_repair_random(Solution sol) {
 Solution destroy_random_repair_random(Solution sol) {
     unordered_set<int> to_destroy;
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-    int destroy_count = static_cast<int>(n * 0.3); // Destroy 30%
+    int destroy_count = static_cast<int>(n * 0.1); // Destroy 10%
     std::uniform_int_distribution<int> dist(1, n);
     while ((int)to_destroy.size() < destroy_count) {
         int r = dist(rng);
@@ -6008,13 +6008,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
              no_improve_iters = 0;
 
             // Chance to restart from best solution or do destroy and repair:
-            /* double restart_chance = 0.0;
-            if (((double) rand() / (RAND_MAX)) < restart_chance) {
-                current_sol = destroy_worst_repair_random(best_solution);
-            }
-            else {
-                current_sol = destroy_worst_repair_random(current_sol);
-            }
+            current_sol = destroy_random_repair_random(current_sol);
             
             current_sol = recalculate_solution(current_sol);
             cout << "Applied perturbation at iter " << iter << ", new makespan: " << current_sol.total_makespan << "\n";
@@ -6028,7 +6022,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             tabu_list_2opt_star.clear();
             tabu_list_22.clear();
             tabu_list_21.clear();
-            tabu_list_ejection.clear(); */
+            tabu_list_ejection.clear();
         }
 
         // Periodic Weight & Segment Mode Update
@@ -6063,52 +6057,6 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
 
         iter++;
     }
-
-    // Post-Optimization: Final Local Search on Best Feasible Solution
-    /*  if (best_feasible_makespan < std::numeric_limits<double>::infinity()) {
-        current_sol = best_feasible_solution;
-        cout << "Starting final local search on best feasible solution with makespan " << best_feasible_makespan << "\n";
-        // Intensification via local search on all neighborhoods:
-        vector<int> neighborhood_order(NUM_NEIGHBORHOODS);
-        for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-            neighborhood_order[i] = i;
-        }
-        sort(neighborhood_order.begin(), neighborhood_order.end(), [&](int a, int b) {
-            return weight[a] > weight[b];
-        });
-        bool improved = true;
-        int limit_intensification = 0;
-        while (improved && limit_intensification < 20){ 
-            improved = false;
-            for (int ni : neighborhood_order) {
-                Solution neighbor;
-                limit_intensification++;
-                if (limit_intensification >= 20) break;
-                PENALTY_EXPONENT = 20.0; // More aggressive penalty
-                neighbor = local_search(current_sol, ni, 20000, best_solution_score_now, solution_score_makespan);
-                //neighbor = recalculate_solution(neighbor);
-                double neighbor_score = solution_score_makespan(neighbor);
-                double current_sol_score = solution_score_makespan(current_sol);
-
-                if (neighbor_score + 1e-12 < current_sol_score ||
-                    (std::abs(neighbor_score - current_sol_score) <= 1e-12 &&
-                    neighbor.total_makespan + 1e-12 < current_sol.total_makespan)) {
-                    
-                    current_sol = neighbor;
-                    improved = true;
-                    //updated_edge_records(neighbor);
-
-                    // [FIX] Update best score tracker for subsequent searches
-                    if (current_sol.capacity_violation < 1e-12 && current_sol.deadline_violation < 1e-12 && current_sol.energy_violation < 1e-12 &&
-                        current_sol.total_makespan + 1e-12 < best_feasible_makespan) {
-                        best_feasible_solution = current_sol;
-                        best_feasible_makespan = current_sol.total_makespan;
-                        cout << "New best feasible solution found during intensification with makespan: " << best_feasible_makespan << "\n";
-                    }
-                }
-            }
-        }
-    } */
 
     if (best_feasible_makespan < std::numeric_limits<double>::infinity()) {
         return best_feasible_solution;
