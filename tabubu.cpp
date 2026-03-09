@@ -5836,7 +5836,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
     int iter = 0;
     int total_iters = CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT;
     int no_improve_iters = 0;
-    int scoring_mode_iter = 0;
+    int scoring_mode_iter = 1;
     Solution best_segment_sol = current_sol;
     double best_segment_score = scoring_mode_iter == 0 ? solution_score_makespan(current_sol) :
                                 (scoring_mode_iter == 1 ? solution_score_l2_norm(current_sol) : solution_score_total_time(current_sol));
@@ -6060,11 +6060,11 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
 
             if (no_improve_segments >= 2) {
                 // If no improvement for 2 consecutive segments, switch scoring mode to encourage different search behavior
-                if (scoring_mode_iter == 0) {
+                if (scoring_mode_iter == 1) {
                     scoring_mode_iter = 2;
                 }
                 else if (scoring_mode_iter == 2) {
-                    scoring_mode_iter = 0;
+                    scoring_mode_iter = 1;
                 }
                 no_improve_segments = 0;
                 best_solution_score_now = scoring_mode_iter == 0 ? solution_score_makespan(best_solution) :
