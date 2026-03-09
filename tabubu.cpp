@@ -6062,7 +6062,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
     if (best_feasible_makespan < std::numeric_limits<double>::infinity()) {
         Solution improved_feasible = best_feasible_solution;
         int post_opt_loop = 0;
-        while (post_opt_loop < 10) { // Limit number of post-optimization passes
+        while (post_opt_loop < 0) { // Limit number of post-optimization passes
              post_opt_loop++;
              bool improved_in_pass = false;
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
