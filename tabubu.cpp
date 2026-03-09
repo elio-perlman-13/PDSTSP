@@ -5557,7 +5557,7 @@ Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destr
 
 Solution destroy_worst_repair_random(Solution sol) {
     unordered_set<int> to_destroy;
-    int destroy_count = static_cast<int>(n * 0.3); // Destroy 30%
+    int destroy_count = static_cast<int>(n * 0.1); // Destroy 10%
     
     Solution current_sol = sol;
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -6008,7 +6008,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
              no_improve_iters = 0;
 
             // Chance to restart from best solution or do destroy and repair:
-            current_sol = destroy_sisr_repair(current_sol);
+            current_sol = destroy_worst_repair_random(current_sol);
             
             current_sol = recalculate_solution(current_sol);
             cout << "Applied perturbation at iter " << iter << ", new makespan: " << current_sol.total_makespan << "\n";
@@ -6056,6 +6056,27 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
         }
 
         iter++;
+    }
+
+    // Post optimization:
+    if (best_feasible_makespan < std::numeric_limits<double>::infinity()) {
+        Solution improved_feasible = best_feasible_solution;
+        int post_opt_loop = 0;
+        while (post_opt_loop < 5) { // Limit number of post-optimization passes
+             post_opt_loop++;
+             bool improved_in_pass = false;
+            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+                improved_feasible = local_search(improved_feasible, i, iter, best_feasible_makespan, solution_score_makespan);
+                improved_feasible = recalculate_solution(improved_feasible);
+                if (improved_feasible.total_makespan + 1e-12 < best_feasible_makespan) {
+                    improved_in_pass = true;
+                    best_feasible_solution = improved_feasible;
+                    best_feasible_makespan = improved_feasible.total_makespan;
+                    cout << "Post-Optimization Improved Best Feasible Makespan: " << best_feasible_makespan << "\n";
+                }
+            }
+            if (!improved_in_pass) break; // Exit if no improvement in this pass
+        }
     }
 
     if (best_feasible_makespan < std::numeric_limits<double>::infinity()) {
