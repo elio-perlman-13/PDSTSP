@@ -6024,7 +6024,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             destroy_repair_count++; 
             
             current_sol = recalculate_solution(current_sol);
-            cout << "Applied perturbation at iter " << iter << ", new makespan: " << current_sol.total_makespan << "\n";*/
+            cout << "Applied perturbation at iter " << iter << ", new makespan: " << current_sol.total_makespan << "\n"; */
             no_improve_iters = 0;
             
             // Clear Tabu Lists
