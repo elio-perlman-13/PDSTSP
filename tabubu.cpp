@@ -6095,6 +6095,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
     }
 
     // Post optimization:
+    
     /* if (best_feasible_makespan < std::numeric_limits<double>::infinity()) {
         Solution improved_feasible = best_feasible_solution;
         int post_opt_loop = 0;
