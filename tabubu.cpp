@@ -5631,7 +5631,7 @@ Solution destroy_worst_repair_random(Solution sol) {
 Solution destroy_random_repair_random(Solution sol) {
     unordered_set<int> to_destroy;
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-    int destroy_count = static_cast<int>(n * 0.3); // Destroy 30%
+    int destroy_count = static_cast<int>(n * 0.1); // Destroy 10%
     std::uniform_int_distribution<int> dist(1, n);
     while ((int)to_destroy.size() < destroy_count) {
         int r = dist(rng);
@@ -6019,7 +6019,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
              no_improve_iters = 0;
 
             // Chance to restart from best solution or do destroy and repair:
-            current_sol = destroy_worst_repair_random(current_sol);
+            current_sol = destroy_random_repair_random(current_sol);
             
             destroy_repair_count++; 
             
