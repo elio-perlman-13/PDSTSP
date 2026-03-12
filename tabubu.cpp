@@ -5631,7 +5631,7 @@ Solution destroy_worst_repair_random(Solution sol) {
 Solution destroy_random_repair_random(Solution sol) {
     unordered_set<int> to_destroy;
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-    int destroy_count = static_cast<int>(n * 0.2); // Destroy 20%
+    int destroy_count = static_cast<int>(n * 0.3); // Destroy 30%
     std::uniform_int_distribution<int> dist(1, n);
     while ((int)to_destroy.size() < destroy_count) {
         int r = dist(rng);
