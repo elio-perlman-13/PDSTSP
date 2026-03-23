@@ -6095,7 +6095,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
     }
 
     // Post optimization:
-    Solution improved_feasible = best_feasible_solution;
+    /* Solution improved_feasible = best_feasible_solution;
     if (best_feasible_makespan < std::numeric_limits<double>::infinity()) {
         int post_opt_loop = 20;
         while (post_opt_loop < 0) { // Limit number of post-optimization passes
@@ -6113,7 +6113,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             }
             if (!improved_in_pass) break; // Exit if no improvement in this pass
         }
-    }
+    } */
 
     //cout << "Destroy/Repair applied " << destroy_repair_count << " times during the search.\n";
 

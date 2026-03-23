@@ -1,11 +1,11 @@
-name: Run tabubu over instance VRP set
+name: Run tabubu_saleu over Saleu VRP set
 
 on:
   workflow_dispatch:
-#  push:
-#    branches:
-#      - main
-#      - restore-branch
+  push:
+    branches:
+      - main
+      - restore-branch
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -20,24 +20,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Build JSON matrix from instance/*.txt
+      - name: Build JSON matrix from saleu-2022/saleu-2022/*.vrp
         id: set-matrix
         run: |
           items=()
-          for f in instance/*.txt; do
+          for f in saleu-2022/saleu-2022/*.vrp; do
             if [ -f "$f" ]; then
-              base=$(basename "$f" .txt)
-
-              # escape quotes in path just in case
+              base=$(basename "$f" .vrp)
               file=$(printf '%s' "$f" | sed 's/"/\\"/g')
               base=$(printf '%s' "$base" | sed 's/"/\\"/g')
               items+=("{\"file\":\"$file\",\"base\":\"$base\"}")
             fi
           done
           if [ ${#items[@]} -eq 0 ]; then
-            echo "No .txt instance files found under instance/"; exit 1
+            echo "No .vrp instance files found under saleu-2022/saleu-2022/"; exit 1
           fi
-          # join items with commas to produce valid JSON array
           matrix_json="$(printf '%s,' "${items[@]}")"
           matrix_json="[${matrix_json%,}]"
           echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
@@ -51,47 +48,45 @@ jobs:
 
       - name: Compile solver
         run: |
-          g++ -O3 -std=c++20 tabubu.cpp -o tabubu
+          g++ -O3 -std=c++20 tabubu_saleu.cpp -o tabubu_saleu
 
       - name: Upload solver binary
         uses: actions/upload-artifact@v4
         with:
-          name: solver-bin
-          path: tabubu
+          name: solver-saleu-bin
+          path: tabubu_saleu
           retention-days: 1
 
   run-instance:
     name: Run instance ${{ matrix.base }}
-    needs: [prepare, build] # Wait for build to finish
+    needs: [prepare, build]
     strategy:
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
-      max-parallel: 64
+      max-parallel: 20
     runs-on: ubuntu-latest
     timeout-minutes: 359
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      # Download the pre-built binary
       - name: Download solver
         uses: actions/download-artifact@v4
         with:
-          name: solver-bin
+          name: solver-saleu-bin
 
       - name: Make executable
-        run: chmod +x tabubu
+        run: chmod +x tabubu_saleu
 
-      - name: Run tabubu on instance
-        timeout-minutes: 355 # slightly less than job timeout to allow cleanup steps to run
+      - name: Run tabubu_saleu on instance
+        timeout-minutes: 355
         run: |
           mkdir -p outputs
-          ./tabubu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
+          ./tabubu_saleu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
 
       - name: Prepare outputs
         if: always()
         run: |
-          # copy solver's best output if created
           if [[ -f output_solution_best.txt ]]; then
             cp output_solution_best.txt "outputs/${{ matrix.base }}_best.txt"
           fi
@@ -100,7 +95,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.base }}-tabubu-results
+          name: ${{ matrix.base }}-tabubu-saleu-results
           path: |
             outputs/${{ matrix.base }}_best.txt
             outputs/${{ matrix.base }}.log
@@ -127,20 +122,18 @@ jobs:
         run: |
           rm -rf summary || true
           mkdir -p summary
-          # copy only per-instance *_best.txt into per-artifact subfolders
           for a in all_artifacts/*; do
             name=$(basename "$a")
             mkdir -p "summary/$name"
-            # copy only files ending with _best.txt
             find "$a" -type f -name '*_best.txt' -exec cp {} "summary/$name/" \; || true
           done
 
       - name: Create final compressed summary
         run: |
-          tar -czf tabubu_all_instances_summary.tar.gz -C summary .
+          tar -czf tabubu_saleu_all_instances_summary.tar.gz -C summary .
 
       - name: Upload consolidated summary
         uses: actions/upload-artifact@v4
         with:
-          name: tabubu_all_instances_summary
-          path: tabubu_all_instances_summary.tar.gz
+          name: tabubu_saleu_all_instances_summary
+          path: tabubu_saleu_all_instances_summary.tar.gz
