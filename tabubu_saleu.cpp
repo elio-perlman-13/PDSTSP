@@ -4109,13 +4109,13 @@ int main(int argc, char* argv[]) {
     auto_tune = true;
     if (auto_tune) {
         if (n <= 50) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 20);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 20);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
