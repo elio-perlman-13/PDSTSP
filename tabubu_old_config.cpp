@@ -5557,7 +5557,7 @@ Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destr
 
 Solution destroy_worst_repair_random(Solution sol) {
     unordered_set<int> to_destroy;
-    int destroy_count = static_cast<int>(n * 0.3); // Destroy 30%
+    int destroy_count = static_cast<int>(n * 0.1); // Destroy 10%
     
     Solution current_sol = sol;
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -5806,83 +5806,39 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
     iter_best.clear();
     iter_feasible.clear();
 
+    int destroy_repair_count = 0;
+    int no_improve_segments = 0;
+
     Solution current_sol = initial_solution;
     double current_cost = initial_solution.total_makespan;
 
-    /* for (int i = 0; i < num_initial_sol; i++){
-        Solution initial_sol = generate_initial_solution();
-        updated_edge_records(initial_sol);
-        Solution best_local_solution = initial_sol;
-        for (int j = 0; j < 10; j++){
-            int selected_neighbor = rand() % NUM_NEIGHBORHOODS;
-            initial_sol = local_search(initial_sol, selected_neighbor, 0, solution_score(best_solution));
-            if (solution_score(initial_sol) + 1e-12 < solution_score(best_local_solution) ||
-                (std::abs(solution_score(initial_sol) - solution_score(best_local_solution)) <= 1e-12 &&
-                 initial_sol.total_makespan + 1e-12 < best_local_solution.total_makespan)) {
-                best_local_solution = initial_sol;
-            }
-            if (is_feasible(initial_sol) &&
-                initial_sol.total_makespan + 1e-12 < best_feasible_makespan) {
-                best_feasible_makespan = initial_sol.total_makespan;
-                best_feasible_solution = initial_sol;
-                best_cost = best_feasible_makespan;
-            }
-        }
-        // if it's better than the worst solution in elite set, add it
-        if (elite_set.size() < ELITE_SET_SIZE) {
-            elite_set.push_back(best_local_solution);
-        } else {
-            double worst_score = -1.0;
-            int worst_idx = -1;
-            for (size_t j = 0; j < elite_set.size(); ++j) {
-                double s = solution_score(elite_set[j]);
-                if (s > worst_score) {
-                    worst_score = s;
-                    worst_idx = j;
-                }
-            }
-            if (solution_score(best_local_solution) + 1e-12 < worst_score) {
-                elite_set[worst_idx] = best_local_solution;
-            }
-        }
-    } 
-
-    // Pick current solution from elite set randomly
-    if (!elite_set.empty()) {
-        int rand_idx = rand() % elite_set.size();
-        current_sol = elite_set[rand_idx];
-        current_cost = current_sol.total_makespan;
-    }*/
-    current_sol = initial_solution;
-    current_cost = current_sol.total_makespan; 
-    int iter = 1;
+    int iter = 0;
     int total_iters = CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT;
     int no_improve_iters = 0;
-    int scoring_mode_segment = 1; // 0: makespan, 1: L2 norm, 2: total time on all vehicle
-    int scoring_mode_iter = scoring_mode_segment;
+    int scoring_mode_iter = 1;
     Solution best_segment_sol = current_sol;
-    double best_segment_score;
+    double best_segment_score = scoring_mode_iter == 0 ? solution_score_makespan(current_sol) :
+                                (scoring_mode_iter == 1 ? solution_score_l2_norm(current_sol) : solution_score_total_time(current_sol));
+    double best_solution_score_now;
         if (scoring_mode_iter == 1) {
-            best_segment_score = solution_score_l2_norm(current_sol);
+            best_solution_score_now = solution_score_l2_norm(current_sol);
         }
         else if (scoring_mode_iter == 0){
-            best_segment_score = solution_score_makespan(current_sol);
+            best_solution_score_now = solution_score_makespan(current_sol);
         }
         else if (scoring_mode_iter == 2){
-            best_segment_score = solution_score_total_time(current_sol);
+            best_solution_score_now = solution_score_total_time(current_sol);
         }
     cout << "=== Starting Unified Tabu Search (Minimizing Weighted Cost) ===\n";
-    cout << "Initial Cost: " << best_segment_score << "\n";
+    cout << "Initial Cost: " << best_solution_score_now << "\n";
 
-    double best_solution_score_now = best_segment_score; // track global best for current scoring mode
-
-    while (iter <= total_iters) {
+    double current_score = best_solution_score_now;
+    while (iter < total_iters) {
         if (CFG_TIME_LIMIT_SEC > 0.0) {
             double elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - ts_start).count();
             if (elapsed >= CFG_TIME_LIMIT_SEC) break;
         }
-
-        double current_score = 0.0;
+        
         if (scoring_mode_iter == 1) {
             current_score = solution_score_l2_norm(current_sol);
             //best_solution_score_now = solution_score_l2_norm(best_solution);
@@ -5919,9 +5875,11 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
         if (selected_neighbor == 0 && r >= cumulative) {
             selected_neighbor = NUM_NEIGHBORHOODS - 1;
         }
-        //if (selected_neighbor > 7) selected_neighbor = 7; // For debugging
+
+        //int selected_neighbor = iter % NUM_NEIGHBORHOODS;
         count[selected_neighbor]++;
 
+        
         // Local Search
         Solution init_neighbor;
         Solution neighbor;
@@ -5993,11 +5951,13 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             best_solution = neighbor;
             best_solution_score_now = neighbor_score;
             score[selected_neighbor] += gamma1;
+            current_score = neighbor_score;
             no_improve_iters = 0;
             
         } else if (neighbor_score + 1e-12 < current_score) {
             current_sol = neighbor;
             score[selected_neighbor] += gamma2;
+            current_score = neighbor_score;
             no_improve_iters++;
         } else {
             double T = T0 * pow(alpha, iter);
@@ -6007,7 +5967,9 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             if (rand_val < ap) {
                 current_sol = neighbor;
                 current_cost = neighbor.total_makespan;
+                current_score = neighbor_score;
             }
+            
             score[selected_neighbor] += gamma3;
             no_improve_iters++;
         }
@@ -6021,6 +5983,12 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                  cout << "Iter " << iter << " New Best Feasible Makespan: " << best_feasible_makespan << "\n";
              }
         }
+
+        // Update best segment solution
+        if (neighbor_score + 1e-12 < best_segment_score) {
+            best_segment_sol = neighbor;
+            best_segment_score = neighbor_score;
+        }
         
         update_penalties(current_sol);
 
@@ -6028,143 +5996,14 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
         if (no_improve_iters >= CFG_MAX_NO_IMPROVE) {
             cout << "No improve at iter " << iter << " with current score " << current_score << " and makespan " << current_sol.total_makespan << "\n";
              no_improve_iters = 0;
-            // Destroy and repair current solution or starting over from best solution with a few force N7 iterations
-             /*if (!elite_set.empty()) {
-                // Debug: print restart info
-                Solution tmp = current_sol;
-                std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-                std::uniform_int_distribution<int> dist(0, elite_set.size() - 1);
-                int rand_idx = dist(rng);
-                current_sol = elite_set[rand_idx];
-                cout << "Pushing sol with makespan " << tmp.total_makespan << " to elite set;";
-                Solution pushed_out_sol = updated_elite_set(tmp);
-                cout << " replacing sol with makespan " << pushed_out_sol.total_makespan << "\n";
-                current_cost = current_sol.total_makespan;
-                cout.setf(std::ios::fixed); cout << setprecision(6);
-                cout << "[Restart] from no-improve solution " << tmp.total_makespan << " to elite solution with cost: " << current_sol.total_makespan << " ";
-                current_sol = destroy_and_repair(current_sol);
-                current_cost = current_sol.total_makespan;
-            }
-            int local_iter = 0;
-            for (int i = 0; i < EJECTION_CHAIN_ITERS; ++i) {
-                if (total_score_iter){
-                    current_sol = local_search_all_vehicle(current_sol, 0, local_iter, best_solution_score_now);
-                    current_cost = current_sol.total_makespan;
-                }
-                else {
-                    current_sol = local_search(current_sol, 0, local_iter, best_solution_score_now);
-                    current_cost = solution_score(current_sol);
-                }
-                if (is_feasible(current_sol) &&
-                    current_sol.total_makespan + 1e-12 < best_feasible_makespan) {
-                    best_feasible_makespan = current_sol.total_makespan;
-                    best_feasible_solution = current_sol;
-                    best_makespan = best_feasible_makespan;
-                    //updated_edge_records(current_sol);
-                    //updated_elite_set(current_sol);
-                    best_solution_score_now = neighbor_score;
-                }
-                update_penalties(current_sol);
-                local_iter++;
-            }*/
-
-            // Intensification via local search on all neighborhoods:
-            vector<int> neighborhood_order(NUM_NEIGHBORHOODS);
-            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
-                neighborhood_order[i] = i;
-            }
-            sort(neighborhood_order.begin(), neighborhood_order.end(), [&](int a, int b) {
-                return weight[a] > weight[b];
-            });
-            //testing: yes intentification
-            bool improved = true;
-            //bool improved = false;
-            int limit_intensification = 0;
-            while (improved && limit_intensification < 20){ 
-                improved = false;
-                for (int ni : neighborhood_order) {
-                    Solution neighbor;
-                    limit_intensification++;
-                    if (limit_intensification >= 21) break;
-                    if (scoring_mode_iter == 1){
-                        neighbor = local_search(current_sol, ni, 0, best_solution_score_now, solution_score_l2_norm);
-                        //neighbor = recalculate_solution(neighbor);
-                        double neighbor_score = solution_score_l2_norm(neighbor);
-                        double current_sol_score = solution_score_l2_norm(current_sol);
-                        if (neighbor_score + 1e-12 < current_sol_score ||
-                            (std::abs(neighbor_score - current_sol_score) <= 1e-12 &&
-                            neighbor.total_makespan + 1e-12 < current_sol.total_makespan)) {
-                            
-                            current_sol = neighbor;
-                            improved = true;
-                            cout << "Improved on neighborhood " << ni << " to total score " << neighbor_score << " with makespan " << neighbor.total_makespan << "\n";
-                            //updated_edge_records(neighbor);
-                            
-                            // [FIX] Update best score tracker for subsequent searches
-                            if (neighbor_score < best_solution_score_now) {
-                                best_solution_score_now = neighbor_score;
-                            }
-                        }
-                    }
-                    else {
-                        neighbor = local_search(current_sol, ni, 0, best_solution_score_now, solution_score_makespan);
-                        //neighbor = recalculate_solution(neighbor);
-                        double neighbor_score = solution_score_makespan(neighbor);
-                        double current_sol_score = solution_score_makespan(current_sol);
-
-                        if (neighbor_score + 1e-12 < current_sol_score ||
-                            (std::abs(neighbor_score - current_sol_score) <= 1e-12 &&
-                            neighbor.total_makespan + 1e-12 < current_sol.total_makespan)) {
-                            
-                            current_sol = neighbor;
-                            improved = true;
-                            //updated_edge_records(neighbor);
-                            cout << "Improved on neighborhood " << ni << " to total score " << neighbor_score << " with makespan " << neighbor.total_makespan << "\n";
-
-                            // [FIX] Update best score tracker for subsequent searches
-                            if (neighbor_score < best_solution_score_now) {
-                                best_solution_score_now = neighbor_score;
-                            }
-                        }
-                    }
-                }
-            }
-            if (scoring_mode_iter == 1) {
-                if (solution_score_l2_norm(current_sol) + 1e-12 < best_segment_score ||
-                    (std::abs(solution_score_l2_norm(current_sol) - best_segment_score) <= 1e-12 &&
-                        current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
-                    best_segment_sol = current_sol;
-                    best_segment_score = solution_score_l2_norm(current_sol);
-                }
-            }
-            else if (scoring_mode_iter == 0){
-                if (solution_score_makespan(current_sol) + 1e-12 < best_segment_score ||
-                    (std::abs(solution_score_makespan(current_sol) - best_segment_score) <= 1e-12 &&
-                        current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
-                    best_segment_sol = current_sol;
-                    best_segment_score = solution_score_makespan(current_sol);
-                }
-            }
-            else if (scoring_mode_iter == 2){
-                if (solution_score_total_time(current_sol) + 1e-12 < best_segment_score ||
-                    (std::abs(solution_score_total_time(current_sol) - best_segment_score) <= 1e-12 &&
-                        current_sol.total_makespan + 1e-12 < best_segment_sol.total_makespan)) {
-                    best_segment_sol = current_sol;
-                    best_segment_score = solution_score_total_time(current_sol);
-                }
-            }
 
             // Chance to restart from best solution or do destroy and repair:
-            double restart_chance = 0.1;
-            if (((double) rand() / (RAND_MAX)) < restart_chance) {
-                current_sol = destroy_worst_repair_random(best_solution);
-            }
-            else {
-                current_sol = destroy_worst_repair_random(current_sol);
-            }
+            current_sol = destroy_worst_repair_random(current_sol);
+            
+            destroy_repair_count++; 
             
             current_sol = recalculate_solution(current_sol);
-            cout << "Applied perturbation at iter " << iter << ", new makespan: " << current_sol.total_makespan << "\n";
+            cout << "Applied perturbation at iter " << iter << ", new makespan: " << current_sol.total_makespan << "\n"; 
             no_improve_iters = 0;
             
             // Clear Tabu Lists
@@ -6180,16 +6019,39 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
 
         // Periodic Weight & Segment Mode Update
         if (iter % CFG_MAX_ITER_PER_SEGMENT == 0) {
+
             cout << "=== End of Segment " << (iter / CFG_MAX_ITER_PER_SEGMENT) << " ===\n";
             cout << "Best Current Solution Score: " << best_solution_score_now << " with makespan " << best_solution.total_makespan << "\n";
             cout << "Current Solution Score: " << current_score << " with makespan " << current_sol.total_makespan << "\n";
+            cout << "Current mode: " << (scoring_mode_iter == 0 ? "Makespan" : (scoring_mode_iter == 1 ? "L2 Norm" : "Total Time")) << "\n";
             cout << "Current Weights and Count of neighborhoods: ";
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
                 cout << "N" << i << ": " << weight[i] << " " << count[i] << " | ";
             }
             cout << "\n";
-            if (scoring_mode_iter == 1) scoring_mode_iter = 1;
-            else if (scoring_mode_iter == 0) scoring_mode_iter = 1;
+            if (best_segment_score + 1e-12 < best_solution_score_now) {
+                no_improve_segments = 0;
+                best_solution = best_segment_sol;
+                best_solution_score_now = best_segment_score;
+            }
+            else {
+                no_improve_segments++;
+            }
+
+            if (no_improve_segments >= 2) {
+                // If no improvement for 2 consecutive segments, switch scoring mode to encourage different search behavior
+                if (scoring_mode_iter == 1) {
+                    scoring_mode_iter = 2;
+                }
+                else if (scoring_mode_iter == 2) {
+                    scoring_mode_iter = 1;
+                }
+                no_improve_segments = 0;
+                best_solution_score_now = scoring_mode_iter == 0 ? solution_score_makespan(best_solution) :
+                                            (scoring_mode_iter == 1 ? solution_score_l2_norm(best_solution) : solution_score_total_time(best_solution));
+            }
+
+            // Update weights based on scores
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
                 if (count[i] != 0) {
                     weight[i] = (1.0 - gamma4) * weight[i] + gamma4 * (score[i] / count[i]);
@@ -6210,6 +6072,29 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
 
         iter++;
     }
+
+    // Post optimization:
+    /* Solution improved_feasible = best_feasible_solution;
+    if (best_feasible_makespan < std::numeric_limits<double>::infinity()) {
+        int post_opt_loop = 20;
+        while (post_opt_loop < 0) { // Limit number of post-optimization passes
+             post_opt_loop++;
+             bool improved_in_pass = false;
+            for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
+                improved_feasible = local_search(improved_feasible, i, iter, best_feasible_makespan, solution_score_makespan);
+                improved_feasible = recalculate_solution(improved_feasible);
+                if (improved_feasible.total_makespan + 1e-12 < best_feasible_makespan) {
+                    improved_in_pass = true;
+                    best_feasible_solution = improved_feasible;
+                    best_feasible_makespan = improved_feasible.total_makespan;
+                    cout << "Post-Optimization Improved Best Feasible Makespan: " << best_feasible_makespan << "\n";
+                }
+            }
+            if (!improved_in_pass) break; // Exit if no improvement in this pass
+        }
+    } */
+
+    //cout << "Destroy/Repair applied " << destroy_repair_count << " times during the search.\n";
 
     if (best_feasible_makespan < std::numeric_limits<double>::infinity()) {
         return best_feasible_solution;
@@ -6308,19 +6193,19 @@ int main(int argc, char* argv[]) {
     auto_tune = true;
     if (auto_tune) {
         if (n <= 20) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
-        } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
+        } else if (n <= 100) {
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
         } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
             CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
             CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
