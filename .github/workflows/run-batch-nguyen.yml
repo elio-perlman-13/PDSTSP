@@ -1,11 +1,11 @@
-name: Run tabubu over instance VRP set
+name: Run tabubu_nguyen2022 over Nguyen PDSTSP set
 
 on:
   workflow_dispatch:
-#  push:
-#    branches:
-#      - main
-#      - restore-branch
+  push:
+    branches:
+      - main
+      - restore-branch
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -20,24 +20,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Build JSON matrix from instance/*.txt
+      - name: Build JSON matrix from pdstsp-upload/instances/tsplib/{eil101,gr120,pr152,gr229}-*.txt
         id: set-matrix
         run: |
           items=()
-          for f in instance/*.txt; do
-            if [ -f "$f" ]; then
-              base=$(basename "$f" .txt)
-
-              # escape quotes in path just in case
-              file=$(printf '%s' "$f" | sed 's/"/\\"/g')
-              base=$(printf '%s' "$base" | sed 's/"/\\"/g')
-              items+=("{\"file\":\"$file\",\"base\":\"$base\"}")
-            fi
+          for prefix in eil101 gr120 pr152 gr229; do
+            for f in pdstsp-upload/instances/tsplib/${prefix}-*.txt; do
+              if [ -f "$f" ]; then
+                base=$(basename "$f" .txt)
+                file=$(printf '%s' "$f" | sed 's/"/\\"/g')
+                base=$(printf '%s' "$base" | sed 's/"/\\"/g')
+                items+=("{\"file\":\"$file\",\"base\":\"$base\"}")
+              fi
+            done
           done
           if [ ${#items[@]} -eq 0 ]; then
-            echo "No .txt instance files found under instance/"; exit 1
+            echo "No instance files found"; exit 1
           fi
-          # join items with commas to produce valid JSON array
           matrix_json="$(printf '%s,' "${items[@]}")"
           matrix_json="[${matrix_json%,}]"
           echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
@@ -51,57 +50,56 @@ jobs:
 
       - name: Compile solver
         run: |
-          g++ -O3 -std=c++20 tabubu_old_config.cpp -o tabubu_old_config
+          g++ -O3 -std=c++20 tabubu_nguyen2022.cpp -o tabubu_nguyen2022
 
       - name: Upload solver binary
         uses: actions/upload-artifact@v4
         with:
-          name: solver-bin
-          path: tabubu_old_config
+          name: solver-nguyen-bin
+          path: tabubu_nguyen2022
           retention-days: 1
 
   run-instance:
-    name: Run instance ${{ matrix.base }}
-    needs: [prepare, build] # Wait for build to finish
+    name: Run ${{ matrix.base }}
+    needs: [prepare, build]
     strategy:
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
-      max-parallel: 64
+      max-parallel: 60
     runs-on: ubuntu-latest
     timeout-minutes: 359
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      # Download the pre-built binary
       - name: Download solver
         uses: actions/download-artifact@v4
         with:
-          name: solver-bin
+          name: solver-nguyen-bin
 
       - name: Make executable
-        run: chmod +x tabubu_old_config
+        run: chmod +x tabubu_nguyen2022
 
-      - name: Run tabubu on instance
-        timeout-minutes: 355 # slightly less than job timeout to allow cleanup steps to run
+      - name: Run solver on instance
+        timeout-minutes: 355
         run: |
           mkdir -p outputs
-          ./tabubu_old_config "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
+          ./tabubu_nguyen2022 "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
 
-      - name: Prepare outputs
+      - name: Collect outputs
         if: always()
         run: |
-          # copy solver's best output if created
           if [[ -f output_solution_best.txt ]]; then
             cp output_solution_best.txt "outputs/${{ matrix.base }}_best.txt"
           fi
 
-      - name: Upload per-instance artifact
+      - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.base }}-tabubu-results
+          name: ${{ matrix.base }}-nguyen-results
           path: |
+            outputs/${{ matrix.base }}.log
             outputs/${{ matrix.base }}_best.txt
             outputs/${{ matrix.base }}.log
           if-no-files-found: warn
@@ -127,20 +125,18 @@ jobs:
         run: |
           rm -rf summary || true
           mkdir -p summary
-          # copy only per-instance *_best.txt into per-artifact subfolders
           for a in all_artifacts/*; do
             name=$(basename "$a")
             mkdir -p "summary/$name"
-            # copy only files ending with _best.txt
             find "$a" -type f -name '*_best.txt' -exec cp {} "summary/$name/" \; || true
           done
 
       - name: Create final compressed summary
         run: |
-          tar -czf tabubu_all_instances_summary.tar.gz -C summary .
+          tar -czf tabubu_saleu_all_instances_summary.tar.gz -C summary .
 
       - name: Upload consolidated summary
         uses: actions/upload-artifact@v4
         with:
-          name: tabubu_all_instances_summary
-          path: tabubu_all_instances_summary.tar.gz
+          name: tabubu_saleu_all_instances_summary
+          path: tabubu_saleu_all_instances_summary.tar.gz
