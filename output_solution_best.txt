@@ -1,14 +1,14 @@
-Initial solution cost: 682.982587
-Improved solution cost: 564.000000
-Worst solution cost: 580.000000
-Mean solution cost: 572.749432
-Mean elapsed time: 6.033913 seconds
+Initial solution cost: 682.000000
+Improved solution cost: 568.000000
+Worst solution cost: 584.000000
+Mean solution cost: 574.000000
+Mean elapsed time: 1.228250 seconds
 Final solution feasibility: FEASIBLE
 Solution Details:
 Truck Routes:
-Truck 1: 0 89 6 94 96 99 59 93 85 91 100 98 37 92 97 87 57 15 43 42 14 44 86 16 61 5 84 17 45 8 82 48 47 49 36 19 11 63 32 90 10 30 20 66 51 9 71 35 34 78 81 33 79 3 77 68 80 54 4 55 25 39 67 23 56 75 22 74 72 73 21 40 58 53 101 0 |Truck Time: 564.000000|564.000000,0.000000,0.000000,0.000000
+Truck 1: 0 27 69 70 30 20 66 65 35 71 9 51 33 81 34 78 79 3 77 68 80 54 55 25 39 56 75 22 74 72 21 73 2 57 15 43 42 14 44 16 61 85 91 100 37 98 92 97 95 94 96 99 59 93 5 84 17 45 8 82 48 47 36 49 64 19 11 63 32 90 10 62 88 31 0 |Truck Time: 568.000000|568.000000,0.000000,0.000000,0.000000
 Drone Routes:
-Drone 1: 38 60 26 27 69 31 76 18 1 13 28 52 29 24 83 88 70 41 62 12 50 7 65 46 64 95 2 |Drone Time: 563.115623|563.115623,0.000000,0.000000,0.000000
-Total truck distance: 564.000000 km
-Total drone distance: 1126.231247 km
- Total cost=564.000000, Deadline violation=0.000000, Energy violation=0.000000, Capacity violation=0.000000, Makespan=564.000000
+Drone 1: 60 76 52 28 1 18 89 13 40 6 58 26 50 53 12 41 83 24 7 86 67 4 23 87 29 38 46 101 |Drone Time: 567.723767|567.723767,0.000000,0.000000,0.000000
+Total truck distance: 568.000000 km
+Total drone distance: 1135.447534 km
+ Total cost=568.000000, Deadline violation=0.000000, Energy violation=0.000000, Capacity violation=0.000000, Makespan=568.000000

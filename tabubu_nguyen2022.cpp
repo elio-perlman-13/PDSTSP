@@ -89,7 +89,7 @@ static map<vector<int>, int> tabu_list_ejection; // keyed by sorted customer seq
 static int TABU_TENURE_EJECTION = 0; // default tenure for ejection chain moves
 const int NUM_NEIGHBORHOODS = 8;
 const int NUM_OF_INITIAL_SOLUTIONS = 200;
-const int MAX_SEGMENT = 200;
+const int MAX_SEGMENT = 500;
 const int MAX_NO_IMPROVE = 1000;
 const int MAX_ITER_PER_SEGMENT = 1000;
 const double gamma1 = 1.0;
@@ -263,7 +263,7 @@ void input(string filepath){
     for (const auto& r : rows) {
         loc[r.id] = Point(r.x, r.y, r.id);
         if (r.id > 0) {
-            served_by_drone[r.id] = r.drone_eligible;
+            served_by_drone[r.id] = 1 - r.drone_eligible;
         }
     }
 
@@ -4059,7 +4059,7 @@ int main(int argc, char* argv[]) {
     // Optional auto-tuning based on instance size if requested
     // For now, set auto-tune to always true
     auto_tune = true;
-    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 1800.0; // 30 minutes default; overridden by --time-limit
+    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 600.0; // 30 minutes default; overridden by --time-limit
     if (auto_tune) {
         if (n <= 50) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
