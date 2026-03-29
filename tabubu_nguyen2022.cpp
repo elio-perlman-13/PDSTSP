@@ -4060,7 +4060,7 @@ int main(int argc, char* argv[]) {
     // Optional auto-tuning based on instance size if requested
     // For now, set auto-tune to always true
     auto_tune = true;
-    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 300.0; // 10 minutes default; overridden by --time-limit
+    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 1800.0; // 10 minutes default; overridden by --time-limit
     if (auto_tune) {
         if (n <= 50) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
