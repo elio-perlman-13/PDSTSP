@@ -846,6 +846,7 @@ Solution generate_initial_solution(){
         }
 
         for (int i = 0; i < d; ++i) {
+            if (served_by_drone[cust] == 0) continue;
             // just push it in the back for drones
             vi temp_route = sol.drone_routes[i];
             temp_route.push_back(cust);
@@ -4059,7 +4060,7 @@ int main(int argc, char* argv[]) {
     // Optional auto-tuning based on instance size if requested
     // For now, set auto-tune to always true
     auto_tune = true;
-    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 1800.0; // 30 minutes default; overridden by --time-limit
+    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 600.0; // 10 minutes default; overridden by --time-limit
     if (auto_tune) {
         if (n <= 50) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
@@ -4194,7 +4195,7 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-// Run with: g++ -O3 -std=c++20 tabubu_nguyen2022.cpp -o tabubu_nguyen2022 && ./tabubu_nguyen2022 /workspaces/PDSTSP/pdstsp-upload/instances/tsplib/att48-0-2-1-1.txt
+// Run with: g++ -O3 -std=c++20 tabubu_nguyen2022.cpp -o tabubu_nguyen2022 && ./tabubu_nguyen2022 /workspaces/PDSTSP/pdstsp-upload/instances/tsplib/eil101-0-2-1-1.txt
 // Plotting: python plot_iteration.py --input output.txt --save iterations.png
 /*    saleu = {
         "CMT1": 166,
