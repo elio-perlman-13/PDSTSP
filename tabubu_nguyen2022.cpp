@@ -3288,6 +3288,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
         if (integrity_ok && !check_solution_integrity(neighbor)) {
             cout << "Iter " << iter << " Integrity Check Failed. Skipping.\n";
              integrity_ok = false;
+             exit(1); // Critical failure - exit immediately for debugging
         }
 
         if (!integrity_ok) {
@@ -3346,10 +3347,10 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
                 consecutive_failed_perturbations = 0;
             cost_at_last_perturbation = best_feasible_cost;
 
-            // Adaptive fraction: grows slowly, capped at 0.2
-            double destroy_fraction = min(0.2, 0.1 + 0.01 * consecutive_failed_perturbations);
+            // Adaptive fraction: grows slowly, capped at 0.15
+            double destroy_fraction = min(0.15, 0.05 + 0.01 * consecutive_failed_perturbations);
 
-            current_sol = destroy_worst_repair_random(best_feasible_solution, destroy_fraction);
+            current_sol = destroy_worst_repair_random(current_sol, destroy_fraction);
 
             current_sol = recalculate_solution(current_sol);
             no_improve_iters = 0;
@@ -3403,14 +3404,15 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
                     tabu_list_21.clear();
                     tabu_list_ejection.clear();
                     // Reset current solution to best feasible to re-anchor search in the new landscape
-            if (best_feasible_cost >= cost_at_last_perturbation - 1e-9) consecutive_failed_perturbations++;
-            else consecutive_failed_perturbations = 0;
-            cost_at_last_perturbation = best_feasible_cost;
+                    if (best_feasible_cost >= cost_at_last_perturbation - 1e-9) consecutive_failed_perturbations++;
+                    else consecutive_failed_perturbations = 0;
+                    cost_at_last_perturbation = best_feasible_cost;
 
-            // Adaptive fraction: grows slowly, capped at 0.2
-            double destroy_fraction = min(0.2, 0.1 + 0.01 * consecutive_failed_perturbations);
+                    // Adaptive fraction: grows slowly, capped at 0.15
+                    double destroy_fraction = min(0.15, 0.05 + 0.01 * consecutive_failed_perturbations);
 
-            current_sol = destroy_worst_repair_random(best_feasible_solution, destroy_fraction);
+                    Solution base_solution = (consecutive_failed_perturbations >= 3 && consecutive_failed_perturbations % 3 == 0) ? best_feasible_solution : current_sol;
+                    current_sol = destroy_worst_repair_random(base_solution, destroy_fraction);
                     current_sol = recalculate_solution(current_sol);
                     // Re-anchor aspiration criterion to the new fitness landscape
                     best_solution_score_now = calculate_score_with_penalties(
@@ -3481,7 +3483,41 @@ void print_distance_matrix(){
     cout << "END_DISTANCE_MATRIX\n";
 }
 
-void check_benchmark_solution(const std::string& benchmark_string) {
+// Extracts the BKS solution block for the given instance filepath from bks.txt.
+// Returns a string suitable for passing to check_benchmark_solution(), or "" if not found.
+static std::string load_bks_for_instance(const std::string& instance_filepath,
+                                          const std::string& bks_filepath = "/workspaces/PDSTSP/pdstsp-upload/bks.txt") {
+    size_t sep = instance_filepath.find_last_of("/\\");
+    std::string filename = (sep == std::string::npos) ? instance_filepath : instance_filepath.substr(sep + 1);
+
+    std::ifstream fin(bks_filepath);
+    if (!fin) {
+        std::cerr << "Warning: Cannot open BKS file: " << bks_filepath << "\n";
+        return "";
+    }
+
+    std::string line;
+    bool in_block = false;
+    std::string block;
+
+    while (std::getline(fin, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!in_block) {
+            if (line == filename) in_block = true;
+        } else {
+            if (line.empty()) break;
+            block += line + "\n";
+        }
+    }
+
+    if (!in_block) {
+        std::cerr << "Warning: No BKS entry found for: " << filename << "\n";
+        return "";
+    }
+    return block;
+}
+
+Solution check_benchmark_solution(const std::string& benchmark_string) {
     std::cout << "\n--- Checking Benchmark Solution ---\n";
     std::stringstream ss(benchmark_string);
     std::string line;
@@ -3498,7 +3534,7 @@ void check_benchmark_solution(const std::string& benchmark_string) {
 
         if (type.empty() || (type[0] != 'T' && type[0] != 'D')) continue;
 
-        int vehicle_id = std::stoi(type.substr(1));
+        int vehicle_id = (type.size() > 1) ? std::stoi(type.substr(1)) : 0;
         double route_time; // This is the time from the benchmark file, we'll ignore it and recalculate
         line_ss >> route_time;
 
@@ -3530,11 +3566,10 @@ void check_benchmark_solution(const std::string& benchmark_string) {
 
     // Recalculate all metrics for the parsed solution
     Solution recalculated_sol = recalculate_solution(sol);
-
-    std::cout << "Parsed and Recalculated Benchmark Solution:\n";
-    print_solution_stream(recalculated_sol, std::cout);
-    std::cout << "--- Finished Checking Benchmark Solution ---\n\n";
+    return recalculated_sol;
 }
+
+
 
 static bool write_iteration_file(const std::string& out_path, const vd& iter_current, const vd& iter_best, const vector<bool>& iter_feasible) {
     std::ofstream ofs(out_path);
@@ -3602,6 +3637,8 @@ int main(int argc, char* argv[]) {
         return 0; // only print distance matrix and exit
     }
 
+
+
     // Optional auto-tuning based on instance size if requested
     // For now, set auto-tune to always true
     auto_tune = true;
@@ -3609,21 +3646,21 @@ int main(int argc, char* argv[]) {
     if (auto_tune) {
         if (n <= 50) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 500);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
         } else if (n <= 200) {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 500);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
         } else {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 500);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         }
     }
@@ -3659,6 +3696,10 @@ int main(int argc, char* argv[]) {
         completed_attempts++;
         cout << "\n=== Attempt " << completed_attempts << " ===\n";
         Solution initial_solution = generate_initial_solution();
+        std::string bks = load_bks_for_instance(input_file);
+        if (!bks.empty()) {
+            initial_solution = check_benchmark_solution(bks);
+        }
         vd iter_current, iter_best;
         vector<bool> current_feasibility;
 
