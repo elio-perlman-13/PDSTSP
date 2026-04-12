@@ -3696,10 +3696,10 @@ int main(int argc, char* argv[]) {
         completed_attempts++;
         cout << "\n=== Attempt " << completed_attempts << " ===\n";
         Solution initial_solution = generate_initial_solution();
-        std::string bks = load_bks_for_instance(input_file);
+/*         std::string bks = load_bks_for_instance(input_file);
         if (!bks.empty()) {
             initial_solution = check_benchmark_solution(bks);
-        }
+        } */
         vd iter_current, iter_best;
         vector<bool> current_feasibility;
 
@@ -3783,25 +3783,73 @@ int main(int argc, char* argv[]) {
 
 // Run with: g++ -O3 -std=c++20 tabubu_nguyen2022.cpp -o tabubu_nguyen2022 && ./tabubu_nguyen2022 /workspaces/PDSTSP/pdstsp-upload/instances/tsplib/eil101-0-2-1-1.txt
 // Plotting: python plot_iteration.py --input output.txt --save iterations.png
-/*    saleu = {
-        "CMT1": 166,
-        "CMT2": 130.23,
-        "CMT3": 184,
-        "CMT4": 160.38,
-        "CMT5": 138,
-        "E-n51-k5": 168,
-        "E-n76-k8": 154,
-        "E-n101-k8": 184,
-        "M-n151-k12": 154,
-        "M-n200-k16": 144,
-        "P-n51-k10": 111.07,
-        "P-n55-k7": 126,
-        "P-n60-k10": 114,
-        "P-n65-k10": 126,
-        "P-n70-k10": 129.29,
-        "P-n76-k5": 200,
-        "P-n101-k4": 342,
-        "X-n110-k13": 1864,
-        "X-n115-k10": 2258,
-        "X-n139-k10": 2492,
-    } */
+/*   data = [
+    # Table 12 - eil101
+    {"Instance": "eil101-80-2-1-1", "Best Found": get_best_cost("eil101-80-2-1-1"), "MDFGQ18": 564.00, "DMN20": 564.00, "SISSRs": 564.00},
+    {"Instance": "eil101-80-2-1-2", "Best Found": get_best_cost("eil101-80-2-1-2"), "MDFGQ18": 650.00, "DMN20": 648.98, "SISSRs": 648.98},
+    {"Instance": "eil101-0-2-1-1", "Best Found": get_best_cost("eil101-0-2-1-1"), "MDFGQ18": 819.00, "DMN20": 819.00, "SISSRs": 819.00},
+    {"Instance": "eil101-20-2-1-1", "Best Found": get_best_cost("eil101-20-2-1-1"), "MDFGQ18": 738.00, "DMN20": 736.00, "SISSRs": 736.00},
+    {"Instance": "eil101-40-2-1-1", "Best Found": get_best_cost("eil101-40-2-1-1"), "MDFGQ18": 646.00, "DMN20": 646.00, "SISSRs": 646.00},
+    {"Instance": "eil101-60-2-1-1", "Best Found": get_best_cost("eil101-60-2-1-1"), "MDFGQ18": 578.00, "DMN20": 578.00, "SISSRs": 578.00},
+    {"Instance": "eil101-100-2-1-1", "Best Found": get_best_cost("eil101-100-2-1-1"), "MDFGQ18": 561.41, "DMN20": 560.00, "SISSRs": 560.00},
+    {"Instance": "eil101-80-1-1-1", "Best Found": get_best_cost("eil101-80-1-1-1"), "MDFGQ18": 650.00, "DMN20": 650.00, "SISSRs": 650.00},
+    {"Instance": "eil101-80-3-1-1", "Best Found": get_best_cost("eil101-80-3-1-1"), "MDFGQ18": 504.00, "DMN20": 504.00, "SISSRs": 503.19},
+    {"Instance": "eil101-80-4-1-1", "Best Found": get_best_cost("eil101-80-4-1-1"), "MDFGQ18": 456.00, "DMN20": 456.00, "SISSRs": 456.00},
+    {"Instance": "eil101-80-5-1-1", "Best Found": get_best_cost("eil101-80-5-1-1"), "MDFGQ18": 420.83, "DMN20": 421.00, "SISSRs": 420.83},
+    {"Instance": "eil101-80-2-2-1", "Best Found": get_best_cost("eil101-80-2-2-1"), "MDFGQ18": 456.00, "DMN20": 456.00, "SISSRs": 456.00},
+    {"Instance": "eil101-80-2-3-1", "Best Found": get_best_cost("eil101-80-2-3-1"), "MDFGQ18": 395.00, "DMN20": 395.00, "SISSRs": 395.00},
+    {"Instance": "eil101-80-2-4-1", "Best Found": get_best_cost("eil101-80-2-4-1"), "MDFGQ18": 346.68, "DMN20": 346.00, "SISSRs": 346.00},
+    {"Instance": "eil101-80-2-5-1", "Best Found": get_best_cost("eil101-80-2-5-1"), "MDFGQ18": 319.74, "DMN20": 318.00, "SISSRs": 318.00},
+    
+    # Table 13 - gr120
+    {"Instance": "gr120-80-2-1-1", "Best Found": get_best_cost("gr120-80-2-1-1"), "MDFGQ18": 1414.00, "DMN20": 1420.76, "SISSRs": 1414.00},
+    {"Instance": "gr120-80-2-1-2", "Best Found": get_best_cost("gr120-80-2-1-2"), "MDFGQ18": 1730.00, "DMN20": 1726.00, "SISSRs": 1726.00},
+    {"Instance": "gr120-0-2-1-1", "Best Found": get_best_cost("gr120-0-2-1-1"), "MDFGQ18": 2006.00, "DMN20": 2006.00, "SISSRs": 2006.00},
+    {"Instance": "gr120-20-2-1-1", "Best Found": get_best_cost("gr120-20-2-1-1"), "MDFGQ18": 1736.00, "DMN20": 1736.00, "SISSRs": 1736.00},
+    {"Instance": "gr120-40-2-1-1", "Best Found": get_best_cost("gr120-40-2-1-1"), "MDFGQ18": 1624.00, "DMN20": 1624.00, "SISSRs": 1624.00},
+    {"Instance": "gr120-60-2-1-1", "Best Found": get_best_cost("gr120-60-2-1-1"), "MDFGQ18": 1494.00, "DMN20": 1494.00, "SISSRs": 1494.00},
+    {"Instance": "gr120-100-2-1-1", "Best Found": get_best_cost("gr120-100-2-1-1"), "MDFGQ18": 1414.80, "DMN20": 1416.00, "SISSRs": 1414.00},
+    {"Instance": "gr120-80-1-1-1", "Best Found": get_best_cost("gr120-80-1-1-1"), "MDFGQ18": 1592.00, "DMN20": 1592.00, "SISSRs": 1592.00},
+    {"Instance": "gr120-80-3-1-1", "Best Found": get_best_cost("gr120-80-3-1-1"), "MDFGQ18": 1289.27, "DMN20": 1291.00, "SISSRs": 1284.74},
+    {"Instance": "gr120-80-4-1-1", "Best Found": get_best_cost("gr120-80-4-1-1"), "MDFGQ18": 1189.71, "DMN20": 1192.00, "SISSRs": 1186.00},
+    {"Instance": "gr120-80-5-1-1", "Best Found": get_best_cost("gr120-80-5-1-1"), "MDFGQ18": 1112.00, "DMN20": 1114.00, "SISSRs": 1112.00},
+    {"Instance": "gr120-80-2-2-1", "Best Found": get_best_cost("gr120-80-2-2-1"), "MDFGQ18": 1188.51, "DMN20": 1197.00, "SISSRs": 1186.00},
+    {"Instance": "gr120-80-2-3-1", "Best Found": get_best_cost("gr120-80-2-3-1"), "MDFGQ18": 1044.65, "DMN20": 1050.00, "SISSRs": 1044.00},
+    {"Instance": "gr120-80-2-4-1", "Best Found": get_best_cost("gr120-80-2-4-1"), "MDFGQ18": 946.04, "DMN20": 946.04, "SISSRs": 943.00},
+    {"Instance": "gr120-80-2-5-1", "Best Found": get_best_cost("gr120-80-2-5-1"), "MDFGQ18": 880.00, "DMN20": 881.00, "SISSRs": 878.69},
+    
+    # Table 14 - pr152
+    {"Instance": "pr152-80-2-1-1", "Best Found": get_best_cost("pr152-80-2-1-1"), "MDFGQ18": 76008.00, "DMN20": 76008.00, "SISSRs": 76008.00},
+    {"Instance": "pr152-80-2-1-2", "Best Found": get_best_cost("pr152-80-2-1-2"), "MDFGQ18": 76556.00, "DMN20": 76556.00, "SISSRs": 76556.00},
+    {"Instance": "pr152-0-2-1-1", "Best Found": get_best_cost("pr152-0-2-1-1"), "MDFGQ18": 86596.00, "DMN20": 86596.00, "SISSRs": 86596.00},
+    {"Instance": "pr152-20-2-1-1", "Best Found": get_best_cost("pr152-20-2-1-1"), "MDFGQ18": 82504.00, "DMN20": 82504.00, "SISSRs": 82504.00},
+    {"Instance": "pr152-40-2-1-1", "Best Found": get_best_cost("pr152-40-2-1-1"), "MDFGQ18": 77372.00, "DMN20": 77316.00, "SISSRs": 77236.00},
+    {"Instance": "pr152-60-2-1-1", "Best Found": get_best_cost("pr152-60-2-1-1"), "MDFGQ18": 76786.00, "DMN20": 76786.00, "SISSRs": 76758.00},
+    {"Instance": "pr152-100-2-1-1", "Best Found": get_best_cost("pr152-100-2-1-1"), "MDFGQ18": 74468.00, "DMN20": 74302.00, "SISSRs": 74302.00},
+    {"Instance": "pr152-80-1-1-1", "Best Found": get_best_cost("pr152-80-1-1-1"), "MDFGQ18": 80164.00, "DMN20": 79952.00, "SISSRs": 79952.00},
+    {"Instance": "pr152-80-3-1-1", "Best Found": get_best_cost("pr152-80-3-1-1"), "MDFGQ18": 72936.00, "DMN20": 72936.00, "SISSRs": 72936.00},
+    {"Instance": "pr152-80-4-1-1", "Best Found": get_best_cost("pr152-80-4-1-1"), "MDFGQ18": 70412.00, "DMN20": 70328.00, "SISSRs": 70148.00},
+    {"Instance": "pr152-80-5-1-1", "Best Found": get_best_cost("pr152-80-5-1-1"), "MDFGQ18": 67798.00, "DMN20": 67798.00, "SISSRs": 67858.00},
+    {"Instance": "pr152-80-2-2-1", "Best Found": get_best_cost("pr152-80-2-2-1"), "MDFGQ18": 70244.00, "DMN20": 70405.45, "SISSRs": 70148.00},
+    {"Instance": "pr152-80-2-3-1", "Best Found": get_best_cost("pr152-80-2-3-1"), "MDFGQ18": 65062.10, "DMN20": 64720.30, "SISSRs": 64550.00},
+    {"Instance": "pr152-80-2-4-1", "Best Found": get_best_cost("pr152-80-2-4-1"), "MDFGQ18": 60027.40, "DMN20": 59772.00, "SISSRs": 59756.00},
+    {"Instance": "pr152-80-2-5-1", "Best Found": get_best_cost("pr152-80-2-5-1"), "MDFGQ18": 56336.00, "DMN20": 56262.00, "SISSRs": 56178.00},
+    
+    # Table 15 - gr229
+    {"Instance": "gr229-80-2-1-1", "Best Found": get_best_cost("gr229-80-2-1-1"), "MDFGQ18": 1794.84, "DMN20": 1785.86, "SISSRs": 1780.86},
+    {"Instance": "gr229-80-2-1-2", "Best Found": get_best_cost("gr229-80-2-1-2"), "MDFGQ18": 1913.74, "DMN20": 1911.58, "SISSRs": 1911.58},
+    {"Instance": "gr229-0-2-1-1", "Best Found": get_best_cost("gr229-0-2-1-1"), "MDFGQ18": 2020.16, "DMN20": 2017.24, "SISSRs": 2017.24},
+    {"Instance": "gr229-20-2-1-1", "Best Found": get_best_cost("gr229-20-2-1-1"), "MDFGQ18": 1862.76, "DMN20": 1860.14, "SISSRs": 1860.14},
+    {"Instance": "gr229-40-2-1-1", "Best Found": get_best_cost("gr229-40-2-1-1"), "MDFGQ18": 1828.02, "DMN20": 1827.02, "SISSRs": 1824.80},
+    {"Instance": "gr229-60-2-1-1", "Best Found": get_best_cost("gr229-60-2-1-1"), "MDFGQ18": 1807.50, "DMN20": 1797.37, "SISSRs": 1796.62},
+    {"Instance": "gr229-100-2-1-1", "Best Found": get_best_cost("gr229-100-2-1-1"), "MDFGQ18": 1498.05, "DMN20": 1496.29, "SISSRs": 1496.29},
+    {"Instance": "gr229-80-1-1-1", "Best Found": get_best_cost("gr229-80-1-1-1"), "MDFGQ18": 1865.00, "DMN20": 1863.12, "SISSRs": 1861.98},
+    {"Instance": "gr229-80-3-1-1", "Best Found": get_best_cost("gr229-80-3-1-1"), "MDFGQ18": 1735.16, "DMN20": 1725.45, "SISSRs": 1716.74},
+    {"Instance": "gr229-80-4-1-1", "Best Found": get_best_cost("gr229-80-4-1-1"), "MDFGQ18": 1679.33, "DMN20": 1675.82, "SISSRs": 1664.78},
+    {"Instance": "gr229-80-5-1-1", "Best Found": get_best_cost("gr229-80-5-1-1"), "MDFGQ18": 1642.04, "DMN20": 1629.38, "SISSRs": 1620.24},
+    {"Instance": "gr229-80-2-2-1", "Best Found": get_best_cost("gr229-80-2-2-1"), "MDFGQ18": 1686.75, "DMN20": 1673.72, "SISSRs": 1664.78},
+    {"Instance": "gr229-80-2-3-1", "Best Found": get_best_cost("gr229-80-2-3-1"), "MDFGQ18": 1609.90, "DMN20": 1592.52, "SISSRs": 1580.88},
+    {"Instance": "gr229-80-2-4-1", "Best Found": get_best_cost("gr229-80-2-4-1"), "MDFGQ18": 1518.62, "DMN20": 1526.92, "SISSRs": 1511.74},
+    {"Instance": "gr229-80-2-5-1", "Best Found": get_best_cost("gr229-80-2-5-1"), "MDFGQ18": 1483.68, "DMN20": 1467.76, "SISSRs": 1458.74},
+]
+ */
