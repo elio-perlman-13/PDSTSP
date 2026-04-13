@@ -1,4 +1,4 @@
-name: Run tabubu over instance VRP set
+name: Run tabubu over old instance VRP set
 
 on:
   workflow_dispatch:

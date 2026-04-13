@@ -1,0 +1,122 @@
+name: Run tabubu_raj over TSPLIB instances (truck/drone sweep)
+
+on:
+  workflow_dispatch:
+#  push:
+#    branches:
+#      - main
+#      - restore-branch
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    name: Build solver
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Compile solver
+        run: |
+          g++ -O3 -std=c++20 tabubu_raj.cpp -o tabubu_raj
+
+      - name: Upload solver binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: solver-raj-bin
+          path: tabubu_raj
+          retention-days: 1
+
+  run-instance:
+    name: Run ${{ matrix.base }} T${{ matrix.num_truck }} D${{ matrix.num_drone }}
+    needs: build
+    strategy:
+      matrix:
+        base:
+          - att48-80-2-1-1
+          - berlin52-80-2-1-1
+          - eil101-80-2-1-1
+          - gr120-80-2-1-1
+          - gr229-80-2-1-1
+          - pr152-80-2-1-1
+        num_truck: [2, 3]
+        num_drone: [2, 4, 6]
+      max-parallel: 36
+    runs-on: ubuntu-latest
+    timeout-minutes: 359
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download solver
+        uses: actions/download-artifact@v4
+        with:
+          name: solver-raj-bin
+
+      - name: Make executable
+        run: chmod +x tabubu_raj
+
+      - name: Run solver on instance
+        timeout-minutes: 355
+        run: |
+          mkdir -p outputs
+          ./tabubu_raj "pdstsp-upload/instances/tsplib/${{ matrix.base }}.txt" \
+            --num-truck=${{ matrix.num_truck }} \
+            --num-drone=${{ matrix.num_drone }} \
+            > "outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}.log" 2>&1 || true
+
+      - name: Collect outputs
+        if: always()
+        run: |
+          if [[ -f output_solution_best.txt ]]; then
+            cp output_solution_best.txt "outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_best.txt"
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.base }}-T${{ matrix.num_truck }}-D${{ matrix.num_drone }}-raj-results
+          path: |
+            outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}.log
+            outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_best.txt
+          if-no-files-found: warn
+
+  collect-all:
+    name: Collect and compress all artifacts
+    runs-on: ubuntu-latest
+    if: always()
+    needs: run-instance
+    timeout-minutes: 60
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all_artifacts
+
+      - name: List downloaded artifacts
+        run: |
+          echo "Downloaded artifact dirs:"
+          ls -la all_artifacts || true
+
+      - name: Consolidate into summary directory
+        run: |
+          rm -rf summary || true
+          mkdir -p summary
+          for a in all_artifacts/*; do
+            name=$(basename "$a")
+            mkdir -p "summary/$name"
+            find "$a" -type f -name '*_best.txt' -exec cp {} "summary/$name/" \; || true
+          done
+
+      - name: Create final compressed summary
+        run: |
+          tar -czf tabubu_raj_all_instances_summary.tar.gz -C summary .
+
+      - name: Upload consolidated summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabubu_raj_all_instances_summary
+          path: tabubu_raj_all_instances_summary.tar.gz
