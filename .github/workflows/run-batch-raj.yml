@@ -34,16 +34,13 @@ jobs:
     needs: build
     strategy:
       matrix:
-        base:
-          - att48-80-2-1-1
-          - berlin52-80-2-1-1
-          - eil101-80-2-1-1
-          - gr120-80-2-1-1
-          - gr229-80-2-1-1
-          - pr152-80-2-1-1
-        num_truck: [2, 3]
-        num_drone: [2, 4, 6]
-      max-parallel: 36
+        include:
+          - { base: eil101-80-2-1-1, num_truck: 2, num_drone: 2 }
+          - { base: gr120-80-2-1-1,  num_truck: 2, num_drone: 2 }
+          - { base: gr120-80-2-1-1,  num_truck: 2, num_drone: 6 }
+          - { base: pr152-80-2-1-1,  num_truck: 2, num_drone: 2 }
+          - { base: pr152-80-2-1-1,  num_truck: 2, num_drone: 6 }
+      max-parallel: 5
     runs-on: ubuntu-latest
     timeout-minutes: 359
     steps:
