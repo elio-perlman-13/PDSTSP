@@ -2,10 +2,10 @@ name: Run tabubu_raj over TSPLIB instances (truck/drone sweep)
 
 on:
   workflow_dispatch:
-#  push:
-#    branches:
-#      - main
-#      - restore-branch
+  push:
+    branches:
+      - main
+      - restore-branch
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"

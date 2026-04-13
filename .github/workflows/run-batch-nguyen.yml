@@ -2,10 +2,10 @@ name: Run tabubu_nguyen2022 over Nguyen PDSTSP set
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - restore-branch
+#  push:
+#    branches:
+#      - main
+#      - restore-branch
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
