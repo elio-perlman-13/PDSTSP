@@ -2,9 +2,9 @@ name: Run tabubu_saleu over Saleu VRP set
 
 on:
   workflow_dispatch:
-#  push:
-#    branches:
-#      - main
+  push:
+    branches:
+      - main
 #      - restore-branch
 
 env:
@@ -17,24 +17,13 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Build JSON matrix from saleu-2022/saleu-2022/*.vrp
+      - name: Build matrix of 40 runs
         id: set-matrix
         run: |
           items=()
-          for f in saleu-2022/saleu-2022/*.vrp; do
-            if [ -f "$f" ]; then
-              base=$(basename "$f" .vrp)
-              file=$(printf '%s' "$f" | sed 's/"/\\"/g')
-              base=$(printf '%s' "$base" | sed 's/"/\\"/g')
-              items+=("{\"file\":\"$file\",\"base\":\"$base\"}")
-            fi
+          for i in $(seq 1 40); do
+            items+=("{\"file\":\"saleu-2022/saleu-2022/X-n139-k10.vrp\",\"base\":\"X-n139-k10\",\"run_id\":$i}")
           done
-          if [ ${#items[@]} -eq 0 ]; then
-            echo "No .vrp instance files found under saleu-2022/saleu-2022/"; exit 1
-          fi
           matrix_json="$(printf '%s,' "${items[@]}")"
           matrix_json="[${matrix_json%,}]"
           echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
@@ -58,12 +47,12 @@ jobs:
           retention-days: 1
 
   run-instance:
-    name: Run instance ${{ matrix.base }}
+    name: Run instance ${{ matrix.base }} R${{ matrix.run_id }}
     needs: [prepare, build]
     strategy:
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
-      max-parallel: 20
+      max-parallel: 40
     runs-on: ubuntu-latest
     timeout-minutes: 359
     steps:
@@ -82,23 +71,23 @@ jobs:
         timeout-minutes: 355
         run: |
           mkdir -p outputs
-          ./tabubu_saleu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
+          ./tabubu_saleu "${{ matrix.file }}" > "outputs/${{ matrix.base }}_R${{ matrix.run_id }}.log" 2>&1 || true
 
       - name: Prepare outputs
         if: always()
         run: |
           if [[ -f output_solution_best.txt ]]; then
-            cp output_solution_best.txt "outputs/${{ matrix.base }}_best.txt"
+            cp output_solution_best.txt "outputs/${{ matrix.base }}_R${{ matrix.run_id }}_best.txt"
           fi
 
       - name: Upload per-instance artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.base }}-tabubu-saleu-results
+          name: ${{ matrix.base }}-R${{ matrix.run_id }}-tabubu-saleu-results
           path: |
-            outputs/${{ matrix.base }}_best.txt
-            outputs/${{ matrix.base }}.log
+            outputs/${{ matrix.base }}_R${{ matrix.run_id }}_best.txt
+            outputs/${{ matrix.base }}_R${{ matrix.run_id }}.log
           if-no-files-found: warn
 
   collect-all:

@@ -4107,24 +4107,25 @@ int main(int argc, char* argv[]) {
     // Optional auto-tuning based on instance size if requested
     // For now, set auto-tune to always true
     auto_tune = true;
+    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 3600.0; // 1 hour default; overridden by --time-limit
     if (auto_tune) {
         if (n <= 50) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 500);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 500);
             CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
         } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
+            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
             CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
+            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 500);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         }
     }
@@ -4154,13 +4155,25 @@ int main(int argc, char* argv[]) {
     vd best_overall_iter_current, best_overall_iter_best;
     vector<bool> best_overall_current_feasibility;
 
+    double total_time_limit = CFG_TIME_LIMIT_SEC; // 0 = unlimited
     auto start_time = std::chrono::high_resolution_clock::now();
-    for (int attempt = 0; attempt < CFG_NUM_INITIAL; ++attempt) {
-        cout << "\n=== Attempt " << (attempt + 1) << " of " << CFG_NUM_INITIAL << " ===\n";
+    int completed_attempts = 0;
+    while (true) {
+        double total_elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - start_time).count();
+        if (total_time_limit > 0.0 && total_elapsed >= total_time_limit) break;
+
+        completed_attempts++;
+        cout << "\n=== Attempt " << completed_attempts << " ===\n";
         Solution initial_solution = generate_initial_solution();
         vd iter_current, iter_best;
         vector<bool> current_feasibility;
+
+        // Cap this attempt to remaining budget so tabu_search terminates on time
+        if (total_time_limit > 0.0)
+            CFG_TIME_LIMIT_SEC = total_time_limit - total_elapsed;
         Solution improved_sol = tabu_search(initial_solution, iter_current, iter_best, current_feasibility);
+        CFG_TIME_LIMIT_SEC = total_time_limit; // restore for next check
+
         double initial_cost_val = solution_score_makespan(initial_solution);
         double current_cost_val = solution_score_makespan(improved_sol);
 
@@ -4189,7 +4202,7 @@ int main(int argc, char* argv[]) {
     // Emit best across all attempts
     auto end_time = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration<double>(end_time - start_time).count();
-    double mean_overall_cost = (CFG_NUM_INITIAL > 0) ? (sum_overall_cost / CFG_NUM_INITIAL) : 0.0;
+    double mean_overall_cost = (completed_attempts > 0) ? (sum_overall_cost / completed_attempts) : 0.0;
 
     if (have_best) {
         cout << "\n=== Best Across Attempts ===\n";
@@ -4197,7 +4210,8 @@ int main(int argc, char* argv[]) {
         cout << "Improved Solution Cost: " << solution_score_makespan(best_overall_sol) << "\n";
         cout << "Worst Solution Cost: " << worst_overall_cost << "\n";
         cout << "Mean Solution Cost: " << mean_overall_cost << "\n";
-        cout << "Mean Elapsed Time: " << elapsed_seconds / CFG_NUM_INITIAL << " seconds\n";
+        cout << "Total Attempts: " << completed_attempts << "\n";
+        cout << "Mean Elapsed Time: " << elapsed_seconds / completed_attempts << " seconds\n";
         print_solution_stream(best_overall_sol, cout);
         // check final feasibility
         bool final_feas = true;
