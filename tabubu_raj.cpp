@@ -3363,7 +3363,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
             cost_at_last_perturbation = best_feasible_cost;
 
             // Adaptive fraction: grows slowly, capped at 0.15
-            double destroy_fraction = min(0.30, 0.05 + 0.02 * consecutive_failed_perturbations);
+            double destroy_fraction = min(0.15, 0.05 + 0.01 * consecutive_failed_perturbations);
 
             current_sol = destroy_worst_repair_random(current_sol, destroy_fraction);
 
