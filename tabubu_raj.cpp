@@ -104,6 +104,20 @@ static int CFG_MAX_NO_IMPROVE = MAX_NO_IMPROVE;
 static int CFG_MAX_ITER_PER_SEGMENT = MAX_ITER_PER_SEGMENT;
 static double CFG_TIME_LIMIT_SEC = 0.0; // 0 = unlimited
 
+static int compute_total_iter_budget(int customer_count, int neighborhood_count) {
+    double total_iters = 10.0 * max(1, customer_count) * max(1, neighborhood_count) * log2(customer_count + 1.0);
+    return max(1, (int)ceil(total_iters));
+}
+
+static int compute_iters_per_segment(int customer_count, int neighborhood_count) {
+    double iters_per_segment = 2.0 * (15.0 + 3.0 * log(max(1, customer_count))) * max(1, neighborhood_count);
+    return max(1, (int)ceil(iters_per_segment));
+}
+
+static int compute_segment_count(int total_iters, int iters_per_segment) {
+    return max(1, (total_iters + iters_per_segment - 1) / iters_per_segment);
+}
+
 // Adaptive penalty coefficients for constraint violations
 static double PENALTY_LAMBDA_CAPACITY = 1.0;      // λ for capacity violations
 static double PENALTY_LAMBDA_ENERGY = 1.0;        // λ for energy violations  
@@ -277,7 +291,7 @@ void input(string filepath){
 void update_tabu_tenures() {
     // Base heuristic: roughly proportional to sqrt(n) or n/5
     // sqrt(n) scales better for very large instances
-    int base = max(20, (int)(2.0 * sqrt(n))); 
+    int base = max(20, (int)(3.0 * sqrt(n))); 
     
     TABU_TENURE_BASE = base;
     TABU_TENURE_10 = base;          // Swap
@@ -3349,7 +3363,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
             cost_at_last_perturbation = best_feasible_cost;
 
             // Adaptive fraction: grows slowly, capped at 0.15
-            double destroy_fraction = min(0.15, 0.05 + 0.01 * consecutive_failed_perturbations);
+            double destroy_fraction = min(0.30, 0.05 + 0.02 * consecutive_failed_perturbations);
 
             current_sol = destroy_worst_repair_random(current_sol, destroy_fraction);
 
@@ -3611,6 +3625,9 @@ int main(int argc, char* argv[]) {
     string input_file = argv[1];
     bool print_dist_matrix = false;
     bool auto_tune = false;
+    bool user_set_segments = false;
+    bool user_set_iters = false;
+    bool user_set_no_improve = false;
     int override_num_truck = -1; // -1 means use value from file
     int override_num_drone = -1; // -1 means use value from file
     // Parse optional flags
@@ -3619,9 +3636,9 @@ int main(int argc, char* argv[]) {
         if (arg == "--print-distance-matrix") { print_dist_matrix = true; continue; }
         string v;
         if (parse_kv_flag(arg, "--attempts", v)) { CFG_NUM_INITIAL = max(1, stoi(v)); continue; }
-        if (parse_kv_flag(arg, "--segments", v)) { CFG_MAX_SEGMENT = max(1, stoi(v)); continue; }
-        if (parse_kv_flag(arg, "--iters", v)) { CFG_MAX_ITER_PER_SEGMENT = max(1, stoi(v)); continue; }
-        if (parse_kv_flag(arg, "--no-improve", v)) { CFG_MAX_NO_IMPROVE = max(1, stoi(v)); continue; }
+        if (parse_kv_flag(arg, "--segments", v)) { CFG_MAX_SEGMENT = max(1, stoi(v)); user_set_segments = true; continue; }
+        if (parse_kv_flag(arg, "--iters", v)) { CFG_MAX_ITER_PER_SEGMENT = max(1, stoi(v)); user_set_iters = true; continue; }
+        if (parse_kv_flag(arg, "--no-improve", v)) { CFG_MAX_NO_IMPROVE = max(1, stoi(v)); user_set_no_improve = true; continue; }
         if (parse_kv_flag(arg, "--time-limit", v)) { CFG_TIME_LIMIT_SEC = max(0.0, stod(v)); continue; }
         if (parse_kv_flag(arg, "--knn-k", v)) { CFG_KNN_K = max(0, stoi(v)); continue; }
         if (parse_kv_flag(arg, "--knn-window", v)) { CFG_KNN_WINDOW = max(0, stoi(v)); continue; }
@@ -3653,26 +3670,24 @@ int main(int argc, char* argv[]) {
     auto_tune = true;
     if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 3600.0; // 5 minutes default; overridden by --time-limit
     if (auto_tune) {
-        if (n <= 50) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 500);
-            CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
-        } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 500);
-            CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
-        } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 500);
-            CFG_KNN_K = min(CFG_KNN_K, int(n));
+        int tuned_total_iters = compute_total_iter_budget(n, NUM_NEIGHBORHOODS);
+        CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
+        CFG_KNN_K = min(CFG_KNN_K, int(n));
+        if (!user_set_iters) {
+            CFG_MAX_ITER_PER_SEGMENT = compute_iters_per_segment(n, NUM_NEIGHBORHOODS);
+        }
+        if (!user_set_no_improve) {
+            CFG_MAX_NO_IMPROVE = 2 * CFG_MAX_ITER_PER_SEGMENT;
+        }
+        if (!user_set_segments) {
+            CFG_MAX_SEGMENT = compute_segment_count(tuned_total_iters, CFG_MAX_ITER_PER_SEGMENT);
         }
     }
+
+    cout << "Search config: total_iters=" << (1LL * CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT)
+         << ", segments=" << CFG_MAX_SEGMENT
+         << ", iters/segment=" << CFG_MAX_ITER_PER_SEGMENT
+         << ", no-improve=" << CFG_MAX_NO_IMPROVE << "\n";
 
     // Precompute KNN lists (if K is zero, disable by building empty adjacency)
     if (CFG_KNN_K > 0) compute_knn_lists(CFG_KNN_K); else { KNN_LIST.assign(n + 1, {}); KNN_ADJ.assign(n + 1, vector<char>(n + 1, 0)); }
