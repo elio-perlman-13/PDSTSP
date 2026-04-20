@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches:
-#      - main
-      - restore-branch
+      - main
+#      - restore-branch
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -30,52 +30,20 @@ jobs:
           retention-days: 1
 
   run-instance:
-    name: Run ${{ matrix.base }} T${{ matrix.num_truck }} D${{ matrix.num_drone }} R${{ matrix.run_id }}
+    name: Run ${{ matrix.base }} T${{ matrix.num_truck }} D${{ matrix.num_drone }}
     needs: build
     strategy:
       matrix:
-        include:
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 1  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 2  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 3  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 4  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 5  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 6  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 7  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 8  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 9  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 10 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 11 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 12 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 13 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 14 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 15 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 16 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 17 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 18 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 19 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 2, run_id: 20 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 1  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 2  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 3  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 4  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 5  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 6  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 7  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 8  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 9  }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 10 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 11 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 12 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 13 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 14 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 15 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 16 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 17 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 18 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 19 }
-          - { base: gr120-80-2-1-1, num_truck: 2, num_drone: 6, run_id: 20 }
-      max-parallel: 40
+        base:
+          - att48-80-2-1-1
+          - berlin52-80-2-1-1
+          - eil101-80-2-1-1
+          - gr120-80-2-1-1
+          - gr229-80-2-1-1
+          - pr152-80-2-1-1
+        num_truck: [2, 3]
+        num_drone: [2, 4, 6]
+      max-parallel: 36
     runs-on: ubuntu-latest
     timeout-minutes: 359
     steps:
@@ -97,23 +65,23 @@ jobs:
           ./tabubu_raj "pdstsp-upload/instances/tsplib/${{ matrix.base }}.txt" \
             --num-truck=${{ matrix.num_truck }} \
             --num-drone=${{ matrix.num_drone }} \
-            > "outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_R${{ matrix.run_id }}.log" 2>&1 || true
+            > "outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}.log" 2>&1 || true
 
       - name: Collect outputs
         if: always()
         run: |
           if [[ -f output_solution_best.txt ]]; then
-            cp output_solution_best.txt "outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_R${{ matrix.run_id }}_best.txt"
+            cp output_solution_best.txt "outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_best.txt"
           fi
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.base }}-T${{ matrix.num_truck }}-D${{ matrix.num_drone }}-R${{ matrix.run_id }}-raj-results
+          name: ${{ matrix.base }}-T${{ matrix.num_truck }}-D${{ matrix.num_drone }}-raj-results
           path: |
-            outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_R${{ matrix.run_id }}.log
-            outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_R${{ matrix.run_id }}_best.txt
+            outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}.log
+            outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_best.txt
           if-no-files-found: warn
 
   collect-all:
