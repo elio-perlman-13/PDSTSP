@@ -2,8 +2,8 @@ name: Run tabubu_raj over TSPLIB instances (truck/drone sweep)
 
 on:
   workflow_dispatch:
-  push:
-    branches:
+#  push:
+#    branches:
 #      - main
 #      - restore-branch
 

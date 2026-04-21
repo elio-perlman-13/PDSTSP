@@ -2,8 +2,8 @@ name: Run tabubu over instance VRP set
 
 on:
   workflow_dispatch:
-#  push:
-#    branches:
+  push:
+    branches:
       - main
 #      - restore-branch
 
