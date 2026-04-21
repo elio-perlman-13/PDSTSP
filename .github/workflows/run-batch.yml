@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 #  push:
 #    branches:
-#      - main
+      - main
 #      - restore-branch
 
 env:
@@ -127,17 +127,96 @@ jobs:
         run: |
           rm -rf summary || true
           mkdir -p summary
-          # copy only per-instance *_best.txt into per-artifact subfolders
           for a in all_artifacts/*; do
             name=$(basename "$a")
             mkdir -p "summary/$name"
-            # copy only files ending with _best.txt
             find "$a" -type f -name '*_best.txt' -exec cp {} "summary/$name/" \; || true
           done
 
+      - name: Generate results CSV
+        run: |
+          python3 - <<'EOF'
+          import os, re, csv, glob
+
+          rows = []
+          for best_file in sorted(glob.glob('all_artifacts/**/*_best.txt', recursive=True)):
+              fname = os.path.basename(best_file)
+              m = re.match(r'^(.+)_best\.txt$', fname)
+              if not m:
+                  continue
+              instance = m.group(1)
+
+              with open(best_file) as f:
+                  content = f.read()
+
+              def find(pattern):
+                  r = re.search(pattern, content)
+                  return r.group(1) if r else ''
+
+              improved     = find(r'Improved solution cost: ([\d.]+)')
+              mean_cost    = find(r'Mean solution cost: ([\d.]+)')
+              worst_cost   = find(r'Worst solution cost: ([\d.]+)')
+              initial_cost = find(r'Initial solution cost: ([\d.]+)')
+              elapsed      = find(r'Mean elapsed time: ([\d.]+)')
+              feasibility  = find(r'Final solution feasibility: (\w+)')
+              makespan     = find(r'Makespan=([\d.]+)')
+              deadline_viol  = find(r'Deadline violation=([\d.]+)')
+              energy_viol    = find(r'Energy violation=([\d.]+)')
+              capacity_viol  = find(r'Capacity violation=([\d.]+)')
+              truck_dist   = find(r'Total truck distance: ([\d.]+)')
+              drone_dist   = find(r'Total drone distance: ([\d.]+)')
+
+              truck_matches = re.findall(r'Truck \d+: ([^|]+)\|Truck Time: ([\d.]+)', content)
+              drone_matches = re.findall(r'Drone \d+: ([^|]+)\|Drone Time: ([\d.]+)', content)
+
+              truck_paths = [r[0].strip() for r in truck_matches]
+              drone_paths = [r[0].strip() for r in drone_matches]
+              truck_times = [float(r[1]) for r in truck_matches]
+              drone_times = [float(r[1]) for r in drone_matches]
+
+              rows.append({
+                  'Problem':            instance,
+                  'num_truck':          len(truck_paths),
+                  'num_drone':          len(drone_paths),
+                  'initial cost':       initial_cost,
+                  'final cost':         improved,
+                  'mean cost':          mean_cost,
+                  'worst cost':         worst_cost,
+                  'makespan':           makespan,
+                  'elapsed time (s)':   elapsed,
+                  'feasibility':        feasibility,
+                  'deadline violation': deadline_viol,
+                  'energy violation':   energy_viol,
+                  'capacity violation': capacity_viol,
+                  'truck routes':       str(truck_paths),
+                  'drone routes':       str(drone_paths),
+                  'highest truck time': max(truck_times) if truck_times else '',
+                  'highest drone time': max(drone_times) if drone_times else '',
+                  'truck distance':     truck_dist,
+                  'drone distance':     drone_dist,
+              })
+
+          rows.sort(key=lambda r: r['Problem'])
+
+          out = 'results.csv'
+          with open(out, 'w', newline='') as f:
+              if rows:
+                  writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+                  writer.writeheader()
+                  writer.writerows(rows)
+          print(f"Generated {out} with {len(rows)} rows")
+          EOF
+
       - name: Create final compressed summary
         run: |
+          cp results.csv summary/ || true
           tar -czf tabubu_all_instances_summary.tar.gz -C summary .
+
+      - name: Upload results CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabubu_results_csv
+          path: results.csv
 
       - name: Upload consolidated summary
         uses: actions/upload-artifact@v4

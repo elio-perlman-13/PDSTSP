@@ -566,7 +566,7 @@ void update_penalties(const Solution& sol) {
     }
 }
 
-vvi kmeans_clustering(int k, int max_iters=1000) {
+vvi kmeans_clustering(int k, int max_iters=1000, uint64_t seed=UINT64_MAX) {
     if (n <= 0) return {};
     // Bound k to [1, n]
     if (k <= 0) k = 1;
@@ -577,7 +577,7 @@ vvi kmeans_clustering(int k, int max_iters=1000) {
     centroids.reserve(k);
 
     // Random engine
-    std::mt19937 gen(std::random_device{}());
+    std::mt19937 gen(seed == UINT64_MAX ? std::random_device{}() : (uint32_t)seed);
     std::uniform_int_distribution<int> dis(1, n);
 
     // K-means++-like seeding: first random, next farthest from existing
@@ -774,20 +774,18 @@ Solution greedy_insert_customer(Solution sol, int customer, bool minimize_delta)
     return best_sol;
 }
 
-Solution generate_initial_solution(){
+Solution generate_initial_solution(uint64_t seed = UINT64_MAX){
     Solution sol;
     sol.truck_routes.resize(h);
     sol.drone_routes.resize(h); // as many drone routes as truck routes
     // Cluster customers into up to h groups (if h==0, nothing to do)
     vector<bool> visited(n+1, false);
     int num_of_visited_customers = 0;
-    vvi clusters = (h > 0) ? kmeans_clustering(h) : vvi{};
+    vvi clusters = (h > 0) ? kmeans_clustering(h, 1000, seed) : vvi{};
     // Optional: shuffle each cluster to randomize the intra-cluster selection order
-    {
-        mt19937 rng(std::random_device{}());
-        for (auto& vec : clusters) {
-            shuffle(vec.begin(), vec.end(), rng);
-        }
+    mt19937 rng(seed == UINT64_MAX ? std::random_device{}() : (uint32_t)seed);
+    for (auto& vec : clusters) {
+        shuffle(vec.begin(), vec.end(), rng);
     }
     vi cluster_assignment(n+1, -1);
     for (int i = 0; i < (int)clusters.size(); ++i) {
@@ -5836,7 +5834,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
     int iter = 0;
     int total_iters = CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT;
     int no_improve_iters = 0;
-    int scoring_mode_iter = 1;
+    int scoring_mode_iter = 0;
     Solution best_segment_sol = current_sol;
     double best_segment_score = scoring_mode_iter == 0 ? solution_score_makespan(current_sol) :
                                 (scoring_mode_iter == 1 ? solution_score_l2_norm(current_sol) : solution_score_total_time(current_sol));
@@ -5884,7 +5882,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             total_weight += weight[i];
         }
         double r = ((double) rand() / (RAND_MAX));
-        int selected_neighbor = 0;
+        int selected_neighbor = NUM_NEIGHBORHOODS - 1; // fallback: last bucket absorbs rounding
         double cumulative = 0.0;
         for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
             cumulative += weight[i] / total_weight;
@@ -5893,11 +5891,12 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 break;
             }
         }
-        if (selected_neighbor == 0 && r >= cumulative) {
-            selected_neighbor = NUM_NEIGHBORHOODS - 1;
-        }
 
-        //int selected_neighbor = iter % NUM_NEIGHBORHOODS;
+        // Change it to random selection for testing
+        selected_neighbor = rand() % NUM_NEIGHBORHOODS;
+
+        //Change it to round-robin/cyclic for testing
+        //selected_neighbor = iter % NUM_NEIGHBORHOODS;
         count[selected_neighbor]++;
 
         
@@ -5981,7 +5980,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             current_score = neighbor_score;
             no_improve_iters++;
         } else {
-            double T = T0 * pow(alpha, iter);
+            /* double T = T0 * pow(alpha, iter);
             double delta = current_score - neighbor_score;
             double ap = exp(delta / T);
             double rand_val = ((double) rand() / (RAND_MAX));
@@ -5989,7 +5988,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 current_sol = neighbor;
                 current_cost = neighbor.total_makespan;
                 current_score = neighbor_score;
-            }
+            } */
             
             score[selected_neighbor] += gamma3;
             no_improve_iters++;
@@ -6019,12 +6018,12 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
              no_improve_iters = 0;
 
             // Chance to restart from best solution or do destroy and repair:
-            current_sol = destroy_random_repair_random(current_sol);
+            /* current_sol = destroy_random_repair_random(current_sol);
             
             destroy_repair_count++; 
             
             current_sol = recalculate_solution(current_sol);
-            cout << "Applied perturbation at iter " << iter << ", new makespan: " << current_sol.total_makespan << "\n"; 
+            cout << "Applied perturbation at iter " << iter << ", new makespan: " << current_sol.total_makespan << "\n";  */
             no_improve_iters = 0;
             
             // Clear Tabu Lists
@@ -6061,12 +6060,12 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
 
             if (no_improve_segments >= 2) {
                 // If no improvement for 2 consecutive segments, switch scoring mode to encourage different search behavior
-                if (scoring_mode_iter == 1) {
+                /* if (scoring_mode_iter == 1) {
                     scoring_mode_iter = 2;
                 }
                 else if (scoring_mode_iter == 2) {
                     scoring_mode_iter = 1;
-                }
+                } */
                 no_improve_segments = 0;
                 best_solution_score_now = scoring_mode_iter == 0 ? solution_score_makespan(best_solution) :
                                             (scoring_mode_iter == 1 ? solution_score_l2_norm(best_solution) : solution_score_total_time(best_solution));
@@ -6156,6 +6155,22 @@ void print_distance_matrix(){
 
 
 
+static int compute_total_iter_budget(int customer_count, int neighborhood_count) {
+    // n * K * ceil(sqrt(n)): each neighborhood gets one sqrt(n)-depth pass over all customers
+    int sqrt_n = max(1, (int)ceil(sqrt((double)customer_count)));
+    return max(1, customer_count * neighborhood_count * sqrt_n);
+}
+
+static int compute_iters_per_segment(int customer_count, int neighborhood_count) {
+    // n * ceil(sqrt(K)): one sweep per customer per sqrt(neighborhood count)
+    int sqrt_k = max(1, (int)ceil(sqrt(neighborhood_count)));
+    return max(1, customer_count * sqrt_k);
+}
+
+static int compute_segment_count(int total_iters, int iters_per_segment) {
+    return max(1, (total_iters + iters_per_segment - 1) / iters_per_segment);
+}
+
 static bool write_output_file(const std::string& out_path, const Solution& sol, double cost, double elapsed_sec, bool final_feasibility, double worst_cost, double mean_cost) {
     std::ofstream ofs(out_path);
     if (!ofs) return false;
@@ -6213,23 +6228,26 @@ int main(int argc, char* argv[]) {
     // For now, set auto-tune to always true
     auto_tune = true;
     if (auto_tune) {
+        int num_vehicles         = h + d;
+        int tuned_total_iters    = compute_total_iter_budget(n, NUM_NEIGHBORHOODS);
+        int tuned_iters_per_seg  = compute_iters_per_segment(n, NUM_NEIGHBORHOODS);
+        int tuned_segments       = compute_segment_count(tuned_total_iters, tuned_iters_per_seg);
+        CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, tuned_iters_per_seg);
+        CFG_MAX_SEGMENT          = min(CFG_MAX_SEGMENT, tuned_segments);
+        CFG_MAX_NO_IMPROVE       = 2 * CFG_MAX_ITER_PER_SEGMENT;
+        CFG_NUM_INITIAL          = min(CFG_NUM_INITIAL, 10);
+        cout << "Search config: total_iters=" << (1LL * CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT)
+             << " (segments=" << CFG_MAX_SEGMENT
+             << ", iters_per_seg=" << CFG_MAX_ITER_PER_SEGMENT
+             << ", no_improve=" << CFG_MAX_NO_IMPROVE << ")\n";
         if (n <= 20) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
-            CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
+            CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 5);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
-            CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
+            CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 100);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 200);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 200);
             CFG_KNN_K = min(CFG_KNN_K, int(n/2));
         }
     }
@@ -6261,8 +6279,9 @@ int main(int argc, char* argv[]) {
     vector<bool> best_overall_current_feasibility;
 
     auto start_time = std::chrono::high_resolution_clock::now();
+    int ablation_seed = 42;
     for (int attempt = 0; attempt < CFG_NUM_INITIAL; ++attempt) {
-        Solution initial_solution = generate_initial_solution();
+        Solution initial_solution = generate_initial_solution(ablation_seed + attempt);
         vd iter_current, iter_best;
         vector<bool> current_feasibility;
         Solution improved_sol = tabu_search(initial_solution, CFG_NUM_INITIAL, iter_current, iter_best, current_feasibility);
@@ -6290,6 +6309,7 @@ int main(int argc, char* argv[]) {
     }
     // Emit best across all attempts
     auto end_time = std::chrono::high_resolution_clock::now();
+    // Calculate mean elapsed time per attempt and mean cost
     double elapsed_seconds = std::chrono::duration<double>(end_time - start_time).count();
     double mean_overall_cost = (CFG_NUM_INITIAL > 0) ? (sum_overall_cost / CFG_NUM_INITIAL) : 0.0;
 
@@ -6299,7 +6319,7 @@ int main(int argc, char* argv[]) {
         cout << "Improved Solution Cost: " << best_overall_sol.total_makespan << "\n";
         cout << "Worst Solution Cost: " << worst_overall_cost << "\n";
         cout << "Mean Solution Cost: " << mean_overall_cost << "\n";
-        cout << "Elapsed Time: " << elapsed_seconds << " seconds\n";
+        cout << "Mean Elapsed Time: " << (elapsed_seconds / CFG_NUM_INITIAL) << " seconds\n";
         print_solution_stream(best_overall_sol, cout);
         // check final feasibility
         bool final_feas = true;

@@ -1,6 +1,5 @@
 run.log
 output.txt
-output_solution_best.txt
 # compiled binaries
 tabubu_raj
 tabubu_raj_asan
