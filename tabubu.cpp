@@ -5893,10 +5893,10 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
         }
 
         // Change it to random selection for testing
-        selected_neighbor = rand() % NUM_NEIGHBORHOODS;
+        //selected_neighbor = rand() % NUM_NEIGHBORHOODS;
 
         //Change it to round-robin/cyclic for testing
-        //selected_neighbor = iter % NUM_NEIGHBORHOODS;
+        selected_neighbor = iter % NUM_NEIGHBORHOODS;
         count[selected_neighbor]++;
 
         
