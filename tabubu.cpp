@@ -87,7 +87,7 @@ const int MAX_ITER_PER_SEGMENT = 1000;
 const double gamma1 = 0.3;
 const double gamma2 = 0.2;
 const double gamma3 = 0.1;
-const double gamma4 = 0.3;
+const double gamma4 = 0.6;
 
 // Runtime-configurable search knobs (initialized from compile-time defaults)
 static int CFG_NUM_INITIAL = NUM_OF_INITIAL_SOLUTIONS;
