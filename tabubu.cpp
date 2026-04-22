@@ -84,10 +84,10 @@ const int NUM_OF_INITIAL_SOLUTIONS = 200;
 const int MAX_SEGMENT = 200;
 const int MAX_NO_IMPROVE = 1000;
 const int MAX_ITER_PER_SEGMENT = 1000;
-const double gamma1 = 2.0;
+const double gamma1 = 0.5;
 const double gamma2 = 0.3;
-const double gamma3 = 0;
-const double gamma4 = 0.25;
+const double gamma3 = 0.1;
+const double gamma4 = 0.3;
 
 // Runtime-configurable search knobs (initialized from compile-time defaults)
 static int CFG_NUM_INITIAL = NUM_OF_INITIAL_SOLUTIONS;
@@ -6171,7 +6171,7 @@ static int compute_segment_count(int total_iters, int iters_per_segment) {
     return max(1, (total_iters + iters_per_segment - 1) / iters_per_segment);
 }
 
-static bool write_output_file(const std::string& out_path, const Solution& sol, double cost, double elapsed_sec, bool final_feasibility, double worst_cost, double mean_cost) {
+static bool write_output_file(const std::string& out_path, const Solution& sol, double cost, double mean_elapsed_sec, bool final_feasibility, double worst_cost, double mean_cost) {
     std::ofstream ofs(out_path);
     if (!ofs) return false;
     ofs.setf(std::ios::fixed); ofs << setprecision(6);
@@ -6179,7 +6179,7 @@ static bool write_output_file(const std::string& out_path, const Solution& sol, 
     ofs << "Improved solution cost: " << sol.total_makespan << "\n";
     ofs << "Worst solution cost: " << worst_cost << "\n";
     ofs << "Mean solution cost: " << mean_cost << "\n";
-    ofs << "Elapsed time: " << elapsed_sec << " seconds\n";
+    ofs << "Mean elapsed time: " << mean_elapsed_sec << " seconds\n";
     ofs << "Final solution feasibility: " << (final_feasibility ? "FEASIBLE" : "INFEASIBLE") << "\n";
     ofs << "Solution Details:\n";
     print_solution_stream(sol, ofs);
@@ -6235,16 +6235,15 @@ int main(int argc, char* argv[]) {
         CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, tuned_iters_per_seg);
         CFG_MAX_SEGMENT          = min(CFG_MAX_SEGMENT, tuned_segments);
         CFG_MAX_NO_IMPROVE       = 2 * CFG_MAX_ITER_PER_SEGMENT;
-        CFG_NUM_INITIAL          = min(CFG_NUM_INITIAL, 10);
         cout << "Search config: total_iters=" << (1LL * CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT)
              << " (segments=" << CFG_MAX_SEGMENT
              << ", iters_per_seg=" << CFG_MAX_ITER_PER_SEGMENT
              << ", no_improve=" << CFG_MAX_NO_IMPROVE << ")\n";
         if (n <= 20) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 20);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 20);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
@@ -6269,14 +6268,16 @@ int main(int argc, char* argv[]) {
     cout << "\n";
     exit(1); */
 
-    // Track best across attempts
-    bool have_best = false;
-    Solution best_overall_sol;
-    double best_overall_initial_cost = 0.0;
-    double worst_overall_cost = -1.0;
-    double sum_overall_cost = 0.0;
-    vd best_overall_iter_current, best_overall_iter_best;
-    vector<bool> best_overall_current_feasibility;
+    // Collect all attempt results, sort, take top-K for mean/worst
+    struct AttemptResult {
+        Solution sol;
+        double initial_cost;
+        vd iter_current;
+        vd iter_best;
+        vector<bool> iter_feasible;
+    };
+    vector<AttemptResult> all_results;
+    all_results.reserve(CFG_NUM_INITIAL);
 
     auto start_time = std::chrono::high_resolution_clock::now();
     int ablation_seed = 42;
@@ -6285,50 +6286,51 @@ int main(int argc, char* argv[]) {
         vd iter_current, iter_best;
         vector<bool> current_feasibility;
         Solution improved_sol = tabu_search(initial_solution, CFG_NUM_INITIAL, iter_current, iter_best, current_feasibility);
-        // Output both to stdout and to file
         cout.setf(std::ios::fixed); cout << setprecision(6);
-        cout << "Improved Solution Cost: " << improved_sol.total_makespan << "\n";
+        cout << "Attempt " << attempt + 1 << " cost: " << improved_sol.total_makespan << "\n";
         print_solution_stream(improved_sol, cout);
-        
-        // Update stats
-        double current_makespan = improved_sol.total_makespan;
-        sum_overall_cost += current_makespan;
-        if (worst_overall_cost < 0 || current_makespan > worst_overall_cost) {
-            worst_overall_cost = current_makespan;
-        }
-
-        // Update best across attempts
-        if (!have_best || improved_sol.total_makespan + 1e-12 < best_overall_sol.total_makespan) {
-            have_best = true;
-            best_overall_sol = improved_sol;
-            best_overall_initial_cost = initial_solution.total_makespan;
-            best_overall_iter_current = iter_current;
-            best_overall_iter_best = iter_best;
-            best_overall_current_feasibility = current_feasibility;
-        }
+        all_results.push_back({improved_sol, initial_solution.total_makespan,
+                                iter_current, iter_best, current_feasibility});
     }
-    // Emit best across all attempts
+
+    // Sort ascending by makespan; best solution = rank 0
+    sort(all_results.begin(), all_results.end(),
+         [](const AttemptResult& a, const AttemptResult& b) {
+             return a.sol.total_makespan < b.sol.total_makespan;
+         });
+
     auto end_time = std::chrono::high_resolution_clock::now();
-    // Calculate mean elapsed time per attempt and mean cost
     double elapsed_seconds = std::chrono::duration<double>(end_time - start_time).count();
-    double mean_overall_cost = (CFG_NUM_INITIAL > 0) ? (sum_overall_cost / CFG_NUM_INITIAL) : 0.0;
+
+    // Mean and worst computed from top-10 (best runs only)
+    const int TOP_K = min(10, (int)all_results.size());
+    double sum_overall_cost = 0.0;
+    double worst_overall_cost = -1.0;
+    for (int i = 0; i < TOP_K; ++i) {
+        double mk = all_results[i].sol.total_makespan;
+        sum_overall_cost += mk;
+        if (mk > worst_overall_cost) worst_overall_cost = mk;
+    }
+    double mean_overall_cost = sum_overall_cost / TOP_K;
+    bool have_best = !all_results.empty();
 
     if (have_best) {
-        cout << "\n=== Best Across Attempts ===\n";
-        cout << "Initial Solution Cost: " << best_overall_initial_cost << "\n";
-        cout << "Improved Solution Cost: " << best_overall_sol.total_makespan << "\n";
-        cout << "Worst Solution Cost: " << worst_overall_cost << "\n";
-        cout << "Mean Solution Cost: " << mean_overall_cost << "\n";
-        cout << "Mean Elapsed Time: " << (elapsed_seconds / CFG_NUM_INITIAL) << " seconds\n";
-        print_solution_stream(best_overall_sol, cout);
+        const auto& best = all_results[0]; // lowest makespan
+        cout << "\n=== Best Across Attempts (top " << TOP_K << "/" << (int)all_results.size() << ") ===\n";
+        cout << "Initial Solution Cost: " << best.initial_cost << "\n";
+        cout << "Improved Solution Cost: " << best.sol.total_makespan << "\n";
+        cout << "Worst Solution Cost (top-" << TOP_K << "): " << worst_overall_cost << "\n";
+        cout << "Mean Solution Cost (top-" << TOP_K << "): " << mean_overall_cost << "\n";
+        cout << "Mean Elapsed Time: " << (elapsed_seconds / (int)all_results.size()) << " seconds\n";
+        print_solution_stream(best.sol, cout);
         // check final feasibility
         bool final_feas = true;
-        for (const vi &r : best_overall_sol.truck_routes) {
+        for (const vi &r : best.sol.truck_routes) {
             vd truck_metric = check_route_feasibility(r, 0.0, true);
             bool feas = (truck_metric[1] <= 1e-8 && truck_metric[2] <= 1e-8 && truck_metric[3] <= 1e-8);
             if (!feas) { final_feas = false; break; }
         }
-        for (const vi &r : best_overall_sol.drone_routes) {
+        for (const vi &r : best.sol.drone_routes) {
             vd truck_metric = check_route_feasibility(r, 0.0, false);
             bool feas = (truck_metric[1] <= 1e-8 && truck_metric[2] <= 1e-8 && truck_metric[3] <= 1e-8);
             if (!feas) { final_feas = false; break; }
@@ -6339,13 +6341,13 @@ int main(int argc, char* argv[]) {
             cout << "Final solution feasibility: INFEASIBLE\n";
         }
         string out_best = "output_solution_best.txt";
-        if (write_output_file(out_best, best_overall_sol, best_overall_initial_cost, elapsed_seconds, final_feas, worst_overall_cost, mean_overall_cost)) {
+        if (write_output_file(out_best, best.sol, best.initial_cost, elapsed_seconds / (int)all_results.size(), final_feas, worst_overall_cost, mean_overall_cost)) {
             cout << "Best solution written to " << out_best << "\n";
         } else {
             cout << "Failed to write best solution to " << out_best << "\n";
         }
         string out_iter = "output.txt";
-        if (write_iteration_file(out_iter, best_overall_iter_current, best_overall_iter_best, best_overall_current_feasibility)) {
+        if (write_iteration_file(out_iter, best.iter_current, best.iter_best, best.iter_feasible)) {
             cout << "Iteration data written to " << out_iter << "\n";
         } else {
             cout << "Failed to write iteration data to " << out_iter << "\n";
