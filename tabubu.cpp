@@ -6060,12 +6060,12 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
 
             if (no_improve_segments >= 2) {
                 // If no improvement for 2 consecutive segments, switch scoring mode to encourage different search behavior
-                /*if (scoring_mode_iter == 1) {
+                if (scoring_mode_iter == 1) {
                     scoring_mode_iter = 2;
                 }
                 else if (scoring_mode_iter == 2) {
                     scoring_mode_iter = 1;
-                }  else if (scoring_mode_iter == 2){
+                } /* else if (scoring_mode_iter == 2){
                     scoring_mode_iter = 0;
                 } */
                 no_improve_segments = 0;
