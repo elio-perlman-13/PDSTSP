@@ -107,8 +107,8 @@ static const double PENALTY_DECREASE = 1.2;       // divide when satisfied *
 static const double PENALTY_MIN = 0.5;            // minimum λ value
 static const double PENALTY_MAX = 1000.0;
 
-static const double T0 = 150.0; // initial temperature for simulated annealing acceptance
-double alpha = 0.9998; // cooling rate for simulated annealing
+static const double T0 = 100.0; // initial temperature for simulated annealing acceptance
+double alpha = 0.998; // cooling rate for simulated annealing
 
 // Destroy and repair helper
 vvd edge_records; // edge_records[i][j]: stores working times for edge (i,j)
@@ -5980,7 +5980,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             current_score = neighbor_score;
             no_improve_iters++;
         } else {
-            /* double T = T0 * pow(alpha, iter);
+            double T = T0 * pow(alpha, iter);
             double delta = current_score - neighbor_score;
             double ap = exp(delta / T);
             double rand_val = ((double) rand() / (RAND_MAX));
@@ -5988,7 +5988,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 current_sol = neighbor;
                 current_cost = neighbor.total_makespan;
                 current_score = neighbor_score;
-            } */
+            } 
             score[selected_neighbor] += gamma3;
             no_improve_iters++;
         }
