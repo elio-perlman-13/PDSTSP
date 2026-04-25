@@ -5989,7 +5989,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 current_cost = neighbor.total_makespan;
                 current_score = neighbor_score;
             }  
-            // The Tortured Poet
+            // The Tortured Poet Department
             score[selected_neighbor] += gamma3;
             no_improve_iters++;
         }
