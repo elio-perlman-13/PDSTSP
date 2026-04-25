@@ -6253,7 +6253,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    //The Tortured Poet Department
     // Precompute KNN lists (if K is zero, disable by building empty adjacency)
     if (CFG_KNN_K > 0) compute_knn_lists(CFG_KNN_K); else { KNN_LIST.assign(n + 1, {}); KNN_ADJ.assign(n + 1, vector<char>(n + 1, 0)); }
 
