@@ -6241,10 +6241,10 @@ int main(int argc, char* argv[]) {
              << ", iters_per_seg=" << CFG_MAX_ITER_PER_SEGMENT
              << ", no_improve=" << CFG_MAX_NO_IMPROVE << ")\n";
         if (n <= 20) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 13);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 3);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 13);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 3);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
@@ -6322,7 +6322,7 @@ int main(int argc, char* argv[]) {
         cout << "Improved Solution Cost: " << best.sol.total_makespan << "\n";
         cout << "Worst Solution Cost (top-" << TOP_K << "): " << worst_overall_cost << "\n";
         cout << "Mean Solution Cost (top-" << TOP_K << "): " << mean_overall_cost << "\n";
-        cout << "Mean Elapsed Time: " << (elapsed_seconds / (int)all_results.size()) << " seconds\n";
+        cout << "Elapsed Time: " << (elapsed_seconds) << " seconds\n";
         print_solution_stream(best.sol, cout);
         // check final feasibility
         bool final_feas = true;
@@ -6342,7 +6342,7 @@ int main(int argc, char* argv[]) {
             cout << "Final solution feasibility: INFEASIBLE\n";
         }
         string out_best = "output_solution_best.txt";
-        if (write_output_file(out_best, best.sol, best.initial_cost, elapsed_seconds / (int)all_results.size(), final_feas, worst_overall_cost, mean_overall_cost)) {
+        if (write_output_file(out_best, best.sol, best.initial_cost, elapsed_seconds, final_feas, worst_overall_cost, mean_overall_cost)) {
             cout << "Best solution written to " << out_best << "\n";
         } else {
             cout << "Failed to write best solution to " << out_best << "\n";

@@ -31,7 +31,8 @@ jobs:
               # escape quotes in path just in case
               file=$(printf '%s' "$f" | sed 's/"/\\"/g')
               base=$(printf '%s' "$base" | sed 's/"/\\"/g')
-              items+=("{\"file\":\"$file\",\"base\":\"$base\"}")
+              items+=("{\"file\":\"$file\",\"base\":\"$base\",\"run_id\":1}")
+              items+=("{\"file\":\"$file\",\"base\":\"$base\",\"run_id\":2}")
             fi
           done
           if [ ${#items[@]} -eq 0 ]; then
@@ -61,7 +62,7 @@ jobs:
           retention-days: 1
 
   run-instance:
-    name: Run instance ${{ matrix.base }}
+    name: Run instance ${{ matrix.base }} (run ${{ matrix.run_id }})
     needs: [prepare, build] # Wait for build to finish
     strategy:
       matrix:
@@ -86,23 +87,24 @@ jobs:
         timeout-minutes: 355 # slightly less than job timeout to allow cleanup steps to run
         run: |
           mkdir -p outputs
-          ./tabubu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
+          ./tabubu "${{ matrix.file }}" > "outputs/${{ matrix.base }}_r${{ matrix.run_id }}.log" 2>&1 || true
 
       - name: Prepare outputs
         if: always()
         run: |
           # copy solver's best output if created
           if [[ -f output_solution_best.txt ]]; then
-            cp output_solution_best.txt "outputs/${{ matrix.base }}_best.txt"
+            cp output_solution_best.txt "outputs/${{ matrix.base }}_r${{ matrix.run_id }}_best.txt"
           fi
 
       - name: Upload per-instance artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.base }}-tabubu-results
+          name: ${{ matrix.base }}-r${{ matrix.run_id }}-tabubu-results
           path: |
-            outputs/${{ matrix.base }}_best.txt
+            outputs/${{ matrix.base }}_r${{ matrix.run_id }}_best.txt
+            outputs/${{ matrix.base }}_r${{ matrix.run_id }}.log
             outputs/${{ matrix.base }}.log
           if-no-files-found: warn
 
@@ -141,10 +143,11 @@ jobs:
           rows = []
           for best_file in sorted(glob.glob('all_artifacts/**/*_best.txt', recursive=True)):
               fname = os.path.basename(best_file)
-              m = re.match(r'^(.+)_best\.txt$', fname)
+              m = re.match(r'^(.+)_(r\d+)_best\.txt$', fname)
               if not m:
                   continue
               instance = m.group(1)
+              run_id   = m.group(2)
 
               with open(best_file) as f:
                   content = f.read()
@@ -176,6 +179,7 @@ jobs:
 
               rows.append({
                   'Problem':            instance,
+                  'run_id':             run_id,
                   'num_truck':          len(truck_paths),
                   'num_drone':          len(drone_paths),
                   'initial cost':       initial_cost,
