@@ -92,10 +92,10 @@ const int NUM_OF_INITIAL_SOLUTIONS = 200;
 const int MAX_SEGMENT = 500;
 const int MAX_NO_IMPROVE = 1000;
 const int MAX_ITER_PER_SEGMENT = 1000;
-const double gamma1 = 1.0;
+const double gamma1 = 0.5;
 const double gamma2 = 0.3;
-const double gamma3 = 0.0;
-const double gamma4 = 0.25;
+const double gamma3 = 0.1;
+const double gamma4 = 0.3;
 
 // Runtime-configurable search knobs (initialized from compile-time defaults)
 static int CFG_NUM_INITIAL = NUM_OF_INITIAL_SOLUTIONS;
@@ -105,13 +105,15 @@ static int CFG_MAX_ITER_PER_SEGMENT = MAX_ITER_PER_SEGMENT;
 static double CFG_TIME_LIMIT_SEC = 0.0; // 0 = unlimited
 
 static int compute_total_iter_budget(int customer_count, int neighborhood_count) {
-    double total_iters = 10.0 * max(1, customer_count) * max(1, neighborhood_count) * log2(customer_count + 1.0);
-    return max(1, (int)ceil(total_iters));
+    // n * K * ceil(sqrt(n))
+    int sqrt_n = max(1, (int)ceil(sqrt((double)customer_count)));
+    return max(1, customer_count * neighborhood_count * sqrt_n);
 }
 
 static int compute_iters_per_segment(int customer_count, int neighborhood_count) {
-    double iters_per_segment = 2.0 * (15.0 + 3.0 * log(max(1, customer_count))) * max(1, neighborhood_count);
-    return max(1, (int)ceil(iters_per_segment));
+    // n * ceil(sqrt(K))
+    int sqrt_k = max(1, (int)ceil(sqrt((double)neighborhood_count)));
+    return max(1, customer_count * sqrt_k);
 }
 
 static int compute_segment_count(int total_iters, int iters_per_segment) {
@@ -3223,6 +3225,7 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
     iter_feasible.clear();
     // Unified Tabu Search on Cost
     int iter = 1;
+    int total_iters = CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT;
     int no_improve_iters = 0;
 
     cout << "=== Starting Unified Tabu Search (Minimizing Weighted Cost) ===\n";
@@ -3232,9 +3235,11 @@ Solution tabu_search(const Solution& initial_solution, vector<double>& iter_curr
     double segment_start_best_score = best_solution_score_now;
     int no_improve_segments = 0;
 
-    while (true) {
-        double elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - ts_start).count();
-        if (CFG_TIME_LIMIT_SEC > 0.0 && elapsed >= CFG_TIME_LIMIT_SEC) break;
+    while (iter <= total_iters) {
+        if (CFG_TIME_LIMIT_SEC > 0.0) {
+            double elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - ts_start).count();
+            if (elapsed >= CFG_TIME_LIMIT_SEC) break;
+        }
 
         double current_score = calculate_score_with_penalties(current_sol.total_makespan, 0.0, max(0.0, current_sol.capacity_violation), max(0.0, current_sol.energy_violation), max(0.0, current_sol.deadline_violation), fitness_mode);
         double current_pure_cost = solution_score_makespan(current_sol);
@@ -3665,7 +3670,7 @@ int main(int argc, char* argv[]) {
     // Optional auto-tuning based on instance size if requested
     // For now, set auto-tune to always true
     auto_tune = true;
-    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 30.0; // 5 minutes default; overridden by --time-limit
+    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 3600.0; // 5 minutes default; overridden by --time-limit
     if (auto_tune) {
         int tuned_total_iters = compute_total_iter_budget(n, NUM_NEIGHBORHOODS);
         CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
@@ -3710,24 +3715,51 @@ int main(int argc, char* argv[]) {
     double total_time_limit = CFG_TIME_LIMIT_SEC; // 0 = unlimited
     auto start_time = std::chrono::high_resolution_clock::now();
     int completed_attempts = 0;
-    completed_attempts = 1;
-    Solution initial_solution = generate_initial_solution();
-    vd iter_current, iter_best;
-    vector<bool> current_feasibility;
-    Solution improved_sol = tabu_search(initial_solution, iter_current, iter_best, current_feasibility);
-    double initial_cost_val = solution_score_makespan(initial_solution);
-    double current_cost_val = solution_score_makespan(improved_sol);
-    have_best = true;
-    best_overall_sol = improved_sol;
-    best_overall_initial_cost = initial_cost_val;
-    worst_overall_cost = current_cost_val;
-    sum_overall_cost = current_cost_val;
-    best_overall_iter_current = iter_current;
-    best_overall_iter_best = iter_best;
-    best_overall_current_feasibility = current_feasibility;
-    cout.setf(std::ios::fixed); cout << setprecision(6);
-    cout << "Improved Solution Cost: " << current_cost_val << "\n";
-    print_solution_stream(improved_sol, cout);
+    while (true) {
+        double total_elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - start_time).count();
+        if (total_time_limit > 0.0 && total_elapsed >= total_time_limit) break;
+
+        completed_attempts++;
+        cout << "\n=== Attempt " << completed_attempts << " ===\n";
+        Solution initial_solution = generate_initial_solution();
+/*         std::string bks = load_bks_for_instance(input_file);
+        if (!bks.empty()) {
+            initial_solution = check_benchmark_solution(bks);
+        } */
+        vd iter_current, iter_best;
+        vector<bool> current_feasibility;
+
+        // Cap this attempt to remaining budget so tabu_search terminates on time
+        if (total_time_limit > 0.0)
+            CFG_TIME_LIMIT_SEC = total_time_limit - total_elapsed;
+        Solution improved_sol = tabu_search(initial_solution, iter_current, iter_best, current_feasibility);
+        CFG_TIME_LIMIT_SEC = total_time_limit; // restore for next check
+
+        double initial_cost_val = solution_score_makespan(initial_solution);
+        double current_cost_val = solution_score_makespan(improved_sol);
+
+        // Output both to stdout and to file
+        cout.setf(std::ios::fixed); cout << setprecision(6);
+        cout << "Improved Solution Cost: " << current_cost_val << "\n";
+        print_solution_stream(improved_sol, cout);
+        
+        // Update stats
+        sum_overall_cost += current_cost_val;
+        if (worst_overall_cost < 0 || current_cost_val > worst_overall_cost) {
+            worst_overall_cost = current_cost_val;
+        }
+
+        // Update best across attempts
+        double best_val = have_best ? solution_score_makespan(best_overall_sol) : 1e18;
+        if (!have_best || current_cost_val + 1e-12 < best_val) {
+            have_best = true;
+            best_overall_sol = improved_sol;
+            best_overall_initial_cost = initial_cost_val;
+            best_overall_iter_current = iter_current;
+            best_overall_iter_best = iter_best;
+            best_overall_current_feasibility = current_feasibility;
+        }
+    }
     // Emit best across all attempts
     auto end_time = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration<double>(end_time - start_time).count();
