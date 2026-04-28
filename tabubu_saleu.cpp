@@ -4063,7 +4063,7 @@ static bool write_iteration_file(const std::string& out_path, const vd& iter_cur
     return true;
 }
 
-static bool write_output_file(const std::string& out_path, const Solution& sol, double cost, double elapsed_sec, bool final_feasibility, double worst_cost, double mean_cost) {
+static bool write_output_file(const std::string& out_path, const Solution& sol, double cost, double elapsed_sec, bool final_feasibility, double worst_cost, double mean_cost, int completed_attempts) {
     std::ofstream ofs(out_path);
     if (!ofs) return false;
     ofs.setf(std::ios::fixed); ofs << setprecision(6);
@@ -4071,7 +4071,7 @@ static bool write_output_file(const std::string& out_path, const Solution& sol, 
     ofs << "Improved solution cost: " << solution_score_makespan(sol) << "\n";
     ofs << "Worst solution cost: " << worst_cost << "\n";
     ofs << "Mean solution cost: " << mean_cost << "\n";
-    ofs << "Mean elapsed time: " << elapsed_sec / CFG_NUM_INITIAL << " seconds\n";
+    ofs << "Mean elapsed time: " << (completed_attempts > 0 ? elapsed_sec / completed_attempts : elapsed_sec) << " seconds\n";
     ofs << "Final solution feasibility: " << (final_feasibility ? "FEASIBLE" : "INFEASIBLE") << "\n";
     ofs << "Solution Details:\n";
     print_solution_stream(sol, ofs);
@@ -4127,7 +4127,7 @@ int main(int argc, char* argv[]) {
     // For now, set auto-tune to always true
     auto_tune = true;
     
-    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 5400.0; // 1 hour default; overridden by --time-limit
+    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 600.0; // 1 hour default; overridden by --time-limit
     if (auto_tune) {
         int tuned_total_iters = compute_total_iter_budget(n, NUM_NEIGHBORHOODS);
         CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
@@ -4244,7 +4244,7 @@ int main(int argc, char* argv[]) {
             cout << "Final solution feasibility: INFEASIBLE\n";
         }
         string out_best = "output_solution_best.txt";
-        if (write_output_file(out_best, best_overall_sol, best_overall_initial_cost, elapsed_seconds, final_feas, worst_overall_cost, mean_overall_cost)) {
+        if (write_output_file(out_best, best_overall_sol, best_overall_initial_cost, elapsed_seconds, final_feas, worst_overall_cost, mean_overall_cost, completed_attempts)) {
             cout << "Best solution written to " << out_best << "\n";
         } else {
             cout << "Failed to write best solution to " << out_best << "\n";
