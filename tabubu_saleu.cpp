@@ -92,10 +92,10 @@ const int NUM_OF_INITIAL_SOLUTIONS = 200;
 const int MAX_SEGMENT = 200;
 const int MAX_NO_IMPROVE = 1000;
 const int MAX_ITER_PER_SEGMENT = 1000;
-const double gamma1 = 1.0;
+const double gamma1 = 0.5;
 const double gamma2 = 0.3;
-const double gamma3 = 0.0;
-const double gamma4 = 0.25;
+const double gamma3 = 0.1;
+const double gamma4 = 0.3;
 
 // Runtime-configurable search knobs (initialized from compile-time defaults)
 static int CFG_NUM_INITIAL = NUM_OF_INITIAL_SOLUTIONS;
@@ -103,6 +103,22 @@ static int CFG_MAX_SEGMENT = MAX_SEGMENT;
 static int CFG_MAX_NO_IMPROVE = MAX_NO_IMPROVE;
 static int CFG_MAX_ITER_PER_SEGMENT = MAX_ITER_PER_SEGMENT;
 static double CFG_TIME_LIMIT_SEC = 0.0; // 0 = unlimited
+
+static int compute_total_iter_budget(int customer_count, int neighborhood_count) {
+    // n * K * ceil(sqrt(n))
+    int sqrt_n = max(1, (int)ceil(sqrt((double)customer_count)));
+    return max(1, customer_count * neighborhood_count * sqrt_n);
+}
+
+static int compute_iters_per_segment(int customer_count, int neighborhood_count) {
+    // n * ceil(sqrt(K))
+    int sqrt_k = max(1, (int)ceil(sqrt((double)neighborhood_count)));
+    return max(1, customer_count * sqrt_k);
+}
+
+static int compute_segment_count(int total_iters, int iters_per_segment) {
+    return max(1, (total_iters + iters_per_segment - 1) / iters_per_segment);
+}
 
 // Adaptive penalty coefficients for constraint violations
 static double PENALTY_LAMBDA_CAPACITY = 1.0;      // λ for capacity violations
@@ -4074,15 +4090,18 @@ int main(int argc, char* argv[]) {
     string input_file = argv[1];
     bool print_dist_matrix = false;
     bool auto_tune = false;
+    bool user_set_segments = false;
+    bool user_set_iters = false;
+    bool user_set_no_improve = false;
     // Parse optional flags
     for (int ai = 2; ai < argc; ++ai) {
         string arg = argv[ai];
         if (arg == "--print-distance-matrix") { print_dist_matrix = true; continue; }
         string v;
         if (parse_kv_flag(arg, "--attempts", v)) { CFG_NUM_INITIAL = max(1, stoi(v)); continue; }
-        if (parse_kv_flag(arg, "--segments", v)) { CFG_MAX_SEGMENT = max(1, stoi(v)); continue; }
-        if (parse_kv_flag(arg, "--iters", v)) { CFG_MAX_ITER_PER_SEGMENT = max(1, stoi(v)); continue; }
-        if (parse_kv_flag(arg, "--no-improve", v)) { CFG_MAX_NO_IMPROVE = max(1, stoi(v)); continue; }
+        if (parse_kv_flag(arg, "--segments", v)) { CFG_MAX_SEGMENT = max(1, stoi(v)); user_set_segments = true; continue; }
+        if (parse_kv_flag(arg, "--iters", v)) { CFG_MAX_ITER_PER_SEGMENT = max(1, stoi(v)); user_set_iters = true; continue; }
+        if (parse_kv_flag(arg, "--no-improve", v)) { CFG_MAX_NO_IMPROVE = max(1, stoi(v)); user_set_no_improve = true; continue; }
         if (parse_kv_flag(arg, "--time-limit", v)) { CFG_TIME_LIMIT_SEC = max(0.0, stod(v)); continue; }
         if (parse_kv_flag(arg, "--knn-k", v)) { CFG_KNN_K = max(0, stoi(v)); continue; }
         if (parse_kv_flag(arg, "--knn-window", v)) { CFG_KNN_WINDOW = max(0, stoi(v)); continue; }
@@ -4107,26 +4126,19 @@ int main(int argc, char* argv[]) {
     // Optional auto-tuning based on instance size if requested
     // For now, set auto-tune to always true
     auto_tune = true;
-    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 3600.0; // 1 hour default; overridden by --time-limit
+    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 5400.0; // 1 hour default; overridden by --time-limit
     if (auto_tune) {
-        if (n <= 50) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 500);
-            CFG_KNN_K = min(CFG_KNN_K, int(n)); // modest k for small n
-        } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 500);
-            CFG_KNN_K = min(CFG_KNN_K, int(n)); // moderate k for medium n
-        } else {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
-            CFG_MAX_SEGMENT = min(CFG_MAX_SEGMENT, 50);
-            CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, 1000);
-            CFG_MAX_NO_IMPROVE = min(CFG_MAX_NO_IMPROVE, 500);
-            CFG_KNN_K = min(CFG_KNN_K, int(n));
+        int tuned_total_iters = compute_total_iter_budget(n, NUM_NEIGHBORHOODS);
+        CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
+        CFG_KNN_K = min(CFG_KNN_K, int(n));
+        if (!user_set_iters) {
+            CFG_MAX_ITER_PER_SEGMENT = compute_iters_per_segment(n, NUM_NEIGHBORHOODS);
+        }
+        if (!user_set_no_improve) {
+            CFG_MAX_NO_IMPROVE = 2 * CFG_MAX_ITER_PER_SEGMENT;
+        }
+        if (!user_set_segments) {
+            CFG_MAX_SEGMENT = compute_segment_count(tuned_total_iters, CFG_MAX_ITER_PER_SEGMENT);
         }
     }
 

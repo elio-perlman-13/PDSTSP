@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches:
-    #  - main
-      - restore-branch
+      - main
+    #  - restore-branch
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
