@@ -17,12 +17,13 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Build matrix of 40 runs
+      - name: Build matrix from all instances
         id: set-matrix
         run: |
           items=()
-          for i in $(seq 1 40); do
-            items+=("{\"file\":\"saleu-2022/saleu-2022/X-n139-k10.vrp\",\"base\":\"X-n139-k10\",\"run_id\":$i}")
+          for f in saleu-2022/saleu-2022/*.vrp; do
+            base=$(basename "$f" .vrp)
+            items+=("{\"file\":\"$f\",\"base\":\"$base\"}")
           done
           matrix_json="$(printf '%s,' "${items[@]}")"
           matrix_json="[${matrix_json%,}]"
@@ -47,7 +48,7 @@ jobs:
           retention-days: 1
 
   run-instance:
-    name: Run instance ${{ matrix.base }} R${{ matrix.run_id }}
+    name: Run instance ${{ matrix.base }}
     needs: [prepare, build]
     strategy:
       matrix:
@@ -71,23 +72,23 @@ jobs:
         timeout-minutes: 355
         run: |
           mkdir -p outputs
-          ./tabubu_saleu "${{ matrix.file }}" > "outputs/${{ matrix.base }}_R${{ matrix.run_id }}.log" 2>&1 || true
+          ./tabubu_saleu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
 
       - name: Prepare outputs
         if: always()
         run: |
           if [[ -f output_solution_best.txt ]]; then
-            cp output_solution_best.txt "outputs/${{ matrix.base }}_R${{ matrix.run_id }}_best.txt"
+            cp output_solution_best.txt "outputs/${{ matrix.base }}_best.txt"
           fi
 
       - name: Upload per-instance artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.base }}-R${{ matrix.run_id }}-tabubu-saleu-results
+          name: ${{ matrix.base }}-tabubu-saleu-results
           path: |
-            outputs/${{ matrix.base }}_R${{ matrix.run_id }}_best.txt
-            outputs/${{ matrix.base }}_R${{ matrix.run_id }}.log
+            outputs/${{ matrix.base }}_best.txt
+            outputs/${{ matrix.base }}.log
           if-no-files-found: warn
 
   collect-all:

@@ -4127,7 +4127,7 @@ int main(int argc, char* argv[]) {
     // For now, set auto-tune to always true
     auto_tune = true;
     
-    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 600.0; // 1 hour default; overridden by --time-limit
+    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 60.0; // 1 hour default; overridden by --time-limit
     if (auto_tune) {
         int tuned_total_iters = compute_total_iter_budget(n, NUM_NEIGHBORHOODS);
         CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
