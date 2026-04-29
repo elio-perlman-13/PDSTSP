@@ -3500,6 +3500,7 @@ void print_distance_matrix(){
     cout << "END_DISTANCE_MATRIX\n";
 }
 
+
 // Extracts the BKS solution block for the given instance filepath from bks.txt.
 // Returns a string suitable for passing to check_benchmark_solution(), or "" if not found.
 static std::string load_bks_for_instance(const std::string& instance_filepath,
