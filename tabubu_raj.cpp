@@ -107,7 +107,7 @@ static double CFG_TIME_LIMIT_SEC = 0.0; // 0 = unlimited
 static int compute_total_iter_budget(int customer_count, int neighborhood_count) {
     // n * K * ceil(sqrt(n * K))
     int sqrt_nk = max(1, (int)ceil(sqrt((double)customer_count * neighborhood_count)));
-    return max(1, customer_count * neighborhood_count * sqrt_nk);
+    return max(1, customer_count * neighborhood_count * sqrt_nk * 3);
 }
 
 static int compute_iters_per_segment(int customer_count, int neighborhood_count) {
@@ -3671,7 +3671,7 @@ int main(int argc, char* argv[]) {
     // Optional auto-tuning based on instance size if requested
     // For now, set auto-tune to always true
     auto_tune = true;
-    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 7200.0; // 5 minutes default; overridden by --time-limit
+    if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 10800.0; // 5 minutes default; overridden by --time-limit
     if (auto_tune) {
         int tuned_total_iters = compute_total_iter_budget(n, NUM_NEIGHBORHOODS);
         CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
