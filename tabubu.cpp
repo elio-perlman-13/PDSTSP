@@ -35,7 +35,7 @@ vd serve_truck, serve_drone; // time taken by truck and drone to serve each cust
 vi served_by_drone; //whether each customer can be served by drone or not, 1 if yes, 0 if no
 vd deadline; //customer deadlines
 vd demand; // demand[i]: demand of customer i
-double Dh = 100.0; // truck capacity (all trucks) (kg)
+double Dh = 200.0; // truck capacity (all trucks) (kg)
 double vmax = 15.6464; // truck base speed (m/s)
 int L = 24; //number of time segments in a day
 //vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
