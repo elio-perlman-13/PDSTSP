@@ -113,7 +113,6 @@ double alpha = 0.9998; // cooling rate for simulated annealing
 // Destroy and repair helper
 vvd edge_records; // edge_records[i][j]: stores working times for edge (i,j)
 const double DESTROY_RATE = 0.3; // fraction of customers to remove during destroy phase
-const int EJECTION_CHAIN_ITERS = 20; // number of ejection chain applications during destroy-repair
 
 struct Solution {
     vvi truck_routes; //truck_routes[i]: sequence of customers served by truck i
@@ -6019,9 +6018,9 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
              no_improve_iters = 0;
 
             // Chance to restart from best solution or do destroy and repair:
-             current_sol = destroy_worst_repair_random(current_sol);
+             /* current_sol = destroy_worst_repair_random(current_sol);
             
-            destroy_repair_count++;  
+            destroy_repair_count++;  */ 
             
             current_sol = recalculate_solution(current_sol);
             cout << "Applied perturbation at iter " << iter << ", new makespan: " << current_sol.total_makespan << "\n"; 
@@ -6243,16 +6242,16 @@ int main(int argc, char* argv[]) {
         int tuned_segments       = compute_segment_count(tuned_total_iters, tuned_iters_per_seg);
         CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, tuned_iters_per_seg);
         CFG_MAX_SEGMENT          = min(CFG_MAX_SEGMENT, tuned_segments);
-        CFG_MAX_NO_IMPROVE       = 2 * CFG_MAX_ITER_PER_SEGMENT;
+        CFG_MAX_NO_IMPROVE       = 4 * CFG_MAX_ITER_PER_SEGMENT;
         cout << "Search config: total_iters=" << (1LL * CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT)
              << " (segments=" << CFG_MAX_SEGMENT
              << ", iters_per_seg=" << CFG_MAX_ITER_PER_SEGMENT
              << ", no_improve=" << CFG_MAX_NO_IMPROVE << ")\n";
         if (n <= 20) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 17);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 17);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
