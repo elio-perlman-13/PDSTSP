@@ -124,7 +124,9 @@ def main():
 	args = parser.parse_args()
 
 	iters, current, best, feasible = read_iterations(args.input)
-	plot_iterations(iters, current, best, feasible, args.bin_size, args.annotate_best)
+	total_iter = max(iters) if iters else 1
+	bin_size = args.bin_size if args.bin_size != 500 else max(1, total_iter // 50)
+	plot_iterations(iters, current, best, feasible, bin_size, args.annotate_best)
 
 	if args.save:
 		plt.savefig(args.save, dpi=200)
