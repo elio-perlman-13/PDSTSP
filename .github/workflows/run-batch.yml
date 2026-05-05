@@ -64,6 +64,7 @@ jobs:
     name: Run instance ${{ matrix.base }}
     needs: [prepare, build] # Wait for build to finish
     strategy:
+      fail-fast: false
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
       max-parallel: 96
@@ -86,7 +87,16 @@ jobs:
         timeout-minutes: 355 # slightly less than job timeout to allow cleanup steps to run
         run: |
           mkdir -p outputs
-          ./tabubu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
+          log_file="outputs/${{ matrix.base }}.log"
+          ( while true; do echo "[heartbeat] $(date -u +'%Y-%m-%dT%H:%M:%SZ') running ${{ matrix.base }}"; sleep 60; done ) &
+          hb_pid=$!
+          set +e
+          ./tabubu "${{ matrix.file }}" 2>&1 | tee "$log_file"
+          solver_status=${PIPESTATUS[0]}
+          kill "$hb_pid" 2>/dev/null || true
+          wait "$hb_pid" 2>/dev/null || true
+          echo "Solver exit code: $solver_status"
+          true
 
       - name: Prepare outputs
         if: always()
