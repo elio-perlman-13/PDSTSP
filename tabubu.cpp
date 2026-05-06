@@ -6058,25 +6058,38 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 no_improve_segments++;
             }
 
-            /* if (scoring_mode_iter == 2) {
+            if (scoring_mode_iter == 2) {
                 scoring_mode_iter = 0;
-                no_improve_segments = 0;
                 best_solution_score_now = solution_score_makespan(best_solution);
-            } */
+            }
 
-            if (no_improve_segments >= 2) {
+            if (no_improve_segments % 4 == 2) {
                 // If no improvement for 2 consecutive segments, switch scoring mode to encourage different search behavior
                 if (scoring_mode_iter == 0) {
-                    scoring_mode_iter = 0;
+                    scoring_mode_iter = 2;
                 }
                 else if (scoring_mode_iter == 2) {
                     scoring_mode_iter = 0;
                 } /* else if (scoring_mode_iter == 2){
                     scoring_mode_iter = 0;
                 } */
-                no_improve_segments = 0;
                 best_solution_score_now = scoring_mode_iter == 0 ? solution_score_makespan(best_solution) :
                                             (scoring_mode_iter == 1 ? solution_score_l2_norm(best_solution) : solution_score_total_time(best_solution));
+            }
+            if (no_improve_segments % 4 == 0 && no_improve_segments > 0) {
+                // If no improvement for 4 consecutive segments, destroy and repair;
+                current_sol = destroy_worst_repair_random(current_sol);
+                current_sol = recalculate_solution(current_sol);
+                current_score = best_solution_score_now;
+                cout << "No improvement for " << no_improve_segments << " segments, applying perturbation. New makespan: " << current_sol.total_makespan << "\n";
+                tabu_list_10.clear();
+                tabu_list_11.clear();
+                tabu_list_20.clear();
+                tabu_list_2opt.clear();
+                tabu_list_2opt_star.clear();
+                tabu_list_22.clear();
+                tabu_list_21.clear();
+                tabu_list_ejection.clear();
             }
 
             // Update weights based on scores
