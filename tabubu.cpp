@@ -84,10 +84,10 @@ const int NUM_OF_INITIAL_SOLUTIONS = 200;
 const int MAX_SEGMENT = 200;
 const int MAX_NO_IMPROVE = 1000;
 const int MAX_ITER_PER_SEGMENT = 1000;
-const double gamma1 = 0.3;
-const double gamma2 = 0.2;
+const double gamma1 = 0.5;
+const double gamma2 = 0.3;
 const double gamma3 = 0.1;
-const double gamma4 = 0.6;
+const double gamma4 = 0.3;
 
 // Runtime-configurable search knobs (initialized from compile-time defaults)
 static int CFG_NUM_INITIAL = NUM_OF_INITIAL_SOLUTIONS;
@@ -6248,10 +6248,10 @@ int main(int argc, char* argv[]) {
              << ", iters_per_seg=" << CFG_MAX_ITER_PER_SEGMENT
              << ", no_improve=" << CFG_MAX_NO_IMPROVE << ")\n";
         if (n <= 20) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 13);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 20);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 13);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 20);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
