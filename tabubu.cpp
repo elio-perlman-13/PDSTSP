@@ -5628,7 +5628,7 @@ Solution destroy_worst_repair_random(Solution sol) {
 Solution destroy_random_repair_random(Solution sol) {
     unordered_set<int> to_destroy;
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-    int destroy_count = static_cast<int>(n * 0.3); // Destroy 30%
+    int destroy_count = static_cast<int>(n * 0.3); // Destroy 10%
     std::uniform_int_distribution<int> dist(1, n);
     while ((int)to_destroy.size() < destroy_count) {
         int r = dist(rng);
@@ -6040,7 +6040,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 best_segment_score = best_solution_score_now;
             }
 
-            if (no_improve_segments % 4 == 2 && no_improve_segments > 0) {
+            if (no_improve_segments % 2 == 0 && no_improve_segments > 0) {
                 // If no improvement for 2 consecutive segments, switch scoring mode to encourage different search behavior
                 if (scoring_mode_iter == 0) {
                     scoring_mode_iter = 2;
@@ -6053,9 +6053,9 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 best_segment_sol = best_solution;
                 best_segment_score = best_solution_score_now;
             }
-            if (no_improve_segments % 4 == 0 && no_improve_segments > 0) {
+            /* if (no_improve_segments % 4 == 0 && no_improve_segments > 0) {
                 // If no improvement for 4 consecutive segments, destroy and repair;
-                current_sol = destroy_worst_repair_random(current_sol);
+                current_sol = destroy_random_repair_random(current_sol);
                 current_sol = recalculate_solution(current_sol);
                 current_score = best_solution_score_now;
                 cout << "No improvement for " << no_improve_segments << " segments, applying perturbation. New makespan: " << current_sol.total_makespan << "\n";
@@ -6067,7 +6067,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 tabu_list_22.clear();
                 tabu_list_21.clear();
                 tabu_list_ejection.clear();
-            }
+            }  */
 
             // Update weights based on scores
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
