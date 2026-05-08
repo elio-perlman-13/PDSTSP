@@ -108,7 +108,7 @@ static const double PENALTY_MIN = 0.5;            // minimum λ value
 static const double PENALTY_MAX = 1000.0;
 
 static const double T0 = 150.0; // initial temperature for simulated annealing acceptance
-double alpha = 0.9998; // cooling rate for simulated annealing
+double alpha = 0.998; // cooling rate for simulated annealing
 
 // Destroy and repair helper
 vvd edge_records; // edge_records[i][j]: stores working times for edge (i,j)
