@@ -5554,7 +5554,7 @@ Solution repair_solution_common(Solution sol, const unordered_set<int>& to_destr
 
 Solution destroy_worst_repair_random(Solution sol) {
     unordered_set<int> to_destroy;
-    int destroy_count = static_cast<int>(n * 0.2); // Destroy 30%
+    int destroy_count = static_cast<int>(n * 0.1); // Destroy 30%
     
     Solution current_sol = sol;
     std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
