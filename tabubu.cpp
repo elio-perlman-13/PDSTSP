@@ -5786,50 +5786,6 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
     Solution current_sol = initial_solution;
     double current_cost = initial_solution.total_makespan;
 
-    /* for (int i = 0; i < num_initial_sol; i++){
-        Solution initial_sol = generate_initial_solution();
-        updated_edge_records(initial_sol);
-        Solution best_local_solution = initial_sol;
-        for (int j = 0; j < 10; j++){
-            int selected_neighbor = rand() % NUM_NEIGHBORHOODS;
-            initial_sol = local_search(initial_sol, selected_neighbor, 0, solution_score(best_solution));
-            if (solution_score(initial_sol) + 1e-12 < solution_score(best_local_solution) ||
-                (std::abs(solution_score(initial_sol) - solution_score(best_local_solution)) <= 1e-12 &&
-                 initial_sol.total_makespan + 1e-12 < best_local_solution.total_makespan)) {
-                best_local_solution = initial_sol;
-            }
-            if (is_feasible(initial_sol) &&
-                initial_sol.total_makespan + 1e-12 < best_feasible_makespan) {
-                best_feasible_makespan = initial_sol.total_makespan;
-                best_feasible_solution = initial_sol;
-                best_cost = best_feasible_makespan;
-            }
-        }
-        // if it's better than the worst solution in elite set, add it
-        if (elite_set.size() < ELITE_SET_SIZE) {
-            elite_set.push_back(best_local_solution);
-        } else {
-            double worst_score = -1.0;
-            int worst_idx = -1;
-            for (size_t j = 0; j < elite_set.size(); ++j) {
-                double s = solution_score(elite_set[j]);
-                if (s > worst_score) {
-                    worst_score = s;
-                    worst_idx = j;
-                }
-            }
-            if (solution_score(best_local_solution) + 1e-12 < worst_score) {
-                elite_set[worst_idx] = best_local_solution;
-            }
-        }
-    } 
-
-    // Pick current solution from elite set randomly
-    if (!elite_set.empty()) {
-        int rand_idx = rand() % elite_set.size();
-        current_sol = elite_set[rand_idx];
-        current_cost = current_sol.total_makespan;
-    }*/
     int iter = 0;
     int total_iters = CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT;
     int no_improve_iters = 0;
@@ -6039,7 +5995,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 best_segment_score = best_solution_score_now;
             }
 
-            if (no_improve_segments % 2 == 0 && no_improve_segments > 0) {
+            if (no_improve_segments % 4 == 2 && no_improve_segments > 0) {
                 // If no improvement for 2 consecutive segments, switch scoring mode to encourage different search behavior
                 if (scoring_mode_iter == 0) {
                     scoring_mode_iter = 2;
@@ -6052,7 +6008,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 best_segment_sol = best_solution;
                 best_segment_score = best_solution_score_now;
             }
-            /* if (no_improve_segments % 4 == 0 && no_improve_segments > 0) {
+            if (no_improve_segments % 4 == 0 && no_improve_segments > 0) {
                 // If no improvement for 4 consecutive segments, destroy and repair;
                 current_sol = destroy_worst_repair_random(current_sol);
                 current_sol = recalculate_solution(current_sol);
@@ -6066,7 +6022,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 tabu_list_22.clear();
                 tabu_list_21.clear();
                 tabu_list_ejection.clear();
-            } */
+            } 
 
             // Update weights based on scores
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
@@ -6237,10 +6193,10 @@ int main(int argc, char* argv[]) {
              << ", iters_per_seg=" << CFG_MAX_ITER_PER_SEGMENT
              << ", no_improve=" << CFG_MAX_NO_IMPROVE << ")\n";
         if (n <= 20) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 18);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 18);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
