@@ -5988,8 +5988,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 current_sol = neighbor;
                 current_cost = neighbor.total_makespan;
                 current_score = neighbor_score;
-            } */   
-            // The Tortured Poet Department
+            } */
             score[selected_neighbor] += gamma3;
             no_improve_iters++;
         }
@@ -6053,7 +6052,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 best_segment_sol = best_solution;
                 best_segment_score = best_solution_score_now;
             }
-            if (no_improve_segments % 4 == 0 && no_improve_segments > 0) {
+            /* if (no_improve_segments % 4 == 0 && no_improve_segments > 0) {
                 // If no improvement for 4 consecutive segments, destroy and repair;
                 current_sol = destroy_worst_repair_random(current_sol);
                 current_sol = recalculate_solution(current_sol);
@@ -6067,7 +6066,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 tabu_list_22.clear();
                 tabu_list_21.clear();
                 tabu_list_ejection.clear();
-            }
+            } */
 
             // Update weights based on scores
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
@@ -6238,10 +6237,10 @@ int main(int argc, char* argv[]) {
              << ", iters_per_seg=" << CFG_MAX_ITER_PER_SEGMENT
              << ", no_improve=" << CFG_MAX_NO_IMPROVE << ")\n";
         if (n <= 20) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 15);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 15);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 10);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
