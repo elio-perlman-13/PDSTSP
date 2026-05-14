@@ -107,8 +107,8 @@ static const double PENALTY_DECREASE = 1.2;       // divide when satisfied *
 static const double PENALTY_MIN = 0.5;            // minimum λ value
 static const double PENALTY_MAX = 1000.0;
 
-static const double T0 = 150.0; // initial temperature for simulated annealing acceptance
-double alpha = 0.998; // cooling rate for simulated annealing
+static const double T0 = 100.0; // initial temperature for simulated annealing acceptance
+double alpha = 0.9998; // cooling rate for simulated annealing
 
 // Destroy and repair helper
 vvd edge_records; // edge_records[i][j]: stores working times for edge (i,j)
@@ -6193,10 +6193,10 @@ int main(int argc, char* argv[]) {
              << ", iters_per_seg=" << CFG_MAX_ITER_PER_SEGMENT
              << ", no_improve=" << CFG_MAX_NO_IMPROVE << ")\n";
         if (n <= 20) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 12);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 18);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else if (n <= 200) {
-            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 12);
+            CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 18);
             CFG_KNN_K = min(CFG_KNN_K, int(n));
         } else {
             CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 1);
