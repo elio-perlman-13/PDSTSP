@@ -107,7 +107,7 @@ static const double PENALTY_DECREASE = 1.2;       // divide when satisfied *
 static const double PENALTY_MIN = 0.5;            // minimum λ value
 static const double PENALTY_MAX = 1000.0;
 
-static const double T0 = 100.0; // initial temperature for simulated annealing acceptance
+static const double T0 = 150.0; // initial temperature for simulated annealing acceptance
 double alpha = 0.9998; // cooling rate for simulated annealing
 
 // Destroy and repair helper
