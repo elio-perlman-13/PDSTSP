@@ -35,7 +35,7 @@ vd serve_truck, serve_drone; // time taken by truck and drone to serve each cust
 vi served_by_drone; //whether each customer can be served by drone or not, 1 if yes, 0 if no
 vd deadline; //customer deadlines
 vd demand; // demand[i]: demand of customer i
-double Dh = 500.0; // truck capacity (all trucks) (kg)
+double Dh = 100.0; // truck capacity (all trucks) (kg)
 double vmax = 15.6464; // truck base speed (m/s)
 int L = 24; //number of time segments in a day
 //vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
@@ -5995,7 +5995,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 best_segment_score = best_solution_score_now;
             }
 
-            if (no_improve_segments % 2 == 0 && no_improve_segments > 0) {
+            if (no_improve_segments % 4 == 2 && no_improve_segments > 0) {
                 // If no improvement for 2 consecutive segments, switch scoring mode to encourage different search behavior
                 if (scoring_mode_iter == 0) {
                     scoring_mode_iter = 2;
@@ -6008,7 +6008,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 best_segment_sol = best_solution;
                 best_segment_score = best_solution_score_now;
             }
-            /* if (no_improve_segments % 4 == 0 && no_improve_segments > 0) {
+            if (no_improve_segments % 4 == 0 && no_improve_segments > 0) {
                 // If no improvement for 4 consecutive segments, destroy and repair;
                 current_sol = destroy_worst_repair_random(current_sol);
                 current_sol = recalculate_solution(current_sol);
@@ -6022,7 +6022,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 tabu_list_22.clear();
                 tabu_list_21.clear();
                 tabu_list_ejection.clear();
-            }  */
+            }
 
             // Update weights based on scores
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
