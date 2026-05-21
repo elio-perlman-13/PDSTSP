@@ -1,4 +1,4 @@
-name: Compare Multi-trip vs 1-trip Trucks (big_instance, Dh=200, Dd=5&10, 6h limit, 160 jobs)
+name: Compare Multi-trip vs 1-trip Trucks (big_instance, Dh=200, Dd=2.27, Lw∈{1800,2700,3600}, 6h limit, 160 jobs)
 
 # Chạy tự động khi push lên main, hoặc kích hoạt thủ công
 on:
@@ -56,39 +56,33 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Patch Dh=200 & Dd={5,10} → compile 4 binaries
+      - name: Patch Dh=200, Dd=2.27 → compile 2 binaries
         run: |
-          for dd in 5 10; do
-            sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 200.0/' tabubu.cpp \
-              | sed "s/double Dd = [0-9][0-9]*\.[0-9]*/double Dd = ${dd}.0/" \
-              > tabubu_multi_Dd${dd}_patched.cpp
-            sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 200.0/' tabubu_truck1trip.cpp \
-              | sed "s/double Dd = [0-9][0-9]*\.[0-9]*/double Dd = ${dd}.0/" \
-              > tabubu_1trip_Dd${dd}_patched.cpp
+          sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 200.0/' tabubu.cpp \
+            > tabubu_multi_patched.cpp
+          sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 200.0/' tabubu_truck1trip.cpp \
+            > tabubu_1trip_patched.cpp
 
-            echo "=== Verify Dh & Dd patch (Dd=${dd}) ==="
-            grep 'double D[hd]' tabubu_multi_Dd${dd}_patched.cpp
-            grep 'double D[hd]' tabubu_1trip_Dd${dd}_patched.cpp
+          echo "=== Verify Dh & Dd (Dd=2.27 giữ nguyên) ==="
+          grep 'double D[hd]' tabubu_multi_patched.cpp
+          grep 'double D[hd]' tabubu_1trip_patched.cpp
 
-            g++ -O2 -std=c++17 tabubu_multi_Dd${dd}_patched.cpp  -o tabubu_multi_Dd${dd}
-            g++ -O2 -std=c++17 tabubu_1trip_Dd${dd}_patched.cpp  -o tabubu_1trip_Dd${dd}
-            echo "Build OK for Dd=${dd}"
-          done
+          g++ -O2 -std=c++17 tabubu_multi_patched.cpp  -o tabubu_multi
+          g++ -O2 -std=c++17 tabubu_1trip_patched.cpp  -o tabubu_1trip
+          echo "Build OK"
 
       - name: Upload solver binaries
         uses: actions/upload-artifact@v4
         with:
           name: solver-bins
           path: |
-            tabubu_multi_Dd5
-            tabubu_multi_Dd10
-            tabubu_1trip_Dd5
-            tabubu_1trip_Dd10
+            tabubu_multi
+            tabubu_1trip
           retention-days: 1
 
   # ──────────────────────────────────────────────────────────────────────────
-  # 3. Mỗi job = 1 instance × 1 solver × 1 run, chạy Dd=5 rồi Dd=10 tuần tự
-  #    Mỗi lần giải: time-limit=7200s (2h) | Tổng job: ≤4h | Timeout: 360 phút
+  # 3. Mỗi job = 1 instance × 1 solver × 1 run
+  #    Chạy tuần tự Lw=1800 → 2700 → 3600 (3×2h=6h = đúng giới hạn)
   # ──────────────────────────────────────────────────────────────────────────
   run:
     name: "${{ matrix.base }} | ${{ matrix.solver }} | run ${{ matrix.run }}"
@@ -110,20 +104,38 @@ jobs:
           name: solver-bins
 
       - name: Make executables
-        run: chmod +x tabubu_multi_Dd5 tabubu_multi_Dd10 tabubu_1trip_Dd5 tabubu_1trip_Dd10
+        run: chmod +x tabubu_multi tabubu_1trip
 
-      - name: Run solver for Dd=5 then Dd=10 (each 2h, total ≤4h)
+      - name: Run solver for Lw=1800, 2700, 3600 (each 2h, total ≤6h)
         run: |
-          for dd in 5 10; do
-            binary="./tabubu_${{ matrix.solver }}_Dd${dd}"
-            echo "=== Run Dd=${dd}: $binary ${{ matrix.file }} --attempts=1 --time-limit=7200 ==="
-            $binary "${{ matrix.file }}" --attempts=1 --time-limit=7200 2>&1 || true
+          for lw in 1800 2700 3600; do
+            echo "=== Patching instance: set all Lw=${lw} ==="
+            python3 - <<PYEOF
+          lw_val = ${lw}
+          with open('${{ matrix.file }}') as f:
+              lines = f.readlines()
+          out = []
+          for i, line in enumerate(lines):
+              if i < 6:
+                  out.append(line)
+              else:
+                  parts = line.rstrip('\n').split('\t')
+                  if len(parts) >= 7:
+                      parts[6] = str(float(lw_val))
+                  out.append('\t'.join(parts) + '\n')
+          with open('instance_patched.txt', 'w') as f:
+              f.writelines(out)
+          PYEOF
+
+            binary="./tabubu_${{ matrix.solver }}"
+            echo "=== Run Lw=${lw}: $binary instance_patched.txt --attempts=1 --time-limit=7200 ==="
+            $binary instance_patched.txt --attempts=1 --time-limit=7200 2>&1 || true
 
             {
               echo "INSTANCE_FILE: ${{ matrix.file }}"
               echo "INSTANCE_BASE: ${{ matrix.base }}"
               echo "SOLVER: ${{ matrix.solver }}"
-              echo "DRONE_CAP: ${dd}"
+              echo "LW: ${lw}"
               echo "RUN: ${{ matrix.run }}"
               echo "---SOLVER OUTPUT---"
               if [ -f output_solution_best.txt ]; then
@@ -136,17 +148,18 @@ jobs:
                 echo "Worst solution cost: "
                 echo "Mean elapsed time: "
               fi
-            } > result_Dd${dd}.txt
+            } > result_Lw${lw}.txt
           done
 
-      - name: Upload results (Dd=5 and Dd=10)
+      - name: Upload results (Lw=1800, 2700, 3600)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: "result-${{ matrix.base }}-${{ matrix.solver }}-${{ matrix.run }}"
           path: |
-            result_Dd5.txt
-            result_Dd10.txt
+            result_Lw1800.txt
+            result_Lw2700.txt
+            result_Lw3600.txt
           if-no-files-found: warn
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -171,11 +184,11 @@ jobs:
         run: |
           mkdir -p results
           # Mỗi artifact result-* chứa result_Dd5.txt và result_Dd10.txt
-          find all_artifacts -name 'result_Dd*.txt' | while read src; do
+          find all_artifacts -name 'result_Lw*.txt' | while read src; do
             artifact_name=$(basename "$(dirname "$src")")
-            fname=$(basename "$src" .txt)   # result_Dd5 hoặc result_Dd10
-            dd=${fname#result_Dd}           # 5 hoặc 10
-            cp "$src" "results/${artifact_name}-Dd${dd}.txt"
+            fname=$(basename "$src" .txt)   # result_Lw1800, result_Lw2700, result_Lw3600
+            lw=${fname#result_Lw}           # 1800, 2700, 3600
+            cp "$src" "results/${artifact_name}-Lw${lw}.txt"
           done
           echo "=== $(ls results/ | wc -l) result files collected ==="
           ls results/ | sort | head -20
@@ -203,14 +216,14 @@ jobs:
           for row in rows:
               inst      = row['instance name']
               model     = row['model (truck single trip/truck multiple trip)']
-              drone_cap = row.get('drone_cap', '').strip()
+              lw        = row.get('lw', '').strip()
               feas      = row['feasibility (yes/no)'].strip().lower()
               cost_s    = row['final cost (improved cost)'].strip()
-              data[(inst, drone_cap)][model]['total'] += 1
+              data[(inst, lw)][model]['total'] += 1
               if feas == 'yes' and cost_s:
                   try:
-                      data[(inst, drone_cap)][model]['feasible'] += 1
-                      data[(inst, drone_cap)][model]['costs'].append(float(cost_s))
+                      data[(inst, lw)][model]['feasible'] += 1
+                      data[(inst, lw)][model]['costs'].append(float(cost_s))
                   except ValueError:
                       pass
 
@@ -218,7 +231,7 @@ jobs:
           MODEL_SINGLE = 'truck_single_trip'
 
           HEADER = (
-              f"{'Instance':<18} {'Dd':>5}  "
+              f"{'Instance':<18} {'Lw':>6}  "
               f"{'Multi feas':>10} {'1trip feas':>10}  "
               f"{'Multi best':>12} {'1trip best':>12}  "
               f"{'GAP(%)':>8}  {'Better':>10}"
@@ -226,15 +239,15 @@ jobs:
           SEP = '-' * len(HEADER)
 
           summary_rows = []
-          for drone_cap in ['5', '10']:
+          for lw in ['1800', '2700', '3600']:
               print('\n' + SEP)
-              print(f'  Feasibility & GAP — Dd={drone_cap} kg  (truck_multiple_trip vs truck_single_trip)')
+              print(f'  Feasibility & GAP — Lw={lw} s  (truck_multiple_trip vs truck_single_trip)')
               print(SEP)
               print(HEADER)
               print(SEP)
 
               for inst in sorted(set(k[0] for k in data.keys())):
-                  key = (inst, drone_cap)
+                  key = (inst, lw)
                   if key not in data:
                       continue
                   m = data[key].get(MODEL_MULTI,  {'feasible': 0, 'total': 0, 'costs': []})
@@ -258,9 +271,9 @@ jobs:
                   else:
                       gap_str = 'N/A'; better = 'none'; m_best_str = 'INFEAS'; s_best_str = 'INFEAS'
 
-                  print(f"{inst:<18} {drone_cap:>5}  {m_feas:>10} {s_feas:>10}  {m_best_str:>12} {s_best_str:>12}  {gap_str:>8}  {better}")
+                  print(f"{inst:<18} {lw:>6}  {m_feas:>10} {s_feas:>10}  {m_best_str:>12} {s_best_str:>12}  {gap_str:>8}  {better}")
                   summary_rows.append({
-                      'instance': inst, 'drone_cap': drone_cap,
+                      'instance': inst, 'lw': lw,
                       'multi_feasible': m['feasible'], 'multi_total': m['total'],
                       'single_feasible': s['feasible'], 'single_total': s['total'],
                       'multi_best': m_best_str, 'single_best': s_best_str,
@@ -268,7 +281,7 @@ jobs:
                   })
 
               print(SEP)
-              sub = [r for r in summary_rows if r['drone_cap'] == drone_cap]
+              sub = [r for r in summary_rows if r['lw'] == lw]
               mf = sum(r['multi_feasible'] for r in sub); mt = sum(r['multi_total'] for r in sub)
               sf = sum(r['single_feasible'] for r in sub); st = sum(r['single_total'] for r in sub)
               mw = sum(1 for r in sub if r['better_model'] == 'multi')
@@ -282,7 +295,7 @@ jobs:
           # Write comparison CSV
           with open('comparison_summary.csv', 'w', newline='') as f:
               w = csv.DictWriter(f, fieldnames=[
-                  'instance', 'drone_cap',
+                  'instance', 'lw',
                   'multi_feasible', 'multi_total', 'single_feasible', 'single_total',
                   'multi_best', 'single_best', 'gap_pct', 'better_model',
               ])
