@@ -1,4 +1,4 @@
-name: Compare Multi-trip vs 1-trip Trucks (big_instance, Dh=200, 2h limit)
+name: Compare Multi-trip vs 1-trip Trucks (big_instance, Dh=200, Dd=5&10, 2h limit)
 
 # Chạy tự động khi push lên main, hoặc kích hoạt thủ công
 on:
@@ -12,7 +12,7 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
-  # 1. Tạo ma trận: 16 instances × 2 solvers × 5 runs = 160 jobs
+  # 1. Tạo ma trận: 16 instances × 2 solvers × 5 runs × 2 drone_caps = 320 jobs
   # ──────────────────────────────────────────────────────────────────────────
   prepare:
     name: Prepare run matrix
@@ -31,14 +31,16 @@ jobs:
           items = []
           for f in sorted(glob.glob('big_instance/*.txt')):
               base = os.path.basename(f)[:-4]
-              for solver in ['multi', '1trip']:
-                  for run in range(1, 6):
-                      items.append({
-                          'file':   f,
-                          'base':   base,
-                          'solver': solver,
-                          'run':    run,
-                      })
+              for drone_cap in [5, 10]:
+                  for solver in ['multi', '1trip']:
+                      for run in range(1, 6):
+                          items.append({
+                              'file':      f,
+                              'base':      base,
+                              'solver':    solver,
+                              'drone_cap': drone_cap,
+                              'run':       run,
+                          })
 
           print(f'Matrix: {len(items)} jobs total', flush=True)
           gh_out = os.environ['GITHUB_OUTPUT']
@@ -55,30 +57,34 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Patch truck capacity Dh → 200.0 and compile
+      - name: Patch Dh=200 & Dd={5,10} → compile 4 binaries
         run: |
-          # tabubu.cpp      has Dh = 1000.0  → patch to 200.0
-          # tabubu_truck1trip.cpp has Dh = 100.0 → patch to 200.0
-          sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 200.0/' \
-              tabubu.cpp > tabubu_multi_patched.cpp
-          sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 200.0/' \
-              tabubu_truck1trip.cpp > tabubu_1trip_patched.cpp
+          for dd in 5 10; do
+            sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 200.0/' tabubu.cpp \
+              | sed "s/double Dd = [0-9][0-9]*\.[0-9]*/double Dd = ${dd}.0/" \
+              > tabubu_multi_Dd${dd}_patched.cpp
+            sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 200.0/' tabubu_truck1trip.cpp \
+              | sed "s/double Dd = [0-9][0-9]*\.[0-9]*/double Dd = ${dd}.0/" \
+              > tabubu_1trip_Dd${dd}_patched.cpp
 
-          echo "=== Verify Dh patch ==="
-          grep 'double Dh' tabubu_multi_patched.cpp
-          grep 'double Dh' tabubu_1trip_patched.cpp
+            echo "=== Verify Dh & Dd patch (Dd=${dd}) ==="
+            grep 'double D[hd]' tabubu_multi_Dd${dd}_patched.cpp
+            grep 'double D[hd]' tabubu_1trip_Dd${dd}_patched.cpp
 
-          g++ -O2 -std=c++17 tabubu_multi_patched.cpp  -o tabubu_multi
-          g++ -O2 -std=c++17 tabubu_1trip_patched.cpp  -o tabubu_1trip
-          echo "Build OK"
+            g++ -O2 -std=c++17 tabubu_multi_Dd${dd}_patched.cpp  -o tabubu_multi_Dd${dd}
+            g++ -O2 -std=c++17 tabubu_1trip_Dd${dd}_patched.cpp  -o tabubu_1trip_Dd${dd}
+            echo "Build OK for Dd=${dd}"
+          done
 
       - name: Upload solver binaries
         uses: actions/upload-artifact@v4
         with:
           name: solver-bins
           path: |
-            tabubu_multi
-            tabubu_1trip
+            tabubu_multi_Dd5
+            tabubu_multi_Dd10
+            tabubu_1trip_Dd5
+            tabubu_1trip_Dd10
           retention-days: 1
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -86,7 +92,7 @@ jobs:
   #    Time limit: 2 giờ (7200 giây) | Timeout job: 130 phút
   # ──────────────────────────────────────────────────────────────────────────
   run:
-    name: "${{ matrix.base }} | ${{ matrix.solver }} | run ${{ matrix.run }}"
+    name: "${{ matrix.base }} | ${{ matrix.solver }} | Dd=${{ matrix.drone_cap }} | run ${{ matrix.run }}"
     needs: [prepare, build]
     runs-on: ubuntu-latest
     strategy:
@@ -105,12 +111,12 @@ jobs:
           name: solver-bins
 
       - name: Make executables
-        run: chmod +x tabubu_multi tabubu_1trip
+        run: chmod +x tabubu_multi_Dd5 tabubu_multi_Dd10 tabubu_1trip_Dd5 tabubu_1trip_Dd10
 
       - name: Run solver (1 attempt, time limit 2h)
         timeout-minutes: 122
         run: |
-          binary="./tabubu_${{ matrix.solver }}"
+          binary="./tabubu_${{ matrix.solver }}_Dd${{ matrix.drone_cap }}"
           echo "=== Run: $binary ${{ matrix.file }} --attempts=1 --time-limit=7200 ==="
           $binary "${{ matrix.file }}" --attempts=1 --time-limit=7200 2>&1 || true
 
@@ -121,6 +127,7 @@ jobs:
             echo "INSTANCE_FILE: ${{ matrix.file }}"
             echo "INSTANCE_BASE: ${{ matrix.base }}"
             echo "SOLVER: ${{ matrix.solver }}"
+            echo "DRONE_CAP: ${{ matrix.drone_cap }}"
             echo "RUN: ${{ matrix.run }}"
             echo "---SOLVER OUTPUT---"
             if [ -f output_solution_best.txt ]; then
@@ -138,7 +145,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: "result-${{ matrix.base }}-${{ matrix.solver }}-${{ matrix.run }}"
+          name: "result-${{ matrix.base }}-${{ matrix.solver }}-Dd${{ matrix.drone_cap }}-${{ matrix.run }}"
           path: result.txt
           if-no-files-found: warn
 
@@ -192,15 +199,16 @@ jobs:
           data = defaultdict(lambda: defaultdict(lambda: {'feasible': 0, 'total': 0, 'costs': []}))
 
           for row in rows:
-              inst   = row['instance name']
-              model  = row['model (truck single trip/truck multiple trip)']
-              feas   = row['feasibility (yes/no)'].strip().lower()
-              cost_s = row['final cost (improved cost)'].strip()
-              data[inst][model]['total'] += 1
+              inst      = row['instance name']
+              model     = row['model (truck single trip/truck multiple trip)']
+              drone_cap = row.get('drone_cap', '').strip()
+              feas      = row['feasibility (yes/no)'].strip().lower()
+              cost_s    = row['final cost (improved cost)'].strip()
+              data[(inst, drone_cap)][model]['total'] += 1
               if feas == 'yes' and cost_s:
                   try:
-                      data[inst][model]['feasible'] += 1
-                      data[inst][model]['costs'].append(float(cost_s))
+                      data[(inst, drone_cap)][model]['feasible'] += 1
+                      data[(inst, drone_cap)][model]['costs'].append(float(cost_s))
                   except ValueError:
                       pass
 
@@ -208,79 +216,72 @@ jobs:
           MODEL_SINGLE = 'truck_single_trip'
 
           HEADER = (
-              f"{'Instance':<18} "
+              f"{'Instance':<18} {'Dd':>5}  "
               f"{'Multi feas':>10} {'1trip feas':>10}  "
               f"{'Multi best':>12} {'1trip best':>12}  "
               f"{'GAP(%)':>8}  {'Better':>10}"
           )
           SEP = '-' * len(HEADER)
 
-          print('\n' + SEP)
-          print('  Feasibility & GAP comparison: truck_multiple_trip vs truck_single_trip')
-          print(SEP)
-          print(HEADER)
-          print(SEP)
-
           summary_rows = []
-          for inst in sorted(data.keys()):
-              m = data[inst].get(MODEL_MULTI,  {'feasible': 0, 'total': 0, 'costs': []})
-              s = data[inst].get(MODEL_SINGLE, {'feasible': 0, 'total': 0, 'costs': []})
+          for drone_cap in ['5', '10']:
+              print('\n' + SEP)
+              print(f'  Feasibility & GAP — Dd={drone_cap} kg  (truck_multiple_trip vs truck_single_trip)')
+              print(SEP)
+              print(HEADER)
+              print(SEP)
 
-              m_feas  = f"{m['feasible']}/{m['total']}"
-              s_feas  = f"{s['feasible']}/{s['total']}"
-              m_best  = min(m['costs']) if m['costs'] else None
-              s_best  = min(s['costs']) if s['costs'] else None
+              for inst in sorted(set(k[0] for k in data.keys())):
+                  key = (inst, drone_cap)
+                  if key not in data:
+                      continue
+                  m = data[key].get(MODEL_MULTI,  {'feasible': 0, 'total': 0, 'costs': []})
+                  s = data[key].get(MODEL_SINGLE, {'feasible': 0, 'total': 0, 'costs': []})
 
-              if m_best is not None and s_best is not None:
-                  # GAP = (single - multi) / multi × 100  (positive → multi is better)
-                  gap = (s_best - m_best) / m_best * 100.0
-                  better = 'multi' if gap > 0 else ('1trip' if gap < 0 else 'tie')
-                  gap_str    = f'{gap:+.2f}%'
-                  m_best_str = f'{m_best:.2f}'
-                  s_best_str = f'{s_best:.2f}'
-              elif m_best is not None:
-                  gap_str = 'N/A'; better = 'multi (only feasible)'; m_best_str = f'{m_best:.2f}'; s_best_str = 'INFEAS'
-              elif s_best is not None:
-                  gap_str = 'N/A'; better = '1trip (only feasible)'; m_best_str = 'INFEAS'; s_best_str = f'{s_best:.2f}'
-              else:
-                  gap_str = 'N/A'; better = 'none'; m_best_str = 'INFEAS'; s_best_str = 'INFEAS'
+                  m_feas  = f"{m['feasible']}/{m['total']}"
+                  s_feas  = f"{s['feasible']}/{s['total']}"
+                  m_best  = min(m['costs']) if m['costs'] else None
+                  s_best  = min(s['costs']) if s['costs'] else None
 
-              print(f"{inst:<18} {m_feas:>10} {s_feas:>10}  {m_best_str:>12} {s_best_str:>12}  {gap_str:>8}  {better}")
-              summary_rows.append({
-                  'instance': inst,
-                  'multi_feasible': m['feasible'], 'multi_total': m['total'],
-                  'single_feasible': s['feasible'], 'single_total': s['total'],
-                  'multi_best': m_best_str, 'single_best': s_best_str,
-                  'gap_pct': gap_str, 'better_model': better,
-              })
+                  if m_best is not None and s_best is not None:
+                      gap = (s_best - m_best) / m_best * 100.0
+                      better = 'multi' if gap > 0 else ('1trip' if gap < 0 else 'tie')
+                      gap_str    = f'{gap:+.2f}%'
+                      m_best_str = f'{m_best:.2f}'
+                      s_best_str = f'{s_best:.2f}'
+                  elif m_best is not None:
+                      gap_str = 'N/A'; better = 'multi only'; m_best_str = f'{m_best:.2f}'; s_best_str = 'INFEAS'
+                  elif s_best is not None:
+                      gap_str = 'N/A'; better = '1trip only'; m_best_str = 'INFEAS'; s_best_str = f'{s_best:.2f}'
+                  else:
+                      gap_str = 'N/A'; better = 'none'; m_best_str = 'INFEAS'; s_best_str = 'INFEAS'
 
-          print(SEP)
+                  print(f"{inst:<18} {drone_cap:>5}  {m_feas:>10} {s_feas:>10}  {m_best_str:>12} {s_best_str:>12}  {gap_str:>8}  {better}")
+                  summary_rows.append({
+                      'instance': inst, 'drone_cap': drone_cap,
+                      'multi_feasible': m['feasible'], 'multi_total': m['total'],
+                      'single_feasible': s['feasible'], 'single_total': s['total'],
+                      'multi_best': m_best_str, 'single_best': s_best_str,
+                      'gap_pct': gap_str, 'better_model': better,
+                  })
 
-          # Aggregate summary
-          multi_feas_total  = sum(r['multi_feasible']  for r in summary_rows)
-          single_feas_total = sum(r['single_feasible'] for r in summary_rows)
-          multi_total       = sum(r['multi_total']  for r in summary_rows)
-          single_total      = sum(r['single_total'] for r in summary_rows)
-          multi_wins  = sum(1 for r in summary_rows if r['better_model'] == 'multi')
-          single_wins = sum(1 for r in summary_rows if r['better_model'] == '1trip')
-          ties        = sum(1 for r in summary_rows if r['better_model'] == 'tie')
-
-          print(f"\n  OVERALL FEASIBILITY RATIO")
-          print(f"    truck_multiple_trip : {multi_feas_total}/{multi_total}"
-                f"  ({100*multi_feas_total/multi_total:.1f}%)" if multi_total else "    truck_multiple_trip : N/A")
-          print(f"    truck_single_trip   : {single_feas_total}/{single_total}"
-                f"  ({100*single_feas_total/single_total:.1f}%)" if single_total else "    truck_single_trip   : N/A")
-          print(f"\n  BEST COST WINS (per instance, across 5 runs)")
-          print(f"    truck_multiple_trip wins : {multi_wins}")
-          print(f"    truck_single_trip   wins : {single_wins}")
-          print(f"    Ties                     : {ties}")
+              print(SEP)
+              sub = [r for r in summary_rows if r['drone_cap'] == drone_cap]
+              mf = sum(r['multi_feasible'] for r in sub); mt = sum(r['multi_total'] for r in sub)
+              sf = sum(r['single_feasible'] for r in sub); st = sum(r['single_total'] for r in sub)
+              mw = sum(1 for r in sub if r['better_model'] == 'multi')
+              sw = sum(1 for r in sub if r['better_model'] == '1trip')
+              tw = sum(1 for r in sub if r['better_model'] == 'tie')
+              if mt: print(f"  Feasibility: multi={mf}/{mt} ({100*mf/mt:.1f}%)  1trip={sf}/{st} ({100*sf/st:.1f}%)")
+              print(f"  Wins: multi={mw}  1trip={sw}  tie={tw}")
 
           print(SEP + '\n')
 
           # Write comparison CSV
           with open('comparison_summary.csv', 'w', newline='') as f:
               w = csv.DictWriter(f, fieldnames=[
-                  'instance', 'multi_feasible', 'multi_total', 'single_feasible', 'single_total',
+                  'instance', 'drone_cap',
+                  'multi_feasible', 'multi_total', 'single_feasible', 'single_total',
                   'multi_best', 'single_best', 'gap_pct', 'better_model',
               ])
               w.writeheader()

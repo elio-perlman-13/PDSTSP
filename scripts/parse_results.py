@@ -41,7 +41,7 @@ def read_instance_header(instance_dir, base):
 
 # ── Parse 1 file kết quả ──────────────────────────────────────────────────────
 def parse_result_file(path):
-    meta = {'INSTANCE_BASE': '', 'SOLVER': '', 'RUN': ''}
+    meta = {'INSTANCE_BASE': '', 'SOLVER': '', 'DRONE_CAP': '', 'RUN': ''}
     solver_lines = []
     in_solver = False
 
@@ -116,7 +116,7 @@ def main():
     instance_cache = {}
 
     FIELDNAMES = [
-        'instance name', 'run',
+        'instance name', 'run', 'drone_cap',
         'num of truck', 'num of drone',
         'final cost (improved cost)', 'mean cost', 'worst cost',
         'truck routes(2 dim array)', 'drone routes(2 dim array)',
@@ -144,6 +144,7 @@ def main():
 
         base   = meta.get('INSTANCE_BASE', '')
         solver = meta.get('SOLVER', '')
+        drone_cap = meta.get('DRONE_CAP', '')
         run    = meta.get('RUN', '')
 
         if not base or not solver:
@@ -185,6 +186,7 @@ def main():
         writer.writerow({
             'instance name':       base,
             'run':                 run,
+            'drone_cap':           drone_cap,
             'num of truck':        num_trucks,
             'num of drone':        num_drones,
             'final cost (improved cost)': sol['final_cost'],
