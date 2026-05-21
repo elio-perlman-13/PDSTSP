@@ -1,4 +1,4 @@
-name: Compare Multi-trip vs 1-trip Trucks (big_instance, Dh=200, Dd=5&10, 2h limit)
+name: Compare Multi-trip vs 1-trip Trucks (big_instance, Dh=200, Dd=5&10, 6h limit, 160 jobs)
 
 # Chạy tự động khi push lên main, hoặc kích hoạt thủ công
 on:
@@ -12,7 +12,8 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
-  # 1. Tạo ma trận: 16 instances × 2 solvers × 5 runs × 2 drone_caps = 320 jobs
+  # 1. Tạo ma trận: 16 instances × 2 solvers × 5 runs = 160 jobs
+  #    Mỗi job chạy tuần tự Dd=5 rồi Dd=10 (2×2h=4h < 6h giới hạn)
   # ──────────────────────────────────────────────────────────────────────────
   prepare:
     name: Prepare run matrix
@@ -22,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Generate 160-item matrix (instances × solvers × runs)
+      - name: Generate 160-item matrix (instances × solvers × runs, no drone_cap dim)
         id: set-matrix
         run: |
           python3 - <<'PYEOF'
@@ -31,16 +32,14 @@ jobs:
           items = []
           for f in sorted(glob.glob('big_instance/*.txt')):
               base = os.path.basename(f)[:-4]
-              for drone_cap in [5, 10]:
-                  for solver in ['multi', '1trip']:
-                      for run in range(1, 6):
-                          items.append({
-                              'file':      f,
-                              'base':      base,
-                              'solver':    solver,
-                              'drone_cap': drone_cap,
-                              'run':       run,
-                          })
+              for solver in ['multi', '1trip']:
+                  for run in range(1, 6):
+                      items.append({
+                          'file':   f,
+                          'base':   base,
+                          'solver': solver,
+                          'run':    run,
+                      })
 
           print(f'Matrix: {len(items)} jobs total', flush=True)
           gh_out = os.environ['GITHUB_OUTPUT']
@@ -88,11 +87,11 @@ jobs:
           retention-days: 1
 
   # ──────────────────────────────────────────────────────────────────────────
-  # 3. Mỗi job = 1 lần giải = 1 instance × 1 solver × 1 run
-  #    Time limit: 2 giờ (7200 giây) | Timeout job: 130 phút
+  # 3. Mỗi job = 1 instance × 1 solver × 1 run, chạy Dd=5 rồi Dd=10 tuần tự
+  #    Mỗi lần giải: time-limit=7200s (2h) | Tổng job: ≤4h | Timeout: 360 phút
   # ──────────────────────────────────────────────────────────────────────────
   run:
-    name: "${{ matrix.base }} | ${{ matrix.solver }} | Dd=${{ matrix.drone_cap }} | run ${{ matrix.run }}"
+    name: "${{ matrix.base }} | ${{ matrix.solver }} | run ${{ matrix.run }}"
     needs: [prepare, build]
     runs-on: ubuntu-latest
     strategy:
@@ -100,7 +99,7 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
       max-parallel: 20
-    timeout-minutes: 130
+    timeout-minutes: 360
 
     steps:
       - uses: actions/checkout@v5
@@ -113,40 +112,41 @@ jobs:
       - name: Make executables
         run: chmod +x tabubu_multi_Dd5 tabubu_multi_Dd10 tabubu_1trip_Dd5 tabubu_1trip_Dd10
 
-      - name: Run solver (1 attempt, time limit 2h)
-        timeout-minutes: 122
+      - name: Run solver for Dd=5 then Dd=10 (each 2h, total ≤4h)
         run: |
-          binary="./tabubu_${{ matrix.solver }}_Dd${{ matrix.drone_cap }}"
-          echo "=== Run: $binary ${{ matrix.file }} --attempts=1 --time-limit=7200 ==="
-          $binary "${{ matrix.file }}" --attempts=1 --time-limit=7200 2>&1 || true
+          for dd in 5 10; do
+            binary="./tabubu_${{ matrix.solver }}_Dd${dd}"
+            echo "=== Run Dd=${dd}: $binary ${{ matrix.file }} --attempts=1 --time-limit=7200 ==="
+            $binary "${{ matrix.file }}" --attempts=1 --time-limit=7200 2>&1 || true
 
-      - name: Package result with metadata
-        if: always()
-        run: |
-          {
-            echo "INSTANCE_FILE: ${{ matrix.file }}"
-            echo "INSTANCE_BASE: ${{ matrix.base }}"
-            echo "SOLVER: ${{ matrix.solver }}"
-            echo "DRONE_CAP: ${{ matrix.drone_cap }}"
-            echo "RUN: ${{ matrix.run }}"
-            echo "---SOLVER OUTPUT---"
-            if [ -f output_solution_best.txt ]; then
-              cat output_solution_best.txt
-            else
-              echo "Final solution feasibility: INFEASIBLE"
-              echo "Improved solution cost: "
-              echo "Mean solution cost: "
-              echo "Worst solution cost: "
-              echo "Mean elapsed time: "
-            fi
-          } > result.txt
+            {
+              echo "INSTANCE_FILE: ${{ matrix.file }}"
+              echo "INSTANCE_BASE: ${{ matrix.base }}"
+              echo "SOLVER: ${{ matrix.solver }}"
+              echo "DRONE_CAP: ${dd}"
+              echo "RUN: ${{ matrix.run }}"
+              echo "---SOLVER OUTPUT---"
+              if [ -f output_solution_best.txt ]; then
+                cat output_solution_best.txt
+                rm -f output_solution_best.txt
+              else
+                echo "Final solution feasibility: INFEASIBLE"
+                echo "Improved solution cost: "
+                echo "Mean solution cost: "
+                echo "Worst solution cost: "
+                echo "Mean elapsed time: "
+              fi
+            } > result_Dd${dd}.txt
+          done
 
-      - name: Upload result
+      - name: Upload results (Dd=5 and Dd=10)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: "result-${{ matrix.base }}-${{ matrix.solver }}-Dd${{ matrix.drone_cap }}-${{ matrix.run }}"
-          path: result.txt
+          name: "result-${{ matrix.base }}-${{ matrix.solver }}-${{ matrix.run }}"
+          path: |
+            result_Dd5.txt
+            result_Dd10.txt
           if-no-files-found: warn
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -170,10 +170,12 @@ jobs:
       - name: Flatten result files into results/
         run: |
           mkdir -p results
-          # Mỗi artifact result-* có 1 file result.txt; đổi tên theo artifact
-          find all_artifacts -path '*/result-*/result.txt' | while read src; do
+          # Mỗi artifact result-* chứa result_Dd5.txt và result_Dd10.txt
+          find all_artifacts -name 'result_Dd*.txt' | while read src; do
             artifact_name=$(basename "$(dirname "$src")")
-            cp "$src" "results/${artifact_name}.txt"
+            fname=$(basename "$src" .txt)   # result_Dd5 hoặc result_Dd10
+            dd=${fname#result_Dd}           # 5 hoặc 10
+            cp "$src" "results/${artifact_name}-Dd${dd}.txt"
           done
           echo "=== $(ls results/ | wc -l) result files collected ==="
           ls results/ | sort | head -20
