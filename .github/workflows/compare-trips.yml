@@ -1,4 +1,4 @@
-name: Compare Multi-trip vs 1-trip Trucks (big_instance, Dh=100, 2h limit)
+name: Compare Multi-trip vs 1-trip Trucks (big_instance, Dh=200, 2h limit)
 
 # Chạy tự động khi push lên main, hoặc kích hoạt thủ công
 on:
@@ -47,21 +47,21 @@ jobs:
           PYEOF
 
   # ──────────────────────────────────────────────────────────────────────────
-  # 2. Biên dịch cả 2 solver (Dh=100 kg, Dd=2.27 kg)
+  # 2. Biên dịch cả 2 solver (Dh=200 kg, Dd=2.27 kg)
   # ──────────────────────────────────────────────────────────────────────────
   build:
-    name: Build solvers (Dh=100)
+    name: Build solvers (Dh=200)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      - name: Patch truck capacity Dh → 100.0 and compile
+      - name: Patch truck capacity Dh → 200.0 and compile
         run: |
-          # tabubu.cpp      has Dh = 1000.0  → patch to 100.0
-          # tabubu_truck1trip.cpp has Dh = 100.0 → patch to 100.0
-          sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 100.0/' \
+          # tabubu.cpp      has Dh = 1000.0  → patch to 200.0
+          # tabubu_truck1trip.cpp has Dh = 100.0 → patch to 200.0
+          sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 200.0/' \
               tabubu.cpp > tabubu_multi_patched.cpp
-          sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 100.0/' \
+          sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 200.0/' \
               tabubu_truck1trip.cpp > tabubu_1trip_patched.cpp
 
           echo "=== Verify Dh patch ==="
