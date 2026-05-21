@@ -1,0 +1,301 @@
+name: Compare Multi-trip vs 1-trip Trucks (big_instance, Dh=300, 2h limit)
+
+# Chạy tự động khi push lên main, hoặc kích hoạt thủ công
+on:
+  push:
+    branches:
+      - main_huett
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # 1. Tạo ma trận: 16 instances × 2 solvers × 5 runs = 160 jobs
+  # ──────────────────────────────────────────────────────────────────────────
+  prepare:
+    name: Prepare run matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Generate 160-item matrix (instances × solvers × runs)
+        id: set-matrix
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, glob
+
+          items = []
+          for f in sorted(glob.glob('big_instance/*.txt')):
+              base = os.path.basename(f)[:-4]
+              for solver in ['multi', '1trip']:
+                  for run in range(1, 6):
+                      items.append({
+                          'file':   f,
+                          'base':   base,
+                          'solver': solver,
+                          'run':    run,
+                      })
+
+          print(f'Matrix: {len(items)} jobs total', flush=True)
+          gh_out = os.environ['GITHUB_OUTPUT']
+          with open(gh_out, 'a') as fh:
+              fh.write(f'matrix={json.dumps(items)}\n')
+          PYEOF
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 2. Biên dịch cả 2 solver (Dh=300 kg, Dd=2.27 kg)
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build solvers (Dh=300)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Patch truck capacity Dh → 300.0 and compile
+        run: |
+          # tabubu.cpp      has Dh = 1000.0  → patch to 300.0
+          # tabubu_truck1trip.cpp has Dh = 100.0 → patch to 300.0
+          sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 300.0/' \
+              tabubu.cpp > tabubu_multi_patched.cpp
+          sed 's/double Dh = [0-9][0-9]*\.[0-9]*/double Dh = 300.0/' \
+              tabubu_truck1trip.cpp > tabubu_1trip_patched.cpp
+
+          echo "=== Verify Dh patch ==="
+          grep 'double Dh' tabubu_multi_patched.cpp
+          grep 'double Dh' tabubu_1trip_patched.cpp
+
+          g++ -O2 -std=c++17 tabubu_multi_patched.cpp  -o tabubu_multi
+          g++ -O2 -std=c++17 tabubu_1trip_patched.cpp  -o tabubu_1trip
+          echo "Build OK"
+
+      - name: Upload solver binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: solver-bins
+          path: |
+            tabubu_multi
+            tabubu_1trip
+          retention-days: 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 3. Mỗi job = 1 lần giải = 1 instance × 1 solver × 1 run
+  #    Time limit: 2 giờ (7200 giây) | Timeout job: 130 phút
+  # ──────────────────────────────────────────────────────────────────────────
+  run:
+    name: "${{ matrix.base }} | ${{ matrix.solver }} | run ${{ matrix.run }}"
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      max-parallel: 20
+    timeout-minutes: 130
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download solver binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: solver-bins
+
+      - name: Make executables
+        run: chmod +x tabubu_multi tabubu_1trip
+
+      - name: Run solver (1 attempt, time limit 2h)
+        timeout-minutes: 122
+        run: |
+          binary="./tabubu_${{ matrix.solver }}"
+          echo "=== Run: $binary ${{ matrix.file }} --attempts=1 --time-limit=7200 ==="
+          $binary "${{ matrix.file }}" --attempts=1 --time-limit=7200 2>&1 || true
+
+      - name: Package result with metadata
+        if: always()
+        run: |
+          {
+            echo "INSTANCE_FILE: ${{ matrix.file }}"
+            echo "INSTANCE_BASE: ${{ matrix.base }}"
+            echo "SOLVER: ${{ matrix.solver }}"
+            echo "RUN: ${{ matrix.run }}"
+            echo "---SOLVER OUTPUT---"
+            if [ -f output_solution_best.txt ]; then
+              cat output_solution_best.txt
+            else
+              echo "Final solution feasibility: INFEASIBLE"
+              echo "Improved solution cost: "
+              echo "Mean solution cost: "
+              echo "Worst solution cost: "
+              echo "Mean elapsed time: "
+            fi
+          } > result.txt
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "result-${{ matrix.base }}-${{ matrix.solver }}-${{ matrix.run }}"
+          path: result.txt
+          if-no-files-found: warn
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 4. Thu thập tất cả kết quả → tạo CSV tổng hợp
+  # ──────────────────────────────────────────────────────────────────────────
+  collect:
+    name: Collect results and generate CSV
+    needs: run
+    runs-on: ubuntu-latest
+    if: always()
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all run artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all_artifacts
+
+      - name: Flatten result files into results/
+        run: |
+          mkdir -p results
+          # Mỗi artifact result-* có 1 file result.txt; đổi tên theo artifact
+          find all_artifacts -path '*/result-*/result.txt' | while read src; do
+            artifact_name=$(basename "$(dirname "$src")")
+            cp "$src" "results/${artifact_name}.txt"
+          done
+          echo "=== $(ls results/ | wc -l) result files collected ==="
+          ls results/ | sort | head -20
+
+      - name: Generate comprehensive CSV
+        run: |
+          python3 scripts/parse_results.py results/ big_instance/ | tee solutions.csv
+          echo ""
+          echo "=== CSV rows: $(wc -l < solutions.csv) (including header) ==="
+
+      - name: Compare feasibility ratio and GAP between models
+        run: |
+          python3 - << 'PYEOF'
+          import csv, sys
+          from collections import defaultdict
+          import math
+
+          with open('solutions.csv', newline='') as f:
+              rows = list(csv.DictReader(f))
+
+          # Group by (instance, model) → collect best feasible cost across 5 runs
+          # Structure: data[instance][model] = {'feasible': int, 'total': int, 'costs': [float, ...]}
+          data = defaultdict(lambda: defaultdict(lambda: {'feasible': 0, 'total': 0, 'costs': []}))
+
+          for row in rows:
+              inst   = row['instance name']
+              model  = row['model (truck single trip/truck multiple trip)']
+              feas   = row['feasibility (yes/no)'].strip().lower()
+              cost_s = row['final cost (improved cost)'].strip()
+              data[inst][model]['total'] += 1
+              if feas == 'yes' and cost_s:
+                  try:
+                      data[inst][model]['feasible'] += 1
+                      data[inst][model]['costs'].append(float(cost_s))
+                  except ValueError:
+                      pass
+
+          MODEL_MULTI  = 'truck_multiple_trip'
+          MODEL_SINGLE = 'truck_single_trip'
+
+          HEADER = (
+              f"{'Instance':<18} "
+              f"{'Multi feas':>10} {'1trip feas':>10}  "
+              f"{'Multi best':>12} {'1trip best':>12}  "
+              f"{'GAP(%)':>8}  {'Better':>10}"
+          )
+          SEP = '-' * len(HEADER)
+
+          print('\n' + SEP)
+          print('  Feasibility & GAP comparison: truck_multiple_trip vs truck_single_trip')
+          print(SEP)
+          print(HEADER)
+          print(SEP)
+
+          summary_rows = []
+          for inst in sorted(data.keys()):
+              m = data[inst].get(MODEL_MULTI,  {'feasible': 0, 'total': 0, 'costs': []})
+              s = data[inst].get(MODEL_SINGLE, {'feasible': 0, 'total': 0, 'costs': []})
+
+              m_feas  = f"{m['feasible']}/{m['total']}"
+              s_feas  = f"{s['feasible']}/{s['total']}"
+              m_best  = min(m['costs']) if m['costs'] else None
+              s_best  = min(s['costs']) if s['costs'] else None
+
+              if m_best is not None and s_best is not None:
+                  # GAP = (single - multi) / multi × 100  (positive → multi is better)
+                  gap = (s_best - m_best) / m_best * 100.0
+                  better = 'multi' if gap > 0 else ('1trip' if gap < 0 else 'tie')
+                  gap_str    = f'{gap:+.2f}%'
+                  m_best_str = f'{m_best:.2f}'
+                  s_best_str = f'{s_best:.2f}'
+              elif m_best is not None:
+                  gap_str = 'N/A'; better = 'multi (only feasible)'; m_best_str = f'{m_best:.2f}'; s_best_str = 'INFEAS'
+              elif s_best is not None:
+                  gap_str = 'N/A'; better = '1trip (only feasible)'; m_best_str = 'INFEAS'; s_best_str = f'{s_best:.2f}'
+              else:
+                  gap_str = 'N/A'; better = 'none'; m_best_str = 'INFEAS'; s_best_str = 'INFEAS'
+
+              print(f"{inst:<18} {m_feas:>10} {s_feas:>10}  {m_best_str:>12} {s_best_str:>12}  {gap_str:>8}  {better}")
+              summary_rows.append({
+                  'instance': inst,
+                  'multi_feasible': m['feasible'], 'multi_total': m['total'],
+                  'single_feasible': s['feasible'], 'single_total': s['total'],
+                  'multi_best': m_best_str, 'single_best': s_best_str,
+                  'gap_pct': gap_str, 'better_model': better,
+              })
+
+          print(SEP)
+
+          # Aggregate summary
+          multi_feas_total  = sum(r['multi_feasible']  for r in summary_rows)
+          single_feas_total = sum(r['single_feasible'] for r in summary_rows)
+          multi_total       = sum(r['multi_total']  for r in summary_rows)
+          single_total      = sum(r['single_total'] for r in summary_rows)
+          multi_wins  = sum(1 for r in summary_rows if r['better_model'] == 'multi')
+          single_wins = sum(1 for r in summary_rows if r['better_model'] == '1trip')
+          ties        = sum(1 for r in summary_rows if r['better_model'] == 'tie')
+
+          print(f"\n  OVERALL FEASIBILITY RATIO")
+          print(f"    truck_multiple_trip : {multi_feas_total}/{multi_total}"
+                f"  ({100*multi_feas_total/multi_total:.1f}%)" if multi_total else "    truck_multiple_trip : N/A")
+          print(f"    truck_single_trip   : {single_feas_total}/{single_total}"
+                f"  ({100*single_feas_total/single_total:.1f}%)" if single_total else "    truck_single_trip   : N/A")
+          print(f"\n  BEST COST WINS (per instance, across 5 runs)")
+          print(f"    truck_multiple_trip wins : {multi_wins}")
+          print(f"    truck_single_trip   wins : {single_wins}")
+          print(f"    Ties                     : {ties}")
+
+          print(SEP + '\n')
+
+          # Write comparison CSV
+          with open('comparison_summary.csv', 'w', newline='') as f:
+              w = csv.DictWriter(f, fieldnames=[
+                  'instance', 'multi_feasible', 'multi_total', 'single_feasible', 'single_total',
+                  'multi_best', 'single_best', 'gap_pct', 'better_model',
+              ])
+              w.writeheader()
+              w.writerows(summary_rows)
+
+          print('Saved: comparison_summary.csv')
+          PYEOF
+
+      - name: Upload CSV report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solutions-csv
+          path: |
+            solutions.csv
+            comparison_summary.csv
+          if-no-files-found: warn
+
