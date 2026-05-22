@@ -1,10 +1,10 @@
-name: Compare Multi-trip vs 1-trip Trucks (big_instance, Dh=200, Dd=2.27, Lw∈{1800,2700,3600}, 6h limit, 160 jobs)
+name: Compare Multi-trip vs 1-trip Trucks (big_instance, Dh=200, Dd=2.27, Lw∈{1800,2700,3600}, 6h limit, 240 jobs)
 
 # Chạy tự động khi push lên main, hoặc kích hoạt thủ công
 on:
-  push:
-    branches:
-      - main_huett
+  # push:
+  #   branches:
+  #     - main_huett
   workflow_dispatch:
 
 env:
@@ -81,11 +81,11 @@ jobs:
           retention-days: 1
 
   # ──────────────────────────────────────────────────────────────────────────
-  # 3. Mỗi job = 1 instance × 1 solver × 1 run
-  #    Chạy tuần tự Lw=1800 → 2700 → 3600 (3×2h=6h = đúng giới hạn)
+  # 3. Mỗi job = 1 instance × 1 Lw × 1 run
+  #    Patch instance 1 lần, chạy multi → 1trip (2×2h=4h, timeout 6h)
   # ──────────────────────────────────────────────────────────────────────────
   run:
-    name: "${{ matrix.base }} | ${{ matrix.solver }} | run ${{ matrix.run }}"
+    name: "${{ matrix.base }} | Lw=${{ matrix.lw }} | run ${{ matrix.run }}"
     needs: [prepare, build]
     runs-on: ubuntu-latest
     strategy:
@@ -106,12 +106,11 @@ jobs:
       - name: Make executables
         run: chmod +x tabubu_multi tabubu_1trip
 
-      - name: Run solver for Lw=1800, 2700, 3600 (each 2h, total ≤6h)
+      - name: Patch instance (Lw=${{ matrix.lw }}) then run multi → 1trip
         run: |
-          for lw in 1800 2700 3600; do
-            echo "=== Patching instance: set all Lw=${lw} ==="
-            python3 - <<PYEOF
-          lw_val = ${lw}
+          echo "=== Patching instance: set all Lw=${{ matrix.lw }} ==="
+          python3 - <<PYEOF
+          lw_val = ${{ matrix.lw }}
           with open('${{ matrix.file }}') as f:
               lines = f.readlines()
           out = []
@@ -127,15 +126,16 @@ jobs:
               f.writelines(out)
           PYEOF
 
-            binary="./tabubu_${{ matrix.solver }}"
-            echo "=== Run Lw=${lw}: $binary instance_patched.txt --attempts=1 --time-limit=7200 ==="
+          for solver in multi 1trip; do
+            binary="./tabubu_${solver}"
+            echo "=== Run ${solver}: $binary instance_patched.txt --attempts=1 --time-limit=7200 ==="
             $binary instance_patched.txt --attempts=1 --time-limit=7200 2>&1 || true
 
             {
               echo "INSTANCE_FILE: ${{ matrix.file }}"
               echo "INSTANCE_BASE: ${{ matrix.base }}"
-              echo "SOLVER: ${{ matrix.solver }}"
-              echo "LW: ${lw}"
+              echo "SOLVER: ${solver}"
+              echo "LW: ${{ matrix.lw }}"
               echo "RUN: ${{ matrix.run }}"
               echo "---SOLVER OUTPUT---"
               if [ -f output_solution_best.txt ]; then
@@ -148,18 +148,17 @@ jobs:
                 echo "Worst solution cost: "
                 echo "Mean elapsed time: "
               fi
-            } > result_Lw${lw}.txt
+            } > result_${solver}.txt
           done
 
-      - name: Upload results (Lw=1800, 2700, 3600)
+      - name: Upload results (multi and 1trip)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: "result-${{ matrix.base }}-${{ matrix.solver }}-${{ matrix.run }}"
+          name: "result-${{ matrix.base }}-Lw${{ matrix.lw }}-${{ matrix.run }}"
           path: |
-            result_Lw1800.txt
-            result_Lw2700.txt
-            result_Lw3600.txt
+            result_multi.txt
+            result_1trip.txt
           if-no-files-found: warn
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -183,12 +182,11 @@ jobs:
       - name: Flatten result files into results/
         run: |
           mkdir -p results
-          # Mỗi artifact result-* chứa result_Dd5.txt và result_Dd10.txt
-          find all_artifacts -name 'result_Lw*.txt' | while read src; do
+          # Mỗi artifact result-*-Lw*-* chứa result_multi.txt và result_1trip.txt
+          find all_artifacts \( -name 'result_multi.txt' -o -name 'result_1trip.txt' \) | while read src; do
             artifact_name=$(basename "$(dirname "$src")")
-            fname=$(basename "$src" .txt)   # result_Lw1800, result_Lw2700, result_Lw3600
-            lw=${fname#result_Lw}           # 1800, 2700, 3600
-            cp "$src" "results/${artifact_name}-Lw${lw}.txt"
+            solver=$(basename "$src" .txt | sed 's/result_//')  # multi hoặc 1trip
+            cp "$src" "results/${artifact_name}-${solver}.txt"
           done
           echo "=== $(ls results/ | wc -l) result files collected ==="
           ls results/ | sort | head -20
