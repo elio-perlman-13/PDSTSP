@@ -104,10 +104,10 @@ jobs:
           PYEOF
 
           echo "=== Verify Dh & sigma (light) ==="
-          grep 'double Dh\|time_segments_sigma' tabubu_light_patched.cpp | grep -v '//'
+          grep 'double Dh\|time_segments_sigma' tabubu_light_patched.cpp | grep -v '^\s*//'
 
           echo "=== Verify Dh & sigma (heavy) ==="
-          grep 'double Dh\|time_segments_sigma' tabubu_heavy_patched.cpp | grep -v '//'
+          grep 'double Dh\|time_segments_sigma' tabubu_heavy_patched.cpp | grep -v '^\s*//'
 
           g++ -O2 -std=c++17 tabubu_light_patched.cpp -o tabubu_light
           g++ -O2 -std=c++17 tabubu_heavy_patched.cpp -o tabubu_heavy
