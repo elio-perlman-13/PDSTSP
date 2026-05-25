@@ -246,7 +246,7 @@ jobs:
               elapsed    = find(r'Mean elapsed time:\s*([\d.]+)')
 
               # Truck routes & times
-              truck_times = [float(m.group(2))
+              truck_times = [float(m.group(1))
                              for m in re.finditer(
                                  r'Truck \d+:\s*[\d ]+\|Truck Time:\s*([\d.]+)', content)]
               # Drone routes & times
