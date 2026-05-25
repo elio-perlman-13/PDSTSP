@@ -374,10 +374,10 @@ jobs:
               # Format
               l_feas_s  = f"{l_feas}/{len(L)}"
               h_feas_s  = f"{h_feas}/{len(H)}"
-              l_best_s  = f"{l_best:.2f}" if l_best else 'INFEAS'
-              h_best_s  = f"{h_best:.2f}" if h_best else 'INFEAS'
+              l_best_s  = f"{l_best:.2f}" if l_best is not None else 'INFEAS'
+              h_best_s  = f"{h_best:.2f}" if h_best is not None else 'INFEAS'
 
-              if l_best and h_best:
+              if l_best is not None and h_best is not None:
                   delta_pct = (h_best - l_best) / l_best * 100.0
                   delta_s   = f"{delta_pct:+.2f}%"
               else:

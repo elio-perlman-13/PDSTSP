@@ -1,5 +1,5 @@
-trucks_count 6
-drones_count 4
+trucks_count 5
+drones_count 5
 customers 200
 depot 0 0
 Coordinate X         Coordinate Y         Dronable Demand
