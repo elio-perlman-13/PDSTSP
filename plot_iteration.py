@@ -1,7 +1,7 @@
-"""Plot iteration records from output.txt.
+"""Plot best-solution progress from iteration CSV logs.
 
 Usage:
-	python plot_iteration.py --input output.txt --save plot.png
+	python plot_iteration.py --save plot.png
 """
 
 import argparse
@@ -72,61 +72,53 @@ def extract_best_updates(iters: List[int], best: List[float]) -> Tuple[List[int]
 	return upd_i, upd_v
 
 
-def plot_iterations(
-	iters: List[int], current: List[float], best: List[float], feasible: List[bool], bin_size: int, annotate_best: bool
+def plot_best_lines(
+	series: List[Tuple[str, List[int], List[float]]], annotate_best: bool
 ):
-	xs, med, p25, p75, feas_share = aggregate_current(iters, current, feasible, bin_size)
-	upd_i, upd_v = extract_best_updates(iters, best)
-
 	fig, ax1 = plt.subplots(figsize=(11, 5))
+	colors = ["tab:blue", "tab:orange", "tab:green", "tab:red"]
 
-	if xs:
-		ax1.fill_between(xs, p25, p75, color="#f9c7c7", alpha=0.5, label="Current cost IQR")
-		line_cur, = ax1.plot(xs, med, color="black", linewidth=1.4, label=f"Current median (bin={bin_size})")
-
-	if upd_i:
-		ax1.step(upd_i, upd_v, where="post", color="blue", linewidth=1.6, label="Best updates")
-		ax1.scatter(upd_i, upd_v, color="blue", s=18, zorder=3)
+	for idx, (label, iters, best) in enumerate(series):
+		upd_i, upd_v = extract_best_updates(iters, best)
+		if not upd_i:
+			continue
+		color = colors[idx % len(colors)]
+		ax1.step(upd_i, upd_v, where="post", color=color, linewidth=1.8, label=label)
+		ax1.scatter(upd_i, upd_v, color=color, s=18, zorder=3)
+		# Extend final plateau to the last iteration for each run.
+		if iters and upd_i[-1] < iters[-1]:
+			ax1.plot([upd_i[-1], iters[-1]], [upd_v[-1], upd_v[-1]], color=color, linewidth=1.8)
 		if annotate_best:
 			for i, v in zip(upd_i, upd_v):
-				ax1.annotate(str(i), (i, v), textcoords="offset points", xytext=(3, 6), fontsize=7, color="blue")
+				ax1.annotate(str(i), (i, v), textcoords="offset points", xytext=(3, 6), fontsize=7, color=color)
 
 	ax1.set_xlabel("Iteration")
 	ax1.set_ylabel("Cost")
-	ax1.set_title("Iteration Costs (aggregated)")
+	ax1.set_title("Best Solution Progress")
+	ax1.set_ylim(bottom=2500)
 	ax1.grid(True, linestyle="--", linewidth=0.5, alpha=0.6)
-
-	# Feasibility share on secondary axis
-	ax2 = ax1.twinx()
-	if xs:
-		line_feas, = ax2.plot(xs, feas_share, color="green", linewidth=1.0, linestyle="-", label="Feasible share")
-		ax2.set_ylabel("Feasible share")
-		ax2.set_ylim(0, 1)
-	else:
-		line_feas = None
-
-	handles, labels = ax1.get_legend_handles_labels()
-	if line_feas:
-		handles.append(line_feas)
-		labels.append("Feasible share")
-	ax1.legend(handles, labels, loc="upper right")
+	ax1.legend(loc="upper right")
 
 	fig.tight_layout()
 
 
 def main():
 	parser = argparse.ArgumentParser(description="Plot iteration records from a CSV log.")
-	parser.add_argument("--input", type=Path, default=Path("output.txt"), help="Path to iteration CSV file")
+	parser.add_argument("--input", type=Path, default=Path("output.txt"), help="Path to mode 0 + 2 iteration CSV file")
+	parser.add_argument("--input-mode0", type=Path, default=Path("output_mode_0.txt"), help="Path to mode 0 iteration CSV file")
 	parser.add_argument("--save", type=Path, default=None, help="Optional output image path")
 	parser.add_argument("--show", action="store_true", help="Display the plot interactively")
-	parser.add_argument("--bin-size", type=int, default=500, help="Bin size for aggregation in iterations")
 	parser.add_argument("--annotate-best", action="store_true", help="Annotate best-update iterations")
 	args = parser.parse_args()
 
-	iters, current, best, feasible = read_iterations(args.input)
-	total_iter = max(iters) if iters else 1
-	bin_size = args.bin_size if args.bin_size != 500 else max(1, total_iter // 50)
-	plot_iterations(iters, current, best, feasible, bin_size, args.annotate_best)
+	iters_02, _, best_02, _ = read_iterations(args.input)
+	iters_0, _, best_0, _ = read_iterations(args.input_mode0)
+
+	series = [
+		("mode 0 + 2", iters_02, best_02),
+		("mode 0", iters_0, best_0),
+	]
+	plot_best_lines(series, args.annotate_best)
 
 	if args.save:
 		plt.savefig(args.save, dpi=200)

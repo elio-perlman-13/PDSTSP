@@ -42,6 +42,7 @@ int L = 24; //number of time segments in a day
 //vd time_segments_sigma = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}; //sigma (truck velocity coefficient) for each time segments
 vd time_segment = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; // time segment boundaries in hours
 vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 0.8}; //sigma (truck velocity coefficient) for each time segments
+static vector<vector<vd>> arc_time_sigma; // arc_time_sigma[i][j][seg]: per-arc per-segment velocity coefficient; empty = use time_segments_sigma fallback
 double Dd = 2.27, E = 7200000.0; //drone's weight and energy capacities (for all drones)
 double v_fly_drone = 31.3, v_take_off = 15.6, v_landing = 7.8; // speed of the drone
 double height = 50; // height of the drone
@@ -227,6 +228,27 @@ void input(string filepath){
         deadline[cust] = deadline_val;
         ++cust;
     }
+    // Read arc_time_sigma block if present (optional section)
+    arc_time_sigma.clear();
+    while (getline(fin, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        if (line.find("arc_sigma_start") != string::npos) {
+            arc_time_sigma.assign(n + 1, vector<vd>(n + 1));
+            while (getline(fin, line)) {
+                if (line.empty() || line[0] == '#') continue;
+                if (line.find("arc_sigma_end") != string::npos) break;
+                stringstream ss(line);
+                int i, j;
+                if (!(ss >> i >> j)) continue;
+                vd sigmas;
+                double sv;
+                while (ss >> sv) sigmas.push_back(sv);
+                if (i >= 0 && i <= n && j >= 0 && j <= n)
+                    arc_time_sigma[i][j] = sigmas;
+            }
+            break;
+        }
+    }
 }
 
 void update_tabu_tenures() {
@@ -299,7 +321,12 @@ pair<double, double> compute_truck_route_time(const vi& route, double start=0) {
             // Convert time to hours for segment lookup
             double t_hr = time / 3600.0;
             int seg = get_time_segment(t_hr); // 0-based index into time_segments_sigma
-            double v = vmax * (seg < (int)time_segments_sigma.size() ? time_segments_sigma[seg] : 1.0); // m/s
+            double sigma;
+            if (!arc_time_sigma.empty() && seg < (int)arc_time_sigma[from][to].size())
+                sigma = arc_time_sigma[from][to][seg];
+            else
+                sigma = (seg < (int)time_segments_sigma.size()) ? time_segments_sigma[seg] : 1.0;
+            double v = vmax * sigma; // m/s
             if (v <= 1e-8) v = vmax;
             // Time left in this custom segment (seconds to next boundary)
             double next_boundary_hr = (seg + 1 < (int)time_segment.size()) ? time_segment[seg + 1] : std::numeric_limits<double>::infinity();
