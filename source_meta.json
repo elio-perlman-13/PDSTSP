@@ -1,0 +1,40 @@
+{
+  "description": "1000 điểm reachable lấy từ dataset_1000_customers_road_fixed.json",
+  "total_customers": 1000,
+  "zones": [
+    "N",
+    "NE",
+    "E",
+    "SE",
+    "S",
+    "SW",
+    "W",
+    "NW"
+  ],
+  "customers_per_zone": 125,
+  "num_trucks": 3,
+  "num_drones": 3,
+  "depot": {
+    "name": "depot",
+    "type": "depot",
+    "district": "Thanh Xuân - Hoàng Mai",
+    "lat": 20.977,
+    "lon": 105.845,
+    "distance_m": 0.0,
+    "address": ""
+  },
+  "offset_m": 12000,
+  "source_file": "/Users/huetran/Desktop/crawdata/output/selected_500m.json",
+  "osrm_cleaning": {
+    "osrm_base_url": "https://router.project-osrm.org/nearest/v1/driving/",
+    "max_snap_distance_m": 300.0,
+    "snapped_count": 19,
+    "source_dataset": "/Users/huetran/Desktop/crawdata/output/dataset_1000_customers.json"
+  },
+  "version": "v1",
+  "source_dataset": "/Users/huetran/Desktop/crawdata/output/dataset_1000_customers_road_fixed.json",
+  "output_file": "/Users/huetran/Desktop/crawdata/output/1000pint_v1.json",
+  "osrm_distance_output_dir": "/Users/huetran/Desktop/crawdata/output/1000pint_v1_osrm",
+  "derived_from_master_dir": "/Users/huetran/Desktop/crawdata/output/master_v1_v2_unique_osrm",
+  "master_unique_point_count": 1121
+}

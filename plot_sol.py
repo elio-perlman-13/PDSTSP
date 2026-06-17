@@ -260,7 +260,7 @@ def plot_routes(instance_file: str, trucks: List[List[int]], drones: List[List[i
     label_offset = 100
 
     # Helper to draw segmented by depot zeros
-    def draw_route_segments(route: List[int], color, lw=2.0, label=None, z=2):
+    def draw_route_segments(route: List[int], color, lw=2.0, label=None, z=2, linestyle='-'):
         seg: List[Tuple[float, float]] = []
         placed_label = False
         for idx, node in enumerate(route):
@@ -271,14 +271,14 @@ def plot_routes(instance_file: str, trucks: List[List[int]], drones: List[List[i
             if node == 0 and len(seg) > 1:
                 xs = [p[0] for p in seg]
                 ys = [p[1] for p in seg]
-                plt.plot(xs, ys, '-', color=color, lw=lw, alpha=0.8, zorder=z, label=(label if not placed_label else None))
+                plt.plot(xs, ys, linestyle, color=color, lw=lw, alpha=0.8, zorder=z, label=(label if not placed_label else None))
                 placed_label = True
                 seg = [id_to_xy[0]]  # restart new segment from depot
         # draw trailing segment if not closed by depot
         if len(seg) > 1:
             xs = [p[0] for p in seg]
             ys = [p[1] for p in seg]
-            plt.plot(xs, ys, '-', color=color, lw=lw, alpha=0.8, zorder=z, label=(label if not placed_label else None))
+            plt.plot(xs, ys, linestyle, color=color, lw=lw, alpha=0.8, zorder=z, label=(label if not placed_label else None))
 
     # Plot trucks
     for i, route in enumerate(trucks):
@@ -288,7 +288,7 @@ def plot_routes(instance_file: str, trucks: List[List[int]], drones: List[List[i
     # Plot drones
     for i, route in enumerate(drones):
         color = drone_cmap(i % 8)
-        draw_route_segments(route, color, lw=1.8, label=f'Drone {i+1}', z=2)
+        draw_route_segments(route, color, lw=1.8, label=f'Drone {i+1}', z=2, linestyle='--')
 
     # Node labels and scatter points
     xs_all, ys_all = [], []

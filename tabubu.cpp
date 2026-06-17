@@ -5936,7 +5936,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             current_score = neighbor_score;
             no_improve_iters++;
         } else {
-            /* double T = T0 * pow(alpha, iter);
+            double T = T0 * pow(alpha, iter);
             double delta = current_score - neighbor_score;
             double ap = exp(delta / T);
             double rand_val = ((double) rand() / (RAND_MAX));
@@ -5944,7 +5944,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 current_sol = neighbor;
                 current_cost = neighbor.total_makespan;
                 current_score = neighbor_score;
-            } */
+            }
             score[selected_neighbor] += gamma3;
             no_improve_iters++;
         }
@@ -5988,7 +5988,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 no_improve_segments++;
             }
 
-            /* if (scoring_mode_iter == 2) {
+            if (scoring_mode_iter == 2) {
                 scoring_mode_iter = 0;
                 best_solution_score_now = solution_score_makespan(best_solution);
                 best_segment_sol = best_solution;
@@ -6022,7 +6022,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 tabu_list_22.clear();
                 tabu_list_21.clear();
                 tabu_list_ejection.clear();
-            }  */
+            } 
 
             // Update weights based on scores
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {

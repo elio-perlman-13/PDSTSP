@@ -282,13 +282,242 @@ void compute_distance_matrices(const vector<Point>& loc) {
     }
 }
 
+// Load full OD distance matrix from CSV where the first row/column are labels.
+// Uses the top-left (n+1) x (n+1) numeric block after label column.
+static bool load_distance_matrix_csv(const std::string& path) {
+    std::ifstream fin(path);
+    if (!fin) {
+        std::cerr << "Error: cannot open distance CSV: " << path << "\n";
+        return false;
+    }
+
+    auto csv_split = [](const std::string& line) {
+        std::vector<std::string> fields;
+        bool in_q = false;
+        std::string f;
+        for (char c : line) {
+            if (c == '"') { in_q = !in_q; }
+            else if (c == ',' && !in_q) { fields.push_back(f); f.clear(); }
+            else { f += c; }
+        }
+        fields.push_back(f);
+        return fields;
+    };
+    auto trim = [](std::string s) {
+        size_t a = s.find_first_not_of(" \t\r\n");
+        if (a == std::string::npos) return std::string{};
+        return s.substr(a, s.find_last_not_of(" \t\r\n") - a + 1);
+    };
+
+    std::string line;
+    if (!std::getline(fin, line)) {
+        std::cerr << "Error: empty distance CSV: " << path << "\n";
+        return false;
+    }
+    if (line.size() >= 3 && (unsigned char)line[0] == 0xEF) line = line.substr(3);
+
+    std::vector<std::vector<double>> rows;
+    rows.reserve(n + 1);
+    while (std::getline(fin, line)) {
+        if (line.empty()) continue;
+        auto f = csv_split(line);
+        if (f.size() < 2) continue;
+        std::vector<double> vals;
+        vals.reserve(f.size() - 1);
+        for (size_t c = 1; c < f.size(); ++c) {
+            std::string t = trim(f[c]);
+            if (t.empty()) {
+                vals.push_back(0.0);
+                continue;
+            }
+            try {
+                vals.push_back(std::stod(t));
+            } catch (...) {
+                vals.clear();
+                break;
+            }
+        }
+        if (!vals.empty()) rows.push_back(std::move(vals));
+    }
+
+    if ((int)rows.size() < n + 1) {
+        std::cerr << "Error: distance CSV has " << rows.size()
+                  << " rows but needs at least " << (n + 1) << "\n";
+        return false;
+    }
+    for (int i = 0; i <= n; ++i) {
+        if ((int)rows[i].size() < n + 1) {
+            std::cerr << "Error: distance CSV row " << i
+                      << " has " << rows[i].size()
+                      << " columns but needs at least " << (n + 1) << "\n";
+            return false;
+        }
+    }
+
+    for (int i = 0; i <= n; ++i) {
+        for (int j = 0; j <= n; ++j) {
+            distance_matrix[i][j] = rows[i][j];
+        }
+    }
+    std::cout << "Loaded distance matrix CSV: " << path
+              << " with " << (n + 1) << "x" << (n + 1) << " entries\n";
+    return true;
+}
+
+// Load arc-specific per-segment sigma values from a CSV.
+// Supports either:
+// 1) origin_id,destination_id,time_slot,avg_speed_kmh,... (e.g. P0001)
+// 2) origin_idx,destination_idx,time_slot,avg_speed_kmh,... (integer indices)
+// Updates arc_time_sigma, time_segment, and time_segments_sigma.
+static void load_speed_csv(const std::string& path) {
+    std::ifstream fin(path);
+    if (!fin) { std::cerr << "Warning: cannot open speed CSV: " << path << "\n"; return; }
+
+    // Simple CSV parser handling quoted fields
+    auto csv_split = [](const std::string& line) {
+        std::vector<std::string> fields;
+        bool in_q = false;
+        std::string f;
+        for (char c : line) {
+            if (c == '"') { in_q = !in_q; }
+            else if (c == ',' && !in_q) { fields.push_back(f); f.clear(); }
+            else { f += c; }
+        }
+        fields.push_back(f);
+        return fields;
+    };
+    auto trim = [](std::string s) {
+        size_t a = s.find_first_not_of(" \t\r\n");
+        if (a == std::string::npos) return std::string{};
+        return s.substr(a, s.find_last_not_of(" \t\r\n") - a + 1);
+    };
+
+    // Read header (strip UTF-8 BOM)
+    std::string line;
+    if (!std::getline(fin, line)) return;
+    if (line.size() >= 3 && (unsigned char)line[0] == 0xEF) line = line.substr(3);
+    auto hdr = csv_split(line);
+    int c_orig=-1, c_dest=-1, c_orig_idx=-1, c_dest_idx=-1, c_slot=-1, c_dist=-1, c_spd=-1;
+    for (int i = 0; i < (int)hdr.size(); ++i) {
+        std::string h = trim(hdr[i]);
+        if (h == "origin_id")      c_orig = i;
+        else if (h == "destination_id") c_dest = i;
+        else if (h == "origin_idx") c_orig_idx = i;
+        else if (h == "destination_idx") c_dest_idx = i;
+        else if (h == "time_slot")  c_slot = i;
+        else if (h == "distance_m") c_dist = i;
+        else if (h == "avg_speed_kmh") c_spd = i;
+    }
+    bool use_idx_cols = (c_orig_idx >= 0 && c_dest_idx >= 0);
+    bool use_id_cols = (c_orig >= 0 && c_dest >= 0);
+    if ((!use_idx_cols && !use_id_cols) || c_slot < 0 || c_spd < 0) {
+        std::cerr << "Warning: speed CSV missing required columns\n"; return;
+    }
+
+    // Parse rows
+    struct Row { int i, j; std::string slot; double speed; };
+    std::vector<Row> rows;
+    std::set<std::string> slot_set;
+    while (std::getline(fin, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        auto f = csv_split(line);
+        int max_col = std::max({
+            use_idx_cols ? c_orig_idx : c_orig,
+            use_idx_cols ? c_dest_idx : c_dest,
+            c_slot, c_spd, c_dist
+        });
+        if ((int)f.size() <= max_col) continue;
+        std::string orig = trim(f[use_idx_cols ? c_orig_idx : c_orig]);
+        std::string dest = trim(f[use_idx_cols ? c_dest_idx : c_dest]);
+        std::string slot = trim(f[c_slot]);
+        int ni = -1, nj = -1;
+        try {
+            if (use_idx_cols) {
+                ni = std::stoi(orig);
+                nj = std::stoi(dest);
+            } else {
+                if (orig.size() > 1) ni = std::stoi(orig.substr(1));
+                if (dest.size() > 1) nj = std::stoi(dest.substr(1));
+            }
+        } catch (...) { continue; }
+        if (ni < 0 || nj < 0 || ni > n || nj > n || ni == nj) continue;
+        double spd = 0;
+        try { spd = std::stod(trim(f[c_spd])); } catch (...) { continue; }
+        slot_set.insert(slot);
+        rows.push_back({ni, nj, slot, spd});
+    }
+    if (rows.empty()) return;
+
+    // Build time_segment boundaries from slot strings like "05-07"
+    std::set<int> bnd_set;
+    for (const auto& s : slot_set) {
+        auto dash = s.find('-', 1);
+        if (dash == std::string::npos) continue;
+        try { bnd_set.insert(std::stoi(s.substr(0, dash))); bnd_set.insert(std::stoi(s.substr(dash+1))); } catch (...) {}
+    }
+    if (bnd_set.size() < 2) return;
+    time_segment.assign(bnd_set.begin(), bnd_set.end());
+
+    // Map slot string -> segment index (0-based, = index of slot start boundary)
+    std::map<std::string, int> slot_seg;
+    for (const auto& s : slot_set) {
+        auto dash = s.find('-', 1);
+        if (dash == std::string::npos) continue;
+        try {
+            double start_hr = std::stod(s.substr(0, dash));
+            auto it = std::lower_bound(time_segment.begin(), time_segment.end(), start_hr);
+            if (it != time_segment.end() && *it == start_hr)
+                slot_seg[s] = (int)(it - time_segment.begin());
+        } catch (...) {}
+    }
+
+    int num_segs = (int)time_segment.size() - 1;
+    const double FREE_FLOW_KMH = 25.0;
+
+    // Initialise arc_time_sigma with sentinel -1
+    arc_time_sigma.assign(n+1, std::vector<vd>(n+1, vd(num_segs, -1.0)));
+
+    for (auto& r : rows) {
+        auto it = slot_seg.find(r.slot);
+        if (it == slot_seg.end()) continue;
+        int seg = it->second;
+        if (seg >= num_segs) continue;
+        arc_time_sigma[r.i][r.j][seg] = r.speed / FREE_FLOW_KMH;
+    }
+
+    // Compute per-segment global averages from observed data
+    vd global_avg(num_segs, 1.0);
+    for (int s = 0; s < num_segs; ++s) {
+        double sum = 0; int cnt = 0;
+        for (int i = 0; i <= n; ++i)
+            for (int j = 0; j <= n; ++j)
+                if (i != j && arc_time_sigma[i][j][s] >= 0) { sum += arc_time_sigma[i][j][s]; cnt++; }
+        global_avg[s] = cnt > 0 ? sum/cnt : 1.0;
+    }
+    time_segments_sigma = global_avg;
+
+    // Fill missing slots with global average
+    for (int i = 0; i <= n; ++i)
+        for (int j = 0; j <= n; ++j)
+            if (i != j)
+                for (int s = 0; s < num_segs; ++s)
+                    if (arc_time_sigma[i][j][s] < 0)
+                        arc_time_sigma[i][j][s] = global_avg[s];
+
+    std::cout << "Loaded speed CSV: " << rows.size() << " arc-slot entries, "
+              << num_segs << " segments [";
+    for (int s = 0; s < (int)time_segment.size(); ++s)
+        std::cout << time_segment[s] << (s+1<(int)time_segment.size()?",":"");
+    std::cout << "]h\n";
+}
+
 // Helper: get time segment index for a given time t (in hours)
 int get_time_segment(double t) {
     // t is in hours. Use custom time_segment boundaries (in hours):
     // time_segment: [b0, b1, ..., bk] defines k segments [b0,b1), [b1,b2), ... [b{k-1}, b{k}]
     // Return 0-based segment index in [0, k-1].
     // If outside boundaries, loop back to the start segment.
-    t = fmod(t, 12.0);
+    t = fmod(t, 24.0);
     if (time_segment.size() < 2) return 0;
     // Find first boundary strictly greater than t
     auto it = upper_bound(time_segment.begin(), time_segment.end(), t);
@@ -5963,7 +6192,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
             current_score = neighbor_score;
             no_improve_iters++;
         } else {
-            /* double T = T0 * pow(alpha, iter);
+            double T = T0 * pow(alpha, iter);
             double delta = current_score - neighbor_score;
             double ap = exp(delta / T);
             double rand_val = ((double) rand() / (RAND_MAX));
@@ -5971,7 +6200,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 current_sol = neighbor;
                 current_cost = neighbor.total_makespan;
                 current_score = neighbor_score;
-            } */
+            }
             score[selected_neighbor] += gamma3;
             no_improve_iters++;
         }
@@ -6015,7 +6244,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 no_improve_segments++;
             }
 
-            /* if (scoring_mode_iter == 2) {
+            if (scoring_mode_iter == 2) {
                 scoring_mode_iter = 0;
                 best_solution_score_now = solution_score_makespan(best_solution);
                 best_segment_sol = best_solution;
@@ -6049,7 +6278,7 @@ Solution tabu_search(const Solution& initial_solution, int num_initial_sol,  vec
                 tabu_list_22.clear();
                 tabu_list_21.clear();
                 tabu_list_ejection.clear();
-            }  */
+            }
 
             // Update weights based on scores
             for (int i = 0; i < NUM_NEIGHBORHOODS; ++i) {
@@ -6172,12 +6401,16 @@ int main(int argc, char* argv[]) {
              << " input_file [--print-distance-matrix]"
              << " [--attempts=N] [--segments=N] [--iters=N] [--no-improve=N] [--time-limit=SEC] [--auto-tune]"
              << " [--knn-k=K] [--knn-window=W]"
+               << " [--distance-csv=PATH]"
+             << " [--speed-csv=PATH]"
              << "\n";
         return 1;
     }
     string input_file = argv[1];
     bool print_dist_matrix = false;
     bool auto_tune = false;
+    string distance_csv_path;
+    string speed_csv_path;
     // Parse optional flags
     for (int ai = 2; ai < argc; ++ai) {
         string arg = argv[ai];
@@ -6190,6 +6423,8 @@ int main(int argc, char* argv[]) {
         if (parse_kv_flag(arg, "--time-limit", v)) { CFG_TIME_LIMIT_SEC = max(0.0, stod(v)); continue; }
         if (parse_kv_flag(arg, "--knn-k", v)) { CFG_KNN_K = max(0, stoi(v)); continue; }
         if (parse_kv_flag(arg, "--knn-window", v)) { CFG_KNN_WINDOW = max(0, stoi(v)); continue; }
+        if (parse_kv_flag(arg, "--distance-csv", v)) { distance_csv_path = v; continue; }
+        if (parse_kv_flag(arg, "--speed-csv", v)) { speed_csv_path = v; continue; }
         if (arg == "--auto-tune") { auto_tune = true; continue; }
     }
 
@@ -6198,7 +6433,17 @@ int main(int argc, char* argv[]) {
     // Recalculate tenures based on instance size
     update_tabu_tenures();
     // Build distance matrix for downstream time computations
-    compute_distance_matrices(loc);
+    // If --distance-csv is provided, distance must come from it (no Euclidean fallback).
+    if (!distance_csv_path.empty()) {
+        if (!load_distance_matrix_csv(distance_csv_path)) {
+            std::cerr << "Failed to load --distance-csv=" << distance_csv_path << "\n";
+            return 1;
+        }
+    } else {
+        compute_distance_matrices(loc);
+    }
+    // Load arc-specific speed CSV if provided (builds arc_time_sigma/time segments only)
+    if (!speed_csv_path.empty()) load_speed_csv(speed_csv_path);
     if (print_dist_matrix) {
         print_distance_matrix();
         return 0; // only print distance matrix and exit
@@ -6213,9 +6458,17 @@ int main(int argc, char* argv[]) {
         int tuned_iters_per_seg  = compute_iters_per_segment(n, NUM_NEIGHBORHOODS);
         int tuned_segments       = compute_segment_count(tuned_total_iters, tuned_iters_per_seg);
         CFG_MAX_ITER_PER_SEGMENT = min(CFG_MAX_ITER_PER_SEGMENT, tuned_iters_per_seg);
-        CFG_MAX_SEGMENT          = min(CFG_MAX_SEGMENT, tuned_segments);
-        CFG_MAX_NO_IMPROVE       = 4 * CFG_MAX_ITER_PER_SEGMENT;
-        cout << "Search config: total_iters=" << (1LL * CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT)
+        // When a time limit is set, use a large segment count so time governs termination
+        if (CFG_TIME_LIMIT_SEC > 0.0) {
+            // Estimate segments needed to fill the time limit (generous upper bound)
+            int time_based_segments = max(tuned_segments, (int)(CFG_TIME_LIMIT_SEC * 200));
+            CFG_MAX_SEGMENT  = time_based_segments;
+            CFG_MAX_NO_IMPROVE = max(4 * CFG_MAX_ITER_PER_SEGMENT, time_based_segments * CFG_MAX_ITER_PER_SEGMENT);
+        } else {
+            CFG_MAX_SEGMENT    = min(CFG_MAX_SEGMENT, tuned_segments);
+            CFG_MAX_NO_IMPROVE = 4 * CFG_MAX_ITER_PER_SEGMENT;
+        }
+        cout << "Search config: total_iters=" << (CFG_MAX_SEGMENT * CFG_MAX_ITER_PER_SEGMENT)
              << " (segments=" << CFG_MAX_SEGMENT
              << ", iters_per_seg=" << CFG_MAX_ITER_PER_SEGMENT
              << ", no_improve=" << CFG_MAX_NO_IMPROVE << ")\n";
@@ -6337,6 +6590,6 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-// Run with : g++ -O3 -std=c++20 tabubu.cpp -o tabubu && ./tabubu instance/50.20.4.txt
+// Run with : g++ -O3 -std=c++20 tabubu_time.cpp -o tabubu_time && ./tabubu_time /workspaces/PDSTSP/instance_hanoi/hanoi_1000_generated.txt --speed-csv=od_speed_by_time_slot_weekday_avg.csv --time-limit=120 --distance-csv=/workspaces/PDSTSP/od_distance_m.csv
 // Plot history iteration: python plot_iteration.py --input output.txt --save iterations.png
 // Plot route: python3 plot_sol.py instance/50.20.4.txt output_solution_best.txt
