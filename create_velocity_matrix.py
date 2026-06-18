@@ -135,6 +135,7 @@ def build_velocity_tensor(v_base: np.ndarray, severity: float, dir_scale: float,
 
 				# Rule 2
 				v = base * f_time_eff
+				cur[i, j] = float(np.clip(v, V_MIN, V_MAX))
 
 		out[slot] = cur
 		prev_slot = cur.copy()
