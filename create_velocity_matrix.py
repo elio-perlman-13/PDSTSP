@@ -10,8 +10,8 @@ import numpy as np
 
 SLOTS = ["5-7", "7-9", "9-11", "11-13", "13-15", "15-17", "17-19", "19-21"]
 
-# Rule 2: weekday-average TomTom congestion mapped to speed factors.
-# For each 2-hour slot, we average Mon-Fri congestion percentages from the table,
+# Rule 2: weekday-averaFor each 2-hour slot, we average Mon-Fri congestion percentages from the table,ge TomTom congestion mapped to speed factors.
+# 
 # then convert by: speed_factor = 1 / (1 + congestion_fraction).
 F_TIME = {
 	"5-7": 0.819,
