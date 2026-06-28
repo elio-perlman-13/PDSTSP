@@ -1,0 +1,187 @@
+name: Six neighborhood strategies - balanced 200-customer experiment
+
+on:
+  # push:
+  #   branches:
+  #     - main_huett
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  prepare:
+    name: Build solver and prepare 250 balanced jobs
+    runs-on: ubuntu-latest
+    outputs:
+      experiment_matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compile neighborhood-selection solver
+        run: |
+          g++ -O2 -std=c++20 tabubu_TimeDependent_neighbourhoddSelection.cpp -o tabubu_neighborhood_200
+
+      - name: Generate 480 tasks distributed across 250 jobs
+        id: matrix
+        run: |
+          python3 - <<'PYEOF'
+          import glob
+          import json
+          import os
+          from collections import Counter
+
+          instances = []
+          for path in glob.glob("instance_time_dependent/200.*.txt"):
+              if path.endswith((".vmax_ij.txt", ".theta_ijl.txt")):
+                  continue
+              instances.append(os.path.basename(path)[:-4])
+          instances.sort(key=lambda name: tuple(int(part) for part in name.split(".")))
+          if len(instances) != 16:
+              raise SystemExit(f"Expected 16 instances for 200 customers, found {len(instances)}")
+
+          methods = [
+              {"strategy": "cyclic"},
+              {"strategy": "random"},
+              {"strategy": "adaptive", "gamma_set": "g1", "gamma": [0.3, 0.2, 0.1, 0.3]},
+              {"strategy": "adaptive", "gamma_set": "g2", "gamma": [0.5, 0.3, 0.1, 0.3]},
+              {"strategy": "adaptive", "gamma_set": "g3", "gamma": [0.3, 0.2, 0.1, 0.6]},
+              {"strategy": "adaptive", "gamma_set": "g4", "gamma": [0.5, 0.3, 0.1, 0.6]},
+          ]
+          tasks = []
+          for instance in instances:
+              for method in methods:
+                  for repetition in range(1, 6):
+                      tasks.append({"instance": instance, "repetition": repetition, **method})
+          if len(tasks) != 480:
+              raise SystemExit(f"Expected 480 tasks, found {len(tasks)}")
+
+          batches = [[] for _ in range(250)]
+          for index, task in enumerate(tasks):
+              batches[index % len(batches)].append(task)
+          distribution = Counter(map(len, batches))
+          if distribution != Counter({2: 230, 1: 20}):
+              raise SystemExit(f"Unexpected batch distribution: {distribution}")
+
+          matrix = [
+              {
+                  "batch_id": f"{index + 1:03d}",
+                  "tasks_json": json.dumps(batch, separators=(",", ":")),
+              }
+              for index, batch in enumerate(batches)
+          ]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={json.dumps(matrix, separators=(',', ':'))}\n")
+          print("Created 250 jobs: 230 jobs x 2 processes + 20 jobs x 1 process")
+          PYEOF
+
+      - name: Upload solver
+        uses: actions/upload-artifact@v4
+        with:
+          name: neighborhood-200-solver
+          path: tabubu_neighborhood_200
+          retention-days: 1
+
+  solve:
+    name: Balanced batch ${{ matrix.batch_id }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.experiment_matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: neighborhood-200-solver
+
+      - name: Run one or two neighborhood tasks in parallel
+        shell: bash
+        run: |
+          chmod +x tabubu_neighborhood_200
+          mkdir -p neighborhood_results
+          cat > batch_tasks.json <<'JSONEOF'
+          ${{ matrix.tasks_json }}
+          JSONEOF
+          python3 scripts/run_neighborhood_batch.py \
+            ./tabubu_neighborhood_200 \
+            batch_tasks.json \
+            neighborhood_results
+
+      - name: Upload batch results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: neighborhood-200-batch-${{ matrix.batch_id }}
+          path: neighborhood_results/*.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  aggregate:
+    name: Aggregate all 480 results into Excel
+    needs: solve
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all balanced batch artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: neighborhood-200-batch-*
+          path: collected_results
+          merge-multiple: true
+
+      - name: Create Excel workbook and CSV backup
+        run: |
+          python3 scripts/aggregate_cyclic_results.py \
+            collected_results \
+            neighborhood_selection_200_results.xlsx \
+            --csv neighborhood_selection_200_results.csv
+
+      - name: Verify all strategies and repetitions
+        run: |
+          python3 - <<'PYEOF'
+          import csv
+          from collections import Counter
+
+          with open("neighborhood_selection_200_results.csv", newline="", encoding="utf-8") as csv_file:
+              rows = list(csv.DictReader(csv_file))
+          if len(rows) != 480:
+              raise SystemExit(f"Expected 480 results, found {len(rows)}")
+          methods = Counter(
+              row["Strategy"] if row["Strategy"] != "adaptive"
+              else f'adaptive-{row["Gamma set"]}'
+              for row in rows
+          )
+          expected = Counter({
+              "cyclic": 80,
+              "random": 80,
+              "adaptive-g1": 80,
+              "adaptive-g2": 80,
+              "adaptive-g3": 80,
+              "adaptive-g4": 80,
+          })
+          if methods != expected:
+              raise SystemExit(f"Unexpected method counts: {methods}")
+          print("Verified 480 results: 80 results for each of six methods")
+          PYEOF
+
+      - name: Upload consolidated experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: neighborhood-selection-200-experiment-results
+          path: |
+            neighborhood_selection_200_results.xlsx
+            neighborhood_selection_200_results.csv
+          if-no-files-found: warn
+          retention-days: 30

@@ -14,3 +14,7 @@ Plot đường đi của các truck/drone trong lời giải: plot.py
 
 Sinh velocity matrix (từ od_speed_kmh.csv và od_distance_m.csv): create_velocity_matrix.py
 Sinh instance cho tabubu_time.cpp: create_hanoi_instance.py
+
+## Cấu hình thực nghiệm tham số thuật toán
+
+Trong quá trình thực nghiệm các tham số thuật toán, capacity của mỗi truck được cố định ở mức **1000 kg**. Các thông số của drone, bao gồm capacity, năng lượng, vận tốc bay, vận tốc cất cánh, vận tốc hạ cánh, độ cao bay và mô hình công suất, được sử dụng theo cấu hình trong file `drone_config.json`.

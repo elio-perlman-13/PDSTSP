@@ -1,0 +1,513 @@
+name: Time-dependent mode selection ablation
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  prepare:
+    name: Build solver and prepare 250 balanced jobs
+    runs-on: ubuntu-latest
+    outputs:
+      experiment_matrix: ${{ steps.matrix.outputs.matrix }}
+      total_tasks: ${{ steps.matrix.outputs.total_tasks }}
+      total_instances: ${{ steps.matrix.outputs.total_instances }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compile time-dependent mode-selection ablation solver
+        run: |
+          g++ -O2 -std=c++20 tabubu_time_dependent_ModeSelectionAblation.cpp -o tabubu_time_dependent_mode_ablation
+
+      - name: Generate switching and extended-fixed tasks across 250 jobs
+        id: matrix
+        run: |
+          python3 - <<'PYEOF'
+          import glob
+          import json
+          import os
+          from collections import Counter
+
+          prefixes = ("6", "10", "12", "20", "50", "100")
+
+          def instance_sort_key(path):
+              name = os.path.basename(path)[:-4]
+              return tuple(int(part) for part in name.split("."))
+
+          instances = []
+          for path in glob.glob("instance_time_dependent/*.txt"):
+              name = os.path.basename(path)
+              if name.endswith((".vmax_ij.txt", ".theta_ijl.txt")):
+                  continue
+              if name.split(".", 1)[0] in prefixes:
+                  instances.append(path)
+          instances.sort(key=instance_sort_key)
+
+          if not instances:
+              raise SystemExit("No matching instances found for prefixes 6, 10, 12, 20, 50, 100")
+
+          tasks = []
+          task_index = 0
+          for instance_path in instances:
+              instance = os.path.basename(instance_path)[:-4]
+              customer_group = instance.split(".", 1)[0]
+              for repetition in range(1, 16):
+                  task_index += 1
+                  tasks.append({
+                      "instance": instance,
+                      "customer_group": customer_group,
+                      "strategy": "switching",
+                      "label": "Switching objective",
+                      "gamma_set": "g2",
+                      "gamma": [0.5, 0.3, 0.1, 0.3],
+                      "repetition": repetition,
+                      "seed": 420000 + task_index,
+                  })
+              for repetition in range(1, 11):
+                  task_index += 1
+                  tasks.append({
+                      "instance": instance,
+                      "customer_group": customer_group,
+                      "strategy": "extended-fixed",
+                      "label": "Extended fixed makespan",
+                      "gamma_set": "g2",
+                      "gamma": [0.5, 0.3, 0.1, 0.3],
+                      "repetition": repetition,
+                      "seed": 420000 + task_index,
+                  })
+
+          batches = [[] for _ in range(250)]
+          for index, task in enumerate(tasks):
+              batches[index % len(batches)].append(task)
+
+          empty_jobs = sum(1 for batch in batches if not batch)
+          if empty_jobs:
+              raise SystemExit(f"Only {len(tasks)} tasks for 250 jobs; {empty_jobs} jobs would be empty")
+
+          distribution = Counter(map(len, batches))
+          matrix = [
+              {
+                  "batch_id": f"{index + 1:03d}",
+                  "tasks_json": json.dumps(batch, separators=(",", ":")),
+              }
+              for index, batch in enumerate(batches)
+          ]
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={json.dumps(matrix, separators=(',', ':'))}\n")
+              output.write(f"total_tasks={len(tasks)}\n")
+              output.write(f"total_instances={len(instances)}\n")
+
+          print(f"Found {len(instances)} instances")
+          print(f"Created {len(tasks)} tasks: 15 switching + 10 extended-fixed per instance")
+          print(f"Distributed across 250 jobs: {dict(sorted(distribution.items()))}")
+          PYEOF
+
+      - name: Upload solver
+        uses: actions/upload-artifact@v4
+        with:
+          name: time-dependent-mode-ablation-solver
+          path: tabubu_time_dependent_mode_ablation
+          retention-days: 1
+
+  solve:
+    name: Mode ablation batch ${{ matrix.batch_id }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 50
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.experiment_matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: time-dependent-mode-ablation-solver
+
+      - name: Run assigned repetitions in parallel
+        shell: bash
+        run: |
+          chmod +x tabubu_time_dependent_mode_ablation
+          mkdir -p mode_ablation_results/raw mode_ablation_results/logs
+          cat > batch_tasks.json <<'JSONEOF'
+          ${{ matrix.tasks_json }}
+          JSONEOF
+          python3 - <<'PYEOF'
+          import csv
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          solver = Path("./tabubu_time_dependent_mode_ablation")
+          tasks = json.loads(Path("batch_tasks.json").read_text(encoding="utf-8"))
+          raw_dir = Path("mode_ablation_results/raw")
+          log_dir = Path("mode_ablation_results/logs")
+          raw_dir.mkdir(parents=True, exist_ok=True)
+          log_dir.mkdir(parents=True, exist_ok=True)
+
+          fieldnames = [
+              "Instance",
+              "Customer group",
+              "Repetition",
+              "Strategy",
+              "Gamma set",
+              "Gamma1",
+              "Gamma2",
+              "Gamma3",
+              "Gamma4",
+              "Seed",
+              "Solver exit code",
+              "Initial cost",
+              "Improved cost",
+              "Worst cost",
+              "Mean cost",
+              "Elapsed seconds",
+              "Feasibility",
+              "Truck routes",
+              "Drone routes",
+              "Validated makespan",
+              "Deadline violation",
+              "Energy violation",
+              "Capacity violation",
+              "Full solution",
+          ]
+
+          def blank_row(task, exit_code):
+              gamma = task["gamma"]
+              return {
+                  "Instance": task["instance"],
+                  "Customer group": task["customer_group"],
+                  "Repetition": task["repetition"],
+                  "Strategy": task["label"],
+                  "Gamma set": task["gamma_set"],
+                  "Gamma1": gamma[0],
+                  "Gamma2": gamma[1],
+                  "Gamma3": gamma[2],
+                  "Gamma4": gamma[3],
+                  "Seed": task["seed"],
+                  "Solver exit code": exit_code,
+                  "Initial cost": "",
+                  "Improved cost": "",
+                  "Worst cost": "",
+                  "Mean cost": "",
+                  "Elapsed seconds": "",
+                  "Feasibility": "",
+                  "Truck routes": "",
+                  "Drone routes": "",
+                  "Validated makespan": "",
+                  "Deadline violation": "",
+                  "Energy violation": "",
+                  "Capacity violation": "",
+                  "Full solution": "",
+              }
+
+          def value_after_colon(line):
+              return line.split(":", 1)[1].strip()
+
+          def parse_solution_file(path):
+              text = path.read_text(encoding="utf-8", errors="replace")
+              parsed = {
+                  "Initial cost": "",
+                  "Improved cost": "",
+                  "Worst cost": "",
+                  "Mean cost": "",
+                  "Elapsed seconds": "",
+                  "Feasibility": "",
+                  "Truck routes": "",
+                  "Drone routes": "",
+                  "Validated makespan": "",
+                  "Deadline violation": "",
+                  "Energy violation": "",
+                  "Capacity violation": "",
+                  "Full solution": text,
+              }
+              truck_routes = []
+              drone_routes = []
+              section = None
+              for line in text.splitlines():
+                  stripped = line.strip()
+                  if stripped.startswith("Initial solution cost:"):
+                      parsed["Initial cost"] = value_after_colon(stripped)
+                  elif stripped.startswith("Improved solution cost:"):
+                      parsed["Improved cost"] = value_after_colon(stripped)
+                  elif stripped.startswith("Worst solution cost:"):
+                      parsed["Worst cost"] = value_after_colon(stripped)
+                  elif stripped.startswith("Mean solution cost:"):
+                      parsed["Mean cost"] = value_after_colon(stripped)
+                  elif stripped.startswith("Mean elapsed time:"):
+                      parsed["Elapsed seconds"] = value_after_colon(stripped).replace(" seconds", "")
+                  elif stripped.startswith("Final solution feasibility:"):
+                      parsed["Feasibility"] = value_after_colon(stripped)
+                  elif stripped == "Truck Routes:":
+                      section = "truck"
+                  elif stripped == "Drone Routes:":
+                      section = "drone"
+                  elif stripped.startswith("Truck "):
+                      truck_routes.append(stripped)
+                  elif stripped.startswith("Drone "):
+                      drone_routes.append(stripped)
+                  elif stripped.startswith("Total validation:"):
+                      validation = stripped.split(":", 1)[1]
+                      for item in validation.split(","):
+                          if "=" not in item:
+                              continue
+                          key, value = item.strip().split("=", 1)
+                          if key == "Makespan":
+                              parsed["Validated makespan"] = value
+                          elif key == "Deadline violation":
+                              parsed["Deadline violation"] = value
+                          elif key == "Energy violation":
+                              parsed["Energy violation"] = value
+                          elif key == "Capacity violation":
+                              parsed["Capacity violation"] = value
+              parsed["Truck routes"] = " || ".join(truck_routes)
+              parsed["Drone routes"] = " || ".join(drone_routes)
+              return parsed
+
+          processes = []
+          for task in tasks:
+              instance = task["instance"]
+              strategy = task["strategy"]
+              repetition = task["repetition"]
+              input_path = Path("instance_time_dependent") / f"{instance}.txt"
+              if not input_path.exists():
+                  raise SystemExit(f"Missing instance file: {input_path}")
+
+              prefix = raw_dir / f"{instance}_{strategy}_rep{repetition:02d}"
+              command = [
+                  str(solver),
+                  str(input_path),
+                  "--attempts=1",
+                  f"--strategy={strategy}",
+                  "--extended-multiplier=2.0",
+                  f"--ablation-prefix={prefix}",
+                  f"--seed-base={task['seed']}",
+              ]
+
+              vmax_path = Path("instance_time_dependent") / f"{instance}.vmax_ij.txt"
+              theta_path = Path("instance_time_dependent") / f"{instance}.theta_ijl.txt"
+              if vmax_path.exists():
+                  command.append(f"--truck-vmax-file={vmax_path}")
+              if theta_path.exists():
+                  command.append(f"--truck-theta-file={theta_path}")
+
+              log_path = log_dir / f"{instance}_{strategy}_rep{repetition:02d}.log"
+              log_file = log_path.open("w", encoding="utf-8")
+              processes.append((task, prefix, log_file, subprocess.Popen(command, stdout=log_file, stderr=subprocess.STDOUT)))
+
+          failed = []
+          rows = []
+          for task, prefix, log_file, process in processes:
+              return_code = process.wait()
+              log_file.close()
+              row = blank_row(task, return_code)
+              solution_path = Path(f"{prefix}_{task['strategy']}_solution_best.txt")
+              if solution_path.exists():
+                  row.update(parse_solution_file(solution_path))
+              elif return_code == 0:
+                  failed.append((task, "missing-solution"))
+              rows.append(row)
+
+              if return_code != 0:
+                  failed.append((task, return_code))
+                  continue
+
+          if failed:
+              print(f"Failed tasks recorded in CSV: {failed}")
+
+          rows.sort(key=lambda row: (tuple(int(part) for part in row["Instance"].split(".")), row["Strategy"], int(row["Repetition"])))
+          out_path = Path("mode_ablation_results") / "batch_results.csv"
+          with out_path.open("w", newline="", encoding="utf-8") as csv_file:
+              writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+              writer.writeheader()
+              writer.writerows(rows)
+
+          print(f"Completed {len(rows)} repetitions in this batch")
+          PYEOF
+
+      - name: Upload batch results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mode-ablation-batch-${{ matrix.batch_id }}
+          path: |
+            mode_ablation_results/batch_results.csv
+            mode_ablation_results/raw/*_summary.csv
+            mode_ablation_results/raw/*_solution_best.txt
+            mode_ablation_results/logs/*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate:
+    name: Aggregate mode-selection ablation results
+    needs:
+      - prepare
+      - solve
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all batch artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mode-ablation-batch-*
+          path: collected_mode_ablation_results
+          merge-multiple: false
+
+      - name: Aggregate CSV and LaTeX summaries
+        run: |
+          python3 - <<'PYEOF'
+          import csv
+          import glob
+          from collections import Counter, defaultdict
+          from pathlib import Path
+
+          expected_total = int("${{ needs.prepare.outputs.total_tasks }}")
+          expected_instances = int("${{ needs.prepare.outputs.total_instances }}")
+
+          rows = []
+          for path in glob.glob("collected_mode_ablation_results/**/batch_results.csv", recursive=True):
+              with open(path, newline="", encoding="utf-8") as csv_file:
+                  rows.extend(csv.DictReader(csv_file))
+
+          if len(rows) != expected_total:
+              raise SystemExit(f"Expected {expected_total} rows, found {len(rows)}")
+
+          fieldnames = [
+              "Instance",
+              "Customer group",
+              "Repetition",
+              "Strategy",
+              "Gamma set",
+              "Gamma1",
+              "Gamma2",
+              "Gamma3",
+              "Gamma4",
+              "Seed",
+              "Solver exit code",
+              "Initial cost",
+              "Improved cost",
+              "Worst cost",
+              "Mean cost",
+              "Elapsed seconds",
+              "Feasibility",
+              "Truck routes",
+              "Drone routes",
+              "Validated makespan",
+              "Deadline violation",
+              "Energy violation",
+              "Capacity violation",
+              "Full solution",
+          ]
+
+          counts = Counter((row["Instance"], row["Strategy"]) for row in rows)
+          instances = sorted({row["Instance"] for row in rows}, key=lambda name: tuple(int(part) for part in name.split(".")))
+          if len(instances) != expected_instances:
+              raise SystemExit(f"Expected {expected_instances} instances, found {len(instances)}")
+
+          for instance in instances:
+              if counts[(instance, "Switching objective")] != 15:
+                  raise SystemExit(f"{instance} has {counts[(instance, 'Switching objective')]} switching rows, expected 15")
+              if counts[(instance, "Extended fixed makespan")] != 10:
+                  raise SystemExit(f"{instance} has {counts[(instance, 'Extended fixed makespan')]} extended-fixed rows, expected 10")
+
+          rows.sort(key=lambda row: (tuple(int(part) for part in row["Instance"].split(".")), row["Strategy"], int(row["Repetition"])))
+
+          detailed_path = Path("mode_selection_time_dependent_ablation_results.csv")
+          with detailed_path.open("w", newline="", encoding="utf-8") as csv_file:
+              writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+              writer.writeheader()
+              writer.writerows(rows)
+
+          grouped = defaultdict(list)
+          for row in rows:
+              grouped[row["Strategy"]].append(row)
+
+          summary_rows = []
+          for strategy, group in sorted(grouped.items()):
+              successful = [row for row in group if row["Solver exit code"] == "0" and row["Improved cost"]]
+              if successful:
+                  best_values = [float(row["Improved cost"]) for row in successful]
+                  time_values = [float(row["Elapsed seconds"]) for row in successful if row["Elapsed seconds"]]
+                  best_cost = min(best_values)
+                  mean_cost = sum(best_values) / len(best_values)
+                  worst_cost = max(best_values)
+                  mean_elapsed = sum(time_values) / len(time_values) if time_values else ""
+              else:
+                  best_cost = mean_cost = worst_cost = mean_elapsed = ""
+              feasible_count = sum(1 for row in group if row["Feasibility"].upper() == "FEASIBLE")
+              nonzero_exit_count = sum(1 for row in group if row["Solver exit code"] != "0")
+              summary_rows.append({
+                  "strategy": strategy,
+                  "runs": len(group),
+                  "successful_runs": len(successful),
+                  "nonzero_exit_count": nonzero_exit_count,
+                  "best_cost": best_cost,
+                  "mean_cost": mean_cost,
+                  "worst_cost": worst_cost,
+                  "mean_elapsed_sec": mean_elapsed,
+                  "feasible_runs": feasible_count,
+              })
+
+          summary_path = Path("mode_selection_time_dependent_ablation_summary.csv")
+          with summary_path.open("w", newline="", encoding="utf-8") as csv_file:
+              fieldnames = [
+                  "strategy",
+                  "runs",
+                  "successful_runs",
+                  "nonzero_exit_count",
+                  "best_cost",
+                  "mean_cost",
+                  "worst_cost",
+                  "mean_elapsed_sec",
+                  "feasible_runs",
+              ]
+              writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+              writer.writeheader()
+              writer.writerows(summary_rows)
+
+          tex_path = Path("mode_selection_time_dependent_ablation_summary.tex")
+          with tex_path.open("w", encoding="utf-8") as tex_file:
+              tex_file.write("\\begin{tabular}{lrrrrr}\\n")
+              tex_file.write("\\toprule\\n")
+              tex_file.write("Configuration & Runs & Best & Mean & Worst & Mean Time (s) \\\\\\n")
+              tex_file.write("\\midrule\\n")
+              for row in summary_rows:
+                  best_cost = f"{row['best_cost']:.6f}" if row["best_cost"] != "" else ""
+                  mean_cost = f"{row['mean_cost']:.6f}" if row["mean_cost"] != "" else ""
+                  worst_cost = f"{row['worst_cost']:.6f}" if row["worst_cost"] != "" else ""
+                  mean_elapsed = f"{row['mean_elapsed_sec']:.3f}" if row["mean_elapsed_sec"] != "" else ""
+                  tex_file.write(
+                      f"{row['strategy']} & {row['runs']} & "
+                      f"{best_cost} & {mean_cost} & "
+                      f"{worst_cost} & {mean_elapsed} \\\\\\n"
+                  )
+              tex_file.write("\\bottomrule\\n")
+              tex_file.write("\\end{tabular}\\n")
+
+          print(f"Aggregated {len(rows)} runs across {len(instances)} instances")
+          PYEOF
+
+      - name: Upload consolidated mode-selection ablation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mode-selection-time-dependent-ablation-results
+          path: |
+            mode_selection_time_dependent_ablation_results.csv
+            mode_selection_time_dependent_ablation_summary.csv
+            mode_selection_time_dependent_ablation_summary.tex
+          if-no-files-found: warn
+          retention-days: 30

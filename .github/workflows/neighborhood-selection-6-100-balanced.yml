@@ -1,0 +1,200 @@
+name: Six neighborhood strategies - balanced 6-to-100 extra 10 runs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  prepare:
+    name: Build solver and prepare 250 balanced jobs
+    runs-on: ubuntu-latest
+    outputs:
+      experiment_matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compile neighborhood-selection solver
+        run: |
+          g++ -O2 -std=c++20 tabubu_TimeDependent_neighbourhoddSelection.cpp -o tabubu_neighborhood_6_100
+
+      - name: Generate 4800 extra-run tasks distributed across 250 jobs
+        id: matrix
+        run: |
+          python3 - <<'PYEOF'
+          import glob
+          import json
+          import os
+          from collections import Counter
+
+          expected_counts = {6: 12, 10: 12, 12: 12, 20: 12, 50: 16, 100: 16}
+          instances = []
+          for customer_count, expected_count in expected_counts.items():
+              group = []
+              for path in glob.glob(f"instance_time_dependent/{customer_count}.*.txt"):
+                  if path.endswith((".vmax_ij.txt", ".theta_ijl.txt")):
+                      continue
+                  group.append(os.path.basename(path)[:-4])
+              group.sort(key=lambda name: tuple(int(part) for part in name.split(".")))
+              if len(group) != expected_count:
+                  raise SystemExit(
+                      f"Expected {expected_count} instances for {customer_count} customers, found {len(group)}"
+                  )
+              instances.extend(group)
+          if len(instances) != 80:
+              raise SystemExit(f"Expected 80 instances, found {len(instances)}")
+
+          methods = [
+              {"strategy": "cyclic"},
+              {"strategy": "random"},
+              {"strategy": "adaptive", "gamma_set": "g1", "gamma": [0.3, 0.2, 0.1, 0.3]},
+              {"strategy": "adaptive", "gamma_set": "g2", "gamma": [0.5, 0.3, 0.1, 0.3]},
+              {"strategy": "adaptive", "gamma_set": "g3", "gamma": [0.3, 0.2, 0.1, 0.6]},
+              {"strategy": "adaptive", "gamma_set": "g4", "gamma": [0.5, 0.3, 0.1, 0.6]},
+          ]
+          tasks = []
+          for instance in instances:
+              for method in methods:
+                  for repetition in range(6, 16):
+                      tasks.append({"instance": instance, "repetition": repetition, **method})
+          if len(tasks) != 4800:
+              raise SystemExit(f"Expected 4800 tasks, found {len(tasks)}")
+
+          batches = [[] for _ in range(250)]
+          for index, task in enumerate(tasks):
+              batches[index % len(batches)].append(task)
+          distribution = Counter(map(len, batches))
+          if distribution != Counter({20: 50, 19: 200}):
+              raise SystemExit(f"Unexpected batch distribution: {distribution}")
+
+          matrix = [
+              {
+                  "batch_id": f"{index + 1:03d}",
+                  "tasks_json": json.dumps(batch, separators=(",", ":")),
+              }
+              for index, batch in enumerate(batches)
+          ]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={json.dumps(matrix, separators=(',', ':'))}\n")
+          print("Created 250 jobs: 50 jobs x 20 processes + 200 jobs x 19 processes")
+          PYEOF
+
+      - name: Upload solver
+        uses: actions/upload-artifact@v4
+        with:
+          name: neighborhood-6-100-solver
+          path: tabubu_neighborhood_6_100
+          retention-days: 1
+
+  solve:
+    name: Balanced batch ${{ matrix.batch_id }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.experiment_matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: neighborhood-6-100-solver
+
+      - name: Run nineteen or twenty neighborhood tasks in parallel
+        shell: bash
+        run: |
+          chmod +x tabubu_neighborhood_6_100
+          mkdir -p neighborhood_results
+          cat > batch_tasks.json <<'JSONEOF'
+          ${{ matrix.tasks_json }}
+          JSONEOF
+          python3 scripts/run_neighborhood_batch.py \
+            ./tabubu_neighborhood_6_100 \
+            batch_tasks.json \
+            neighborhood_results
+
+      - name: Upload batch results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: neighborhood-6-100-batch-${{ matrix.batch_id }}
+          path: neighborhood_results/*.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  aggregate:
+    name: Aggregate all 4800 extra-run results into Excel
+    needs: solve
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all balanced batch artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: neighborhood-6-100-batch-*
+          path: collected_results
+          merge-multiple: true
+
+      - name: Create Excel workbook and CSV backup
+        run: |
+          python3 scripts/aggregate_cyclic_results.py \
+            collected_results \
+            neighborhood_selection_6_100_extra10_results.xlsx \
+            --csv neighborhood_selection_6_100_extra10_results.csv
+
+      - name: Verify all strategies and repetitions
+        run: |
+          python3 - <<'PYEOF'
+          import csv
+          from collections import Counter
+
+          with open("neighborhood_selection_6_100_extra10_results.csv", newline="", encoding="utf-8") as csv_file:
+              rows = list(csv.DictReader(csv_file))
+          if len(rows) != 4800:
+              raise SystemExit(f"Expected 4800 results, found {len(rows)}")
+          methods = Counter(
+              row["Strategy"] if row["Strategy"] != "adaptive"
+              else f'adaptive-{row["Gamma set"]}'
+              for row in rows
+          )
+          expected = Counter({
+              "cyclic": 800,
+              "random": 800,
+              "adaptive-g1": 800,
+              "adaptive-g2": 800,
+              "adaptive-g3": 800,
+              "adaptive-g4": 800,
+          })
+          if methods != expected:
+              raise SystemExit(f"Unexpected method counts: {methods}")
+          customer_groups = Counter(row["Customer group"] for row in rows)
+          expected_groups = Counter({"6": 720, "10": 720, "12": 720, "20": 720, "50": 960, "100": 960})
+          if customer_groups != expected_groups:
+              raise SystemExit(f"Unexpected customer-group counts: {customer_groups}")
+          repetitions = Counter(row["Repetition"] for row in rows)
+          expected_repetitions = Counter({str(rep): 480 for rep in range(6, 16)})
+          if repetitions != expected_repetitions:
+              raise SystemExit(f"Unexpected repetition counts: {repetitions}")
+          print("Verified 4800 extra-run results across six methods and six customer groups")
+          PYEOF
+
+      - name: Upload consolidated experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: neighborhood-selection-6-100-extra10-experiment-results
+          path: |
+            neighborhood_selection_6_100_extra10_results.xlsx
+            neighborhood_selection_6_100_extra10_results.csv
+          if-no-files-found: warn
+          retention-days: 30

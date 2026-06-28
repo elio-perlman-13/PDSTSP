@@ -1,0 +1,297 @@
+name: Solve big_instance (truck_multiple_trip, Dh=200 kg, Dd∈{2.27,5,10} kg, Lw∈{1800,2700,3600})
+
+# Chạy tự động khi push lên main_huett, hoặc kích hoạt thủ công
+on:
+  push:
+    branches:
+      - main_huett
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # 1. Tạo ma trận: 16 instances × 3 Dd × 5 runs = 240 jobs
+  #    Mỗi job chạy tuần tự Lw=1800 → 2700 → 3600 (3×2h=6h, timeout 6h)
+  # ──────────────────────────────────────────────────────────────────────────
+  prepare:
+    name: Prepare run matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Generate 240-item matrix (instances × drone_caps × runs)
+        id: set-matrix
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, glob
+
+          items = []
+          for f in sorted(glob.glob('big_instance/*.txt')):
+              base = os.path.basename(f)[:-4]
+              for dd in ['2.27', '5.0', '10.0']:
+                  for run in range(1, 6):
+                      items.append({
+                          'file': f,
+                          'base': base,
+                          'dd':   dd,
+                          'run':  run,
+                      })
+
+          print(f'Matrix: {len(items)} jobs total', flush=True)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+              fh.write(f'matrix={json.dumps(items)}\n')
+          PYEOF
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 2. Biên dịch 3 binary multi: Dd=2.27, 5.0, 10.0 — Dh=200 kg
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build multi solver (Dh=200 kg, Dd∈{2.27,5,10} kg)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compile 3 binaries (truck_multiple_trip × Dd=2.27, 5.0, 10.0)
+        run: |
+          for dd in 2.27 5.0 10.0; do
+            suffix="${dd//./}"   # 2.27→227, 5.0→50, 10.0→100
+            sed -e 's/double Dh = [0-9][0-9.]*/double Dh = 200.0/' \
+                -e "s/double Dd = [0-9][0-9.]*/double Dd = ${dd}/" \
+                tabubu.cpp > "patched_multi_dd${suffix}.cpp"
+            g++ -O2 -std=c++17 "patched_multi_dd${suffix}.cpp" -o "tabubu_multi_dd${suffix}"
+            echo "Built tabubu_multi_dd${suffix}  (Dh=200, Dd=${dd})"
+          done
+          echo "All 3 binaries built OK"
+
+      - name: Verify Dh and Dd values
+        run: |
+          for dd in 2.27 5.0 10.0; do
+            suffix="${dd//./}"
+            echo "=== Dd=${dd} kg ==="
+            grep 'double D[hd]' "patched_multi_dd${suffix}.cpp" | head -2
+          done
+
+      - name: Upload solver binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: solver-bins-lw
+          path: tabubu_multi_dd*
+          retention-days: 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 3. Mỗi job = 1 instance × 1 Dd × 1 run
+  #    Chạy song song 3 tiến trình Lw=1800 | 2700 | 3600 (wall-time ≈2h, timeout 6h)
+  # ──────────────────────────────────────────────────────────────────────────
+  run:
+    name: "${{ matrix.base }} | Dd=${{ matrix.dd }} kg | run ${{ matrix.run }}"
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      max-parallel: 20
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download solver binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: solver-bins-lw
+
+      - name: Make executable
+        run: |
+          suffix="${{ matrix.dd }}"
+          suffix="${suffix//./}"
+          chmod +x "tabubu_multi_dd${suffix}"
+
+      - name: Run Lw=1800, 2700, 3600 in parallel (3 tiến trình song song, wall-time ≈2h)
+        run: |
+          dd="${{ matrix.dd }}"
+          suffix="${dd//./}"
+          binary="$(pwd)/tabubu_multi_dd${suffix}"
+
+          # Patch 3 instance riêng biệt vào workdir_Lw
+          for lw in 1800 2700 3600; do
+            mkdir -p "workdir_${lw}"
+            python3 - <<PYEOF
+          lw_val = ${lw}
+          with open('${{ matrix.file }}') as f:
+              lines = f.readlines()
+          out = []
+          for i, line in enumerate(lines):
+              if i < 6:
+                  out.append(line)
+              else:
+                  parts = line.rstrip('\n').split('\t')
+                  if len(parts) >= 7:
+                      parts[6] = str(float(lw_val))
+                  out.append('\t'.join(parts) + '\n')
+          with open('workdir_${lw}/instance_patched.txt', 'w') as f:
+              f.writelines(out)
+          PYEOF
+          done
+
+          echo "=== Patching done — launching 3 parallel processes ==="
+
+          # Chạy song song: mỗi Lw trong subshell riêng
+          for lw in 1800 2700 3600; do
+            (
+              cd "workdir_${lw}"
+              echo "=== [Lw=${lw}] Start: $(date) ==="
+              "${binary}" instance_patched.txt --attempts=1 --time-limit=7200 2>&1 || true
+              echo "=== [Lw=${lw}] Done:  $(date) ==="
+              {
+                echo "INSTANCE_FILE: ${{ matrix.file }}"
+                echo "INSTANCE_BASE: ${{ matrix.base }}"
+                echo "SOLVER: multi"
+                echo "DRONE_CAP: ${{ matrix.dd }}"
+                echo "LW: ${lw}"
+                echo "RUN: ${{ matrix.run }}"
+                echo "---SOLVER OUTPUT---"
+                if [ -f output_solution_best.txt ]; then
+                  cat output_solution_best.txt
+                else
+                  echo "Final solution feasibility: INFEASIBLE"
+                  echo "Improved solution cost: "
+                  echo "Mean solution cost: "
+                  echo "Worst solution cost: "
+                  echo "Mean elapsed time: "
+                fi
+              } > "../result_multi_lw${lw}.txt"
+            ) &
+          done
+
+          wait
+          echo "=== All 3 Lw processes completed ==="
+
+      - name: Upload results (Lw=1800, 2700, 3600)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "result-${{ matrix.base }}-Dd${{ matrix.dd }}-run${{ matrix.run }}"
+          path: result_multi_lw*.txt
+          if-no-files-found: warn
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 4. Thu thập kết quả → CSV tổng hợp theo (Dd, Lw)
+  # ──────────────────────────────────────────────────────────────────────────
+  collect:
+    name: Collect results and generate CSV
+    needs: run
+    runs-on: ubuntu-latest
+    if: always()
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all run artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all_artifacts
+
+      - name: Flatten result files into results/
+        run: |
+          mkdir -p results
+          find all_artifacts -name 'result_multi_lw*.txt' | while read src; do
+            artifact_name=$(basename "$(dirname "$src")")
+            fname=$(basename "$src")
+            cp "$src" "results/${artifact_name}-${fname}"
+          done
+          echo "=== $(ls results/ | wc -l) result files collected ==="
+          ls results/ | sort | head -30
+
+      - name: Generate comprehensive CSV
+        run: |
+          python3 scripts/parse_results.py results/ big_instance/ | tee solutions.csv
+          echo ""
+          echo "=== CSV rows: $(wc -l < solutions.csv) (including header) ==="
+
+      - name: Summarize results by Dd and Lw
+        run: |
+          python3 - << 'PYEOF'
+          import csv
+          from collections import defaultdict
+
+          with open('solutions.csv', newline='') as f:
+              rows = list(csv.DictReader(f))
+
+          # Group by (instance, drone_cap, lw)
+          data = defaultdict(lambda: {'feasible': 0, 'total': 0, 'costs': []})
+
+          for row in rows:
+              inst   = row['instance name'].strip()
+              dd     = row.get('drone_cap', '').strip()
+              lw     = row.get('lw', '').strip()
+              feas   = row['feasibility (yes/no)'].strip().lower()
+              cost_s = row['final cost (improved cost)'].strip()
+              data[(inst, dd, lw)]['total'] += 1
+              if feas == 'yes' and cost_s:
+                  try:
+                      data[(inst, dd, lw)]['feasible'] += 1
+                      data[(inst, dd, lw)]['costs'].append(float(cost_s))
+                  except ValueError:
+                      pass
+
+          HEADER = (
+              f"{'Instance':<14} {'Dd(kg)':>7} {'Lw(s)':>7}  "
+              f"{'Feas':>7}  {'Best cost':>12}  {'Mean cost':>12}"
+          )
+          SEP = '-' * len(HEADER)
+
+          summary_rows = []
+          for dd in ['2.27', '5.0', '10.0']:
+              for lw in ['1800', '2700', '3600']:
+                  insts = sorted(set(k[0] for k in data if k[1] == dd and k[2] == lw))
+                  if not insts:
+                      continue
+                  print('\n' + SEP)
+                  print(f'  Truck multiple trip — Dd={dd} kg, Lw={lw} s, Dh=200 kg')
+                  print(SEP)
+                  print(HEADER)
+                  print(SEP)
+                  grp_feas = grp_tot = 0
+                  for inst in insts:
+                      v = data[(inst, dd, lw)]
+                      feas_str = f"{v['feasible']}/{v['total']}"
+                      best = f"{min(v['costs']):.2f}" if v['costs'] else 'INFEAS'
+                      mean = f"{sum(v['costs'])/len(v['costs']):.2f}" if v['costs'] else 'INFEAS'
+                      print(f"{inst:<14} {dd:>7} {lw:>7}  {feas_str:>7}  {best:>12}  {mean:>12}")
+                      grp_feas += v['feasible']
+                      grp_tot  += v['total']
+                      summary_rows.append({
+                          'instance': inst, 'drone_cap': dd, 'lw': lw,
+                          'feasible': v['feasible'], 'total': v['total'],
+                          'best_cost': best, 'mean_cost': mean,
+                      })
+                  print(SEP)
+                  if grp_tot:
+                      print(f"  Feasibility: {grp_feas}/{grp_tot} ({100*grp_feas/grp_tot:.1f}%)")
+
+          print('\n')
+          with open('summary_lw.csv', 'w', newline='') as f:
+              w = csv.DictWriter(f, fieldnames=[
+                  'instance', 'drone_cap', 'lw',
+                  'feasible', 'total', 'best_cost', 'mean_cost',
+              ])
+              w.writeheader()
+              w.writerows(summary_rows)
+          print('Saved: summary_lw.csv')
+          PYEOF
+
+      - name: Upload CSV report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solutions-csv-lw
+          path: |
+            solutions.csv
+            summary_lw.csv
+          if-no-files-found: warn

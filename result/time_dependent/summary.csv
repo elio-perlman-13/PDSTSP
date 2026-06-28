@@ -1,0 +1,13 @@
+instance,exit_code,initial_cost,improved_cost,feasibility,mean_elapsed_sec,warnings_stale_metrics,output_dir
+6.5.1,0,1229.706403,947.857861,FEASIBLE,0.001782,0,result/time_dependent/6.5.1
+6.5.2,0,798.274470,769.057322,FEASIBLE,0.003342,0,result/time_dependent/6.5.2
+6.5.3,0,1048.262567,1013.903373,FEASIBLE,0.001617,0,result/time_dependent/6.5.3
+6.5.4,0,973.932979,805.232474,FEASIBLE,0.001722,0,result/time_dependent/6.5.4
+6.10.1,0,2887.244238,1376.191832,FEASIBLE,0.003493,1,result/time_dependent/6.10.1
+6.10.2,0,1584.491119,1402.724947,FEASIBLE,0.002511,0,result/time_dependent/6.10.2
+6.10.3,0,1436.833521,1195.568831,FEASIBLE,0.002807,0,result/time_dependent/6.10.3
+6.10.4,0,1796.907479,1234.793269,FEASIBLE,0.002698,0,result/time_dependent/6.10.4
+6.20.1,0,4208.645271,2093.059094,FEASIBLE,0.002473,0,result/time_dependent/6.20.1
+6.20.2,0,5551.497661,3378.670408,FEASIBLE,0.001308,0,result/time_dependent/6.20.2
+6.20.3,0,3391.075053,2908.171045,FEASIBLE,0.002037,0,result/time_dependent/6.20.3
+6.20.4,0,3507.180268,2875.402445,FEASIBLE,0.002349,0,result/time_dependent/6.20.4

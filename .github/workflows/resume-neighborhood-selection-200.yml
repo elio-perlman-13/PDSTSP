@@ -1,0 +1,171 @@
+name: Resume missing 200-customer neighborhood configurations
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  SOURCE_RUN_ID: "28284786576"
+  SOLVER_TIME_LIMIT_SEC: "18000"
+
+jobs:
+  prepare:
+    name: Recover old results and prepare missing matrix
+    runs-on: ubuntu-latest
+    outputs:
+      missing_matrix: ${{ steps.missing.outputs.matrix }}
+      recovered_count: ${{ steps.missing.outputs.recovered_count }}
+      missing_count: ${{ steps.missing.outputs.missing_count }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download completed results from the canceled run
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          pattern: neighborhood-200-batch-*
+          path: recovered_old_results
+          merge-multiple: true
+
+      - name: Identify configurations that still need to run
+        id: missing
+        run: |
+          python3 scripts/prepare_missing_200_tasks.py \
+            recovered_old_results \
+            instance_time_dependent \
+            missing_matrix.json \
+            missing_configurations.json \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Show recovery summary
+        run: |
+          echo "Recovered configurations: ${{ steps.missing.outputs.recovered_count }}"
+          echo "Missing configurations:   ${{ steps.missing.outputs.missing_count }}"
+          if [ "${{ steps.missing.outputs.missing_count }}" != "212" ]; then
+            echo "The number differs from the 212-configuration audit because the old run produced additional artifacts before cancellation."
+          fi
+
+      - name: Compile solver
+        run: |
+          g++ -O2 -std=c++20 tabubu_TimeDependent_neighbourhoddSelection.cpp -o tabubu_neighborhood_200_resume
+
+      - name: Upload solver
+        uses: actions/upload-artifact@v4
+        with:
+          name: neighborhood-200-resume-solver
+          path: tabubu_neighborhood_200_resume
+          retention-days: 1
+
+      - name: Preserve recovered results and manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovered-200-results-from-run-${{ env.SOURCE_RUN_ID }}
+          path: |
+            recovered_old_results/*.txt
+            missing_matrix.json
+            missing_configurations.json
+          if-no-files-found: error
+          retention-days: 90
+
+  solve-missing:
+    name: ${{ matrix.task_id }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    # The solver is stopped at 5 hours; the extra 30 minutes lets GitHub upload
+    # the preserved checkpoint instead of canceling the whole job.
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.missing_matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: neighborhood-200-resume-solver
+
+      - name: Run one missing configuration for at most five hours
+        shell: bash
+        run: |
+          chmod +x tabubu_neighborhood_200_resume
+          mkdir -p new_results
+          cat > task.json <<'JSONEOF'
+          ${{ matrix.tasks_json }}
+          JSONEOF
+          python3 scripts/run_neighborhood_batch.py \
+            ./tabubu_neighborhood_200_resume \
+            task.json \
+            new_results
+
+      - name: Upload resumed result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resumed-${{ matrix.task_id }}
+          path: new_results/*.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+  aggregate:
+    name: Merge old and resumed results
+    needs: [prepare, solve-missing]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download preserved old results
+        uses: actions/download-artifact@v4
+        with:
+          name: recovered-200-results-from-run-${{ env.SOURCE_RUN_ID }}
+          path: collected_results
+
+      - name: Download all resumed results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: resumed-*
+          path: collected_results
+          merge-multiple: true
+
+      - name: Create complete Excel workbook and CSV
+        run: |
+          python3 scripts/aggregate_cyclic_results.py \
+            collected_results \
+            neighborhood_selection_200_complete.xlsx \
+            --csv neighborhood_selection_200_complete.csv
+
+      - name: Verify the complete 480-configuration result set
+        run: |
+          python3 - <<'PYEOF'
+          import csv
+
+          with open("neighborhood_selection_200_complete.csv", newline="", encoding="utf-8") as csv_file:
+              rows = list(csv.DictReader(csv_file))
+          keys = {
+              (row["Instance"], row["Strategy"], row["Gamma set"], row["Repetition"])
+              for row in rows
+          }
+          if len(rows) != 480 or len(keys) != 480:
+              raise SystemExit(f"Expected 480 unique configurations, found {len(rows)} rows and {len(keys)} unique keys")
+          print("Verified all 480 unique configurations")
+          PYEOF
+
+      - name: Upload complete 200-customer experiment
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: neighborhood-selection-200-complete-results
+          path: |
+            neighborhood_selection_200_complete.xlsx
+            neighborhood_selection_200_complete.csv
+            collected_results/missing_configurations.json
+          if-no-files-found: warn
+          retention-days: 90

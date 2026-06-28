@@ -1,0 +1,199 @@
+name: Reusable 200-customer three-method experiment
+
+on:
+  workflow_call:
+    inputs:
+      group_id:
+        required: true
+        type: string
+      methods_json:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  SOLVER_TIME_LIMIT_SEC: "18000"
+
+jobs:
+  prepare:
+    name: Prepare ${{ inputs.group_id || 'push' }} matrix and solver
+    runs-on: ubuntu-latest
+    outputs:
+      experiment_matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compile solver
+        run: |
+          g++ -O2 -std=c++20 tabubu_TimeDependent_neighbourhoddSelection.cpp \
+            -o tabubu_neighborhood_200
+
+      - name: Build 240-job matrix
+        id: matrix
+        env:
+          METHODS_JSON: ${{ inputs.methods_json || '[{"strategy":"adaptive","gamma_set":"g2","gamma":[0.5,0.3,0.1,0.3]},{"strategy":"adaptive","gamma_set":"g3","gamma":[0.3,0.2,0.1,0.6]},{"strategy":"adaptive","gamma_set":"g4","gamma":[0.5,0.3,0.1,0.6]}]' }}
+        run: |
+          python3 - <<'PYEOF'
+          import glob
+          import json
+          import os
+          from pathlib import Path
+
+          methods = json.loads(os.environ["METHODS_JSON"])
+          if len(methods) != 3:
+              raise SystemExit(f"Expected exactly three methods, found {len(methods)}")
+
+          instances = sorted(
+              (
+                  Path(path).name.removesuffix(".txt")
+                  for path in glob.glob("instance_time_dependent/200.*.txt")
+                  if not path.endswith((".vmax_ij.txt", ".theta_ijl.txt"))
+              ),
+              key=lambda name: tuple(int(part) for part in name.split(".")),
+          )
+          if len(instances) != 16:
+              raise SystemExit(f"Expected 16 instances, found {len(instances)}")
+
+          tasks = [
+              {"instance": instance, "repetition": repetition, **method}
+              for instance in instances
+              for method in methods
+              for repetition in range(1, 6)
+          ]
+          if len(tasks) != 240:
+              raise SystemExit(f"Expected 240 tasks, found {len(tasks)}")
+
+          matrix = []
+          for task in tasks:
+              suffix = f"{task['instance']}-run-{task['repetition']}-{task['strategy']}"
+              if task["strategy"] == "adaptive":
+                  suffix += f"-{task['gamma_set']}"
+              matrix.append({
+                  "task_id": suffix,
+                  "tasks_json": json.dumps([task], separators=(",", ":")),
+              })
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={json.dumps(matrix, separators=(',', ':'))}\n")
+          print("Created 240 jobs with exactly one configuration per job")
+          PYEOF
+
+      - name: Upload solver
+        uses: actions/upload-artifact@v4
+        with:
+          name: neighborhood-200-${{ inputs.group_id || 'push' }}-solver
+          path: tabubu_neighborhood_200
+          retention-days: 1
+
+  solve:
+    name: ${{ matrix.task_id }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.experiment_matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: neighborhood-200-${{ inputs.group_id || 'push' }}-solver
+
+      - name: Run one configuration for at most five hours
+        shell: bash
+        run: |
+          chmod +x tabubu_neighborhood_200
+          mkdir -p new_results
+          cat > task.json <<'JSONEOF'
+          ${{ matrix.tasks_json }}
+          JSONEOF
+          python3 scripts/run_neighborhood_batch.py \
+            ./tabubu_neighborhood_200 \
+            task.json \
+            new_results
+
+      - name: Upload configuration result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: neighborhood-200-${{ inputs.group_id || 'push' }}-${{ matrix.task_id }}
+          path: new_results/*.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+  aggregate:
+    name: Aggregate ${{ inputs.group_id || 'push' }} results
+    needs: solve
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all 240 configuration results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: neighborhood-200-${{ inputs.group_id || 'push' }}-200.*
+          path: collected_results
+          merge-multiple: true
+
+      - name: Create group Excel workbook and CSV
+        run: |
+          python3 scripts/aggregate_cyclic_results.py \
+            collected_results \
+            neighborhood_selection_200_${{ inputs.group_id || 'push' }}.xlsx \
+            --csv neighborhood_selection_200_${{ inputs.group_id || 'push' }}.csv
+
+      - name: Verify all 240 group configurations
+        env:
+          METHODS_JSON: ${{ inputs.methods_json || '[{"strategy":"adaptive","gamma_set":"g2","gamma":[0.5,0.3,0.1,0.3]},{"strategy":"adaptive","gamma_set":"g3","gamma":[0.3,0.2,0.1,0.6]},{"strategy":"adaptive","gamma_set":"g4","gamma":[0.5,0.3,0.1,0.6]}]' }}
+          RESULT_CSV: neighborhood_selection_200_${{ inputs.group_id || 'push' }}.csv
+        run: |
+          python3 - <<'PYEOF'
+          import csv
+          import json
+          import os
+          from collections import Counter
+
+          with open(os.environ["RESULT_CSV"], newline="", encoding="utf-8") as csv_file:
+              rows = list(csv.DictReader(csv_file))
+          keys = {
+              (row["Instance"], row["Strategy"], row["Gamma set"], row["Repetition"])
+              for row in rows
+          }
+          methods = json.loads(os.environ["METHODS_JSON"])
+          expected = Counter(
+              method["strategy"] if method["strategy"] != "adaptive"
+              else f"adaptive-{method['gamma_set']}"
+              for method in methods
+          )
+          expected = Counter({method: count * 80 for method, count in expected.items()})
+          actual = Counter(
+              row["Strategy"] if row["Strategy"] != "adaptive"
+              else f'adaptive-{row["Gamma set"]}'
+              for row in rows
+          )
+          if len(rows) != 240 or len(keys) != 240 or actual != expected:
+              raise SystemExit(
+                  f"Expected 240 unique configurations and {expected}; "
+                  f"found {len(rows)} rows, {len(keys)} keys, and {actual}"
+              )
+          print("Verified 240 unique configurations")
+          PYEOF
+
+      - name: Upload consolidated group results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: neighborhood-selection-200-${{ inputs.group_id || 'push' }}-complete
+          path: |
+            neighborhood_selection_200_${{ inputs.group_id || 'push' }}.xlsx
+            neighborhood_selection_200_${{ inputs.group_id || 'push' }}.csv
+          if-no-files-found: warn
+          retention-days: 90

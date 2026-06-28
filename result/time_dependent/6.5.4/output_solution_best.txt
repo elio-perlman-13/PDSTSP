@@ -1,0 +1,12 @@
+Initial solution cost: 973.932979
+Improved solution cost: 805.232474
+Worst solution cost: 805.232474
+Mean solution cost: 805.232474
+Mean elapsed time: 0.001722 seconds
+Final solution feasibility: FEASIBLE
+Solution Details:
+Truck Routes:
+Truck 1: 0 1 4 6 0 |Truck Time: 805.232474|805.232474,0.000000,0.000000,0.000000
+Drone Routes:
+Drone 1: 0 5 3 2 0 |Drone Time: 755.710446|755.710446,0.000000,0.000000,0.000000
+Total validation: Makespan=805.232474, Deadline violation=0.000000, Energy violation=0.000000, Capacity violation=0.000000

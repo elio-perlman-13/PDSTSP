@@ -1,0 +1,15 @@
+name: Neighborhood selection 200 - cyclic, random, adaptive g1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  experiment:
+    uses: ./.github/workflows/neighborhood-selection-200-three-methods-reusable.yml
+    with:
+      group_id: group-1
+      methods_json: >-
+        [{"strategy":"cyclic"},{"strategy":"random"},{"strategy":"adaptive","gamma_set":"g1","gamma":[0.3,0.2,0.1,0.3]}]

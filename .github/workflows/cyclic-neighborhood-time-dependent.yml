@@ -1,0 +1,218 @@
+name: Cyclic neighborhood selection - time-dependent instances
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    name: Build solver and prepare large matrix
+    runs-on: ubuntu-latest
+    outputs:
+      large_matrix: ${{ steps.large-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compile neighborhood-selection solver
+        run: |
+          g++ -O2 -std=c++20 tabubu_TimeDependent_neighbourhoddSelection.cpp -o tabubu_cyclic
+
+      - name: Generate 240 large-run jobs
+        id: large-matrix
+        run: |
+          python3 - <<'PYEOF'
+          import glob
+          import json
+          import os
+
+          instances = []
+          for pattern in ("50.*.txt", "100.*.txt", "200.*.txt"):
+              for path in glob.glob(f"instance_time_dependent/{pattern}"):
+                  if path.endswith((".vmax_ij.txt", ".theta_ijl.txt")):
+                      continue
+                  instances.append(os.path.basename(path)[:-4])
+
+          instances.sort(key=lambda name: tuple(int(part) for part in name.split(".")))
+          matrix = [
+              {"instance": instance, "repetition": repetition}
+              for instance in instances
+              for repetition in range(1, 6)
+          ]
+          if len(matrix) != 240:
+              raise SystemExit(f"Expected 240 large runs, found {len(matrix)}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={json.dumps(matrix, separators=(',', ':'))}\n")
+          PYEOF
+
+      - name: Upload solver
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyclic-solver
+          path: tabubu_cyclic
+          retention-days: 1
+
+  cyclic-small:
+    name: Run all 6.*, 10.*, and 12.* instances
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cyclic-solver
+
+      - name: Run 36 instances five times in one job
+        shell: bash
+        run: |
+          chmod +x tabubu_cyclic
+          mkdir -p cyclic_results
+          find instance_time_dependent -maxdepth 1 -type f \
+            \( -name '6.*.txt' -o -name '10.*.txt' -o -name '12.*.txt' \) \
+            ! -name '*.vmax_ij.txt' ! -name '*.theta_ijl.txt' \
+            | sort -V > small_instances.txt
+          test "$(wc -l < small_instances.txt)" -eq 36
+          while IFS= read -r instance_file; do
+            instance=$(basename "$instance_file" .txt)
+            for repetition in 1 2 3 4 5; do
+              bash scripts/run_cyclic_time_dependent.sh \
+                ./tabubu_cyclic "$instance" "$repetition" cyclic_results
+            done
+          done < small_instances.txt
+
+      - name: Upload small-instance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyclic-small-results
+          path: cyclic_results/*.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  cyclic-20:
+    name: Run all 20.* instances
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cyclic-solver
+
+      - name: Run 12 instances five times in one job
+        shell: bash
+        run: |
+          chmod +x tabubu_cyclic
+          mkdir -p cyclic_results
+          find instance_time_dependent -maxdepth 1 -type f -name '20.*.txt' \
+            ! -name '*.vmax_ij.txt' ! -name '*.theta_ijl.txt' \
+            | sort -V > instances_20.txt
+          test "$(wc -l < instances_20.txt)" -eq 12
+          while IFS= read -r instance_file; do
+            instance=$(basename "$instance_file" .txt)
+            for repetition in 1 2 3 4 5; do
+              bash scripts/run_cyclic_time_dependent.sh \
+                ./tabubu_cyclic "$instance" "$repetition" cyclic_results
+            done
+          done < instances_20.txt
+
+      - name: Upload 20-customer results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyclic-20-results
+          path: cyclic_results/*.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  cyclic-large:
+    name: ${{ matrix.instance }} - repetition ${{ matrix.repetition }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJson(needs.build.outputs.large_matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cyclic-solver
+
+      - name: Run one large instance once
+        shell: bash
+        run: |
+          chmod +x tabubu_cyclic
+          mkdir -p cyclic_results
+          bash scripts/run_cyclic_time_dependent.sh \
+            ./tabubu_cyclic \
+            "${{ matrix.instance }}" \
+            "${{ matrix.repetition }}" \
+            cyclic_results
+
+      - name: Upload large-run result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyclic-${{ matrix.instance }}-run${{ matrix.repetition }}
+          path: cyclic_results/*.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  aggregate:
+    name: Aggregate all cyclic results into Excel
+    needs: [cyclic-small, cyclic-20, cyclic-large]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download every cyclic result artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cyclic-*-results
+          path: collected_results
+          merge-multiple: true
+
+      - name: Download every large-run artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cyclic-*-run*
+          path: collected_results
+          merge-multiple: true
+
+      - name: Create Excel workbook and CSV backup
+        run: |
+          python3 scripts/aggregate_cyclic_results.py \
+            collected_results \
+            cyclic_neighborhood_results.xlsx \
+            --csv cyclic_neighborhood_results.csv
+
+      - name: Verify all 480 runs were collected
+        run: |
+          actual=$(find collected_results -type f -name '*_run_*.txt' | wc -l)
+          echo "Collected $actual of 480 expected runs"
+          test "$actual" -eq 480
+
+      - name: Upload consolidated experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyclic-neighborhood-experiment-results
+          path: |
+            cyclic_neighborhood_results.xlsx
+            cyclic_neighborhood_results.csv
+          if-no-files-found: warn
+          retention-days: 30

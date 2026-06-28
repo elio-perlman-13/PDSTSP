@@ -1,0 +1,16 @@
+{
+  "capacity_kg": 2.27,
+  "energy_capacity_j": 7200000.0,
+  "speed": {
+    "fly_m_per_s": 31.3,
+    "take_off_m_per_s": 15.6,
+    "landing_m_per_s": 7.8
+  },
+  "flight_height_m": 50.0,
+  "power_model": {
+    "type": "linear_weight_dependent",
+    "formula": "power_w = beta * current_weight_kg + gamma",
+    "beta": 24.2,
+    "gamma": 1329.0
+  }
+}

@@ -1,0 +1,218 @@
+name: Adaptive neighborhood selection - time-dependent instances
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    name: Build solver and prepare large matrix
+    runs-on: ubuntu-latest
+    outputs:
+      large_matrix: ${{ steps.large-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compile neighborhood-selection solver
+        run: |
+          g++ -O2 -std=c++20 tabubu_TimeDependent_neighbourhoddSelection.cpp -o tabubu_adaptive
+
+      - name: Generate 240 large-run jobs
+        id: large-matrix
+        run: |
+          python3 - <<'PYEOF'
+          import glob
+          import json
+          import os
+
+          instances = []
+          for pattern in ("50.*.txt", "100.*.txt", "200.*.txt"):
+              for path in glob.glob(f"instance_time_dependent/{pattern}"):
+                  if path.endswith((".vmax_ij.txt", ".theta_ijl.txt")):
+                      continue
+                  instances.append(os.path.basename(path)[:-4])
+
+          instances.sort(key=lambda name: tuple(int(part) for part in name.split(".")))
+          matrix = [
+              {"instance": instance, "repetition": repetition}
+              for instance in instances
+              for repetition in range(1, 6)
+          ]
+          if len(matrix) != 240:
+              raise SystemExit(f"Expected 240 large jobs, found {len(matrix)}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={json.dumps(matrix, separators=(',', ':'))}\n")
+          PYEOF
+
+      - name: Upload solver
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptive-solver
+          path: tabubu_adaptive
+          retention-days: 1
+
+  adaptive-small:
+    name: Run all 6.*, 10.*, and 12.* instances
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: adaptive-solver
+
+      - name: Run four gamma processes for 36 instances and five repetitions
+        shell: bash
+        run: |
+          chmod +x tabubu_adaptive
+          mkdir -p adaptive_results
+          find instance_time_dependent -maxdepth 1 -type f \
+            \( -name '6.*.txt' -o -name '10.*.txt' -o -name '12.*.txt' \) \
+            ! -name '*.vmax_ij.txt' ! -name '*.theta_ijl.txt' \
+            | sort -V > small_instances.txt
+          test "$(wc -l < small_instances.txt)" -eq 36
+          while IFS= read -r instance_file; do
+            instance=$(basename "$instance_file" .txt)
+            for repetition in 1 2 3 4 5; do
+              bash scripts/run_adaptive_gamma_sets.sh \
+                ./tabubu_adaptive "$instance" "$repetition" adaptive_results
+            done
+          done < small_instances.txt
+
+      - name: Upload small-instance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptive-small-results
+          path: adaptive_results/*.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  adaptive-20:
+    name: Run all 20.* instances
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: adaptive-solver
+
+      - name: Run four gamma processes for 12 instances and five repetitions
+        shell: bash
+        run: |
+          chmod +x tabubu_adaptive
+          mkdir -p adaptive_results
+          find instance_time_dependent -maxdepth 1 -type f -name '20.*.txt' \
+            ! -name '*.vmax_ij.txt' ! -name '*.theta_ijl.txt' \
+            | sort -V > instances_20.txt
+          test "$(wc -l < instances_20.txt)" -eq 12
+          while IFS= read -r instance_file; do
+            instance=$(basename "$instance_file" .txt)
+            for repetition in 1 2 3 4 5; do
+              bash scripts/run_adaptive_gamma_sets.sh \
+                ./tabubu_adaptive "$instance" "$repetition" adaptive_results
+            done
+          done < instances_20.txt
+
+      - name: Upload 20-customer results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptive-20-results
+          path: adaptive_results/*.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  adaptive-large:
+    name: ${{ matrix.instance }} - repetition ${{ matrix.repetition }} - four gamma processes
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJson(needs.build.outputs.large_matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: adaptive-solver
+
+      - name: Run one large instance with four gamma processes
+        shell: bash
+        run: |
+          chmod +x tabubu_adaptive
+          mkdir -p adaptive_results
+          bash scripts/run_adaptive_gamma_sets.sh \
+            ./tabubu_adaptive \
+            "${{ matrix.instance }}" \
+            "${{ matrix.repetition }}" \
+            adaptive_results
+
+      - name: Upload four large-run results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptive-${{ matrix.instance }}-run${{ matrix.repetition }}
+          path: adaptive_results/*.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  aggregate:
+    name: Aggregate all adaptive results into Excel
+    needs: [adaptive-small, adaptive-20, adaptive-large]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download grouped result artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: adaptive-*-results
+          path: collected_results
+          merge-multiple: true
+
+      - name: Download every large-run artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: adaptive-*-run*
+          path: collected_results
+          merge-multiple: true
+
+      - name: Create Excel workbook and CSV backup
+        run: |
+          python3 scripts/aggregate_cyclic_results.py \
+            collected_results \
+            adaptive_neighborhood_results.xlsx \
+            --csv adaptive_neighborhood_results.csv
+
+      - name: Verify all 1920 runs were collected
+        run: |
+          actual=$(find collected_results -type f -name '*_run_*_gamma_*.txt' | wc -l)
+          echo "Collected $actual of 1920 expected runs"
+          test "$actual" -eq 1920
+
+      - name: Upload consolidated experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptive-neighborhood-experiment-results
+          path: |
+            adaptive_neighborhood_results.xlsx
+            adaptive_neighborhood_results.csv
+          if-no-files-found: warn
+          retention-days: 30

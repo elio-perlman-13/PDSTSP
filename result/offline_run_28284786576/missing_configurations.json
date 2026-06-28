@@ -1,0 +1,1465 @@
+[
+  {
+    "Instance": "200.20.2",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.20.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.30.1",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.30.1",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.30.1",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.30.1",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.30.1",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.30.1",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.30.1",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.30.1",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.30.1",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.30.1",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.1",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.2",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.3",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "cyclic",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "random",
+    "Gamma set": "",
+    "Gamma": "",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g1",
+    "Gamma": "0.3,0.2,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g2",
+    "Gamma": "0.5,0.3,0.1,0.3",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g3",
+    "Gamma": "0.3,0.2,0.1,0.6",
+    "Repetition": 5
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 1
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 2
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 3
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 4
+  },
+  {
+    "Instance": "200.40.4",
+    "Strategy": "adaptive",
+    "Gamma set": "g4",
+    "Gamma": "0.5,0.3,0.1,0.6",
+    "Repetition": 5
+  }
+]
