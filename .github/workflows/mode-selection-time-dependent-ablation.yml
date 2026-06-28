@@ -148,7 +148,7 @@ jobs:
           import subprocess
           from pathlib import Path
 
-          solver = Path("./tabubu_time_dependent_mode_ablation")
+          solver = Path.cwd() / "tabubu_time_dependent_mode_ablation"
           tasks = json.loads(Path("batch_tasks.json").read_text(encoding="utf-8"))
           raw_dir = Path("mode_ablation_results/raw")
           log_dir = Path("mode_ablation_results/logs")
