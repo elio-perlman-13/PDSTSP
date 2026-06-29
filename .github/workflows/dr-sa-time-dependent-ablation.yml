@@ -1,6 +1,7 @@
-name: Time-dependent mode selection ablation
+name: Time-dependent DR and SA ablation
 
 on:
+  push:
   workflow_dispatch:
 
 permissions:
@@ -20,11 +21,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Compile time-dependent mode-selection ablation solver
+      - name: Compile DR-SA ablation solver
         run: |
-          g++ -O2 -std=c++20 tabubu_time_dependent_ModeSelectionAblation.cpp -o tabubu_time_dependent_mode_ablation
+          g++ -O2 -std=c++20 tabubu_time_dependent_DR_SA_Ablation.cpp -o tabubu_time_dependent_dr_sa_ablation
 
-      - name: Generate switching and extended-fixed tasks across 250 jobs
+      - name: Generate group 2, 3, and 4 tasks across 250 jobs
         id: matrix
         run: |
           python3 - <<'PYEOF'
@@ -51,49 +52,91 @@ jobs:
           if not instances:
               raise SystemExit("No matching instances found for prefixes 6, 10, 12, 20, 50, 100")
 
+          group2 = [
+              ("dr_random_0_1", "Destroy-and-repair", "Random, r_d=0.1", 10),
+              ("dr_random_0_2", "Destroy-and-repair", "Random, r_d=0.2", 10),
+              ("dr_random_0_3", "Destroy-and-repair", "Random, r_d=0.3", 10),
+              ("dr_worst_0_1", "Destroy-and-repair", "Worst, r_d=0.1", 10),
+              ("dr_worst_0_2", "Destroy-and-repair", "Worst, r_d=0.2", 10),
+              ("dr_worst_0_3", "Destroy-and-repair", "Worst, r_d=0.3", 10),
+          ]
+          group3 = [
+              ("sa_T100_a0_998", "Simulated-annealing", "(T0,alpha)=(100,0.998)", 10),
+              ("sa_T100_a0_9998", "Simulated-annealing", "(T0,alpha)=(100,0.9998)", 10),
+              ("sa_T150_a0_998", "Simulated-annealing", "(T0,alpha)=(150,0.998)", 10),
+              ("sa_T150_a0_9998", "Simulated-annealing", "(T0,alpha)=(150,0.9998)", 10),
+          ]
+          group4 = [
+              ("both_worst_0_2_T150_a0_9998", "Both components", "Worst, r_d=0.2; (T0,alpha)=(150,0.9998)", 15),
+          ]
+          configs = group2 + group3 + group4
+
+          group_weight = {
+              "6": 1,
+              "10": 2,
+              "12": 2,
+              "20": 4,
+              "50": 12,
+              "100": 25,
+          }
+
           tasks = []
           task_index = 0
           for instance_path in instances:
               instance = os.path.basename(instance_path)[:-4]
               customer_group = instance.split(".", 1)[0]
-              for repetition in range(1, 16):
-                  task_index += 1
-                  tasks.append({
-                      "instance": instance,
-                      "customer_group": customer_group,
-                      "strategy": "switching",
-                      "label": "Switching objective",
-                      "gamma_set": "g2",
-                      "gamma": [0.5, 0.3, 0.1, 0.3],
-                      "repetition": repetition,
-                      "seed": 420000 + task_index,
-                  })
-              for repetition in range(1, 11):
-                  task_index += 1
-                  tasks.append({
-                      "instance": instance,
-                      "customer_group": customer_group,
-                      "strategy": "extended-fixed",
-                      "label": "Extended fixed makespan",
-                      "gamma_set": "g2",
-                      "gamma": [0.5, 0.3, 0.1, 0.3],
-                      "repetition": repetition,
-                      "seed": 420000 + task_index,
-                  })
+              for config_key, component, setting, repetitions in configs:
+                  for repetition in range(1, repetitions + 1):
+                      task_index += 1
+                      tasks.append({
+                          "instance": instance,
+                          "customer_group": customer_group,
+                          "component": component,
+                          "setting": setting,
+                          "config": config_key,
+                          "repetition": repetition,
+                          "seed": 530000 + task_index,
+                          "weight": group_weight[customer_group],
+                      })
 
+          expected_tasks = len(instances) * (6 * 10 + 4 * 10 + 1 * 15)
+          if len(tasks) != expected_tasks:
+              raise SystemExit(f"Expected {expected_tasks} tasks, found {len(tasks)}")
+
+          # Balance by estimated runtime, not only by task count. Larger customer groups
+          # are heavier, so we assign heaviest tasks first to the currently lightest batch.
           batches = [[] for _ in range(250)]
-          for index, task in enumerate(tasks):
-              batches[index % len(batches)].append(task)
+          batch_weights = [0 for _ in batches]
+          tasks.sort(
+              key=lambda task: (
+                  task["weight"],
+                  tuple(int(part) for part in task["instance"].split(".")),
+                  task["config"],
+                  task["repetition"],
+              ),
+              reverse=True,
+          )
+          for task in tasks:
+              lightest_index = min(
+                  range(len(batches)),
+                  key=lambda index: (batch_weights[index], len(batches[index]), index),
+              )
+              batches[lightest_index].append(task)
+              batch_weights[lightest_index] += task["weight"]
 
           empty_jobs = sum(1 for batch in batches if not batch)
           if empty_jobs:
               raise SystemExit(f"Only {len(tasks)} tasks for 250 jobs; {empty_jobs} jobs would be empty")
 
           distribution = Counter(map(len, batches))
+          weight_distribution = Counter(batch_weights)
+          min_weight = min(batch_weights)
+          max_weight = max(batch_weights)
           matrix = [
               {
                   "batch_id": f"{index + 1:03d}",
                   "tasks_json": json.dumps(batch, separators=(",", ":")),
+                  "estimated_weight": batch_weights[index],
               }
               for index, batch in enumerate(batches)
           ]
@@ -104,25 +147,27 @@ jobs:
               output.write(f"total_instances={len(instances)}\n")
 
           print(f"Found {len(instances)} instances")
-          print(f"Created {len(tasks)} tasks: 15 switching + 10 extended-fixed per instance")
+          print(f"Created {len(tasks)} tasks: 10 runs for groups 2/3 and 15 runs for group 4 per instance")
           print(f"Distributed across 250 jobs: {dict(sorted(distribution.items()))}")
+          print(f"Estimated weight range: min={min_weight}, max={max_weight}")
+          print(f"Estimated weight distribution: {dict(sorted(weight_distribution.items()))}")
           PYEOF
 
       - name: Upload solver
         uses: actions/upload-artifact@v4
         with:
-          name: time-dependent-mode-ablation-solver
-          path: tabubu_time_dependent_mode_ablation
+          name: time-dependent-dr-sa-ablation-solver
+          path: tabubu_time_dependent_dr_sa_ablation
           retention-days: 1
 
   solve:
-    name: Mode ablation batch ${{ matrix.batch_id }}
+    name: DR-SA ablation batch ${{ matrix.batch_id }} w${{ matrix.estimated_weight }}
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
       fail-fast: false
-      max-parallel: 50
+      max-parallel: 250
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.experiment_matrix) }}
     steps:
@@ -130,40 +175,36 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: time-dependent-mode-ablation-solver
+          name: time-dependent-dr-sa-ablation-solver
 
       - name: Run assigned repetitions in parallel
         shell: bash
         run: |
-          chmod +x tabubu_time_dependent_mode_ablation
-          mkdir -p mode_ablation_results/raw mode_ablation_results/logs
+          chmod +x tabubu_time_dependent_dr_sa_ablation
+          mkdir -p dr_sa_ablation_results/raw dr_sa_ablation_results/logs
           cat > batch_tasks.json <<'JSONEOF'
           ${{ matrix.tasks_json }}
           JSONEOF
           python3 - <<'PYEOF'
           import csv
           import json
-          import os
           import subprocess
           from pathlib import Path
 
-          solver = Path.cwd() / "tabubu_time_dependent_mode_ablation"
+          solver = Path.cwd() / "tabubu_time_dependent_dr_sa_ablation"
           tasks = json.loads(Path("batch_tasks.json").read_text(encoding="utf-8"))
-          raw_dir = Path("mode_ablation_results/raw")
-          log_dir = Path("mode_ablation_results/logs")
+          raw_dir = Path("dr_sa_ablation_results/raw")
+          log_dir = Path("dr_sa_ablation_results/logs")
           raw_dir.mkdir(parents=True, exist_ok=True)
           log_dir.mkdir(parents=True, exist_ok=True)
 
           fieldnames = [
               "Instance",
               "Customer group",
+              "Component",
+              "Setting",
+              "Config",
               "Repetition",
-              "Strategy",
-              "Gamma set",
-              "Gamma1",
-              "Gamma2",
-              "Gamma3",
-              "Gamma4",
               "Seed",
               "Solver exit code",
               "Initial cost",
@@ -182,17 +223,13 @@ jobs:
           ]
 
           def blank_row(task, exit_code):
-              gamma = task["gamma"]
               return {
                   "Instance": task["instance"],
                   "Customer group": task["customer_group"],
+                  "Component": task["component"],
+                  "Setting": task["setting"],
+                  "Config": task["config"],
                   "Repetition": task["repetition"],
-                  "Strategy": task["label"],
-                  "Gamma set": task["gamma_set"],
-                  "Gamma1": gamma[0],
-                  "Gamma2": gamma[1],
-                  "Gamma3": gamma[2],
-                  "Gamma4": gamma[3],
                   "Seed": task["seed"],
                   "Solver exit code": exit_code,
                   "Initial cost": "",
@@ -232,7 +269,6 @@ jobs:
               }
               truck_routes = []
               drone_routes = []
-              section = None
               for line in text.splitlines():
                   stripped = line.strip()
                   if stripped.startswith("Initial solution cost:"):
@@ -247,10 +283,6 @@ jobs:
                       parsed["Elapsed seconds"] = value_after_colon(stripped).replace(" seconds", "")
                   elif stripped.startswith("Final solution feasibility:"):
                       parsed["Feasibility"] = value_after_colon(stripped)
-                  elif stripped == "Truck Routes:":
-                      section = "truck"
-                  elif stripped == "Drone Routes:":
-                      section = "drone"
                   elif stripped.startswith("Truck "):
                       truck_routes.append(stripped)
                   elif stripped.startswith("Drone "):
@@ -276,19 +308,18 @@ jobs:
           processes = []
           for task in tasks:
               instance = task["instance"]
-              strategy = task["strategy"]
-              repetition = task["repetition"]
+              config = task["config"]
+              repetition = int(task["repetition"])
               input_path = Path("instance_time_dependent") / f"{instance}.txt"
               if not input_path.exists():
                   raise SystemExit(f"Missing instance file: {input_path}")
 
-              prefix = raw_dir / f"{instance}_{strategy}_rep{repetition:02d}"
+              prefix = raw_dir / f"{instance}_{config}_rep{repetition:02d}"
               command = [
                   str(solver),
                   str(input_path),
                   "--attempts=1",
-                  f"--strategy={strategy}",
-                  "--extended-multiplier=2.0",
+                  f"--config={config}",
                   f"--ablation-prefix={prefix}",
                   f"--seed-base={task['seed']}",
               ]
@@ -300,7 +331,7 @@ jobs:
               if theta_path.exists():
                   command.append(f"--truck-theta-file={theta_path}")
 
-              log_path = log_dir / f"{instance}_{strategy}_rep{repetition:02d}.log"
+              log_path = log_dir / f"{instance}_{config}_rep{repetition:02d}.log"
               log_file = log_path.open("w", encoding="utf-8")
               processes.append((task, prefix, log_file, subprocess.Popen(command, stdout=log_file, stderr=subprocess.STDOUT)))
 
@@ -310,22 +341,24 @@ jobs:
               return_code = process.wait()
               log_file.close()
               row = blank_row(task, return_code)
-              solution_path = Path(f"{prefix}_{task['strategy']}_solution_best.txt")
+              solution_path = Path(f"{prefix}_{task['config']}_solution_best.txt")
               if solution_path.exists():
                   row.update(parse_solution_file(solution_path))
               elif return_code == 0:
                   failed.append((task, "missing-solution"))
               rows.append(row)
-
               if return_code != 0:
                   failed.append((task, return_code))
-                  continue
 
           if failed:
               print(f"Failed tasks recorded in CSV: {failed}")
 
-          rows.sort(key=lambda row: (tuple(int(part) for part in row["Instance"].split(".")), row["Strategy"], int(row["Repetition"])))
-          out_path = Path("mode_ablation_results") / "batch_results.csv"
+          rows.sort(key=lambda row: (
+              tuple(int(part) for part in row["Instance"].split(".")),
+              row["Config"],
+              int(row["Repetition"]),
+          ))
+          out_path = Path("dr_sa_ablation_results") / "batch_results.csv"
           with out_path.open("w", newline="", encoding="utf-8") as csv_file:
               writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
               writer.writeheader()
@@ -338,17 +371,17 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mode-ablation-batch-${{ matrix.batch_id }}
+          name: dr-sa-ablation-batch-${{ matrix.batch_id }}
           path: |
-            mode_ablation_results/batch_results.csv
-            mode_ablation_results/raw/*_summary.csv
-            mode_ablation_results/raw/*_solution_best.txt
-            mode_ablation_results/logs/*.log
+            dr_sa_ablation_results/batch_results.csv
+            dr_sa_ablation_results/raw/*_summary.csv
+            dr_sa_ablation_results/raw/*_solution_best.txt
+            dr_sa_ablation_results/logs/*.log
           if-no-files-found: warn
           retention-days: 14
 
   aggregate:
-    name: Aggregate mode-selection ablation results
+    name: Aggregate DR-SA ablation results
     needs:
       - prepare
       - solve
@@ -361,8 +394,8 @@ jobs:
       - name: Download all batch artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: mode-ablation-batch-*
-          path: collected_mode_ablation_results
+          pattern: dr-sa-ablation-batch-*
+          path: collected_dr_sa_ablation_results
           merge-multiple: false
 
       - name: Aggregate CSV and LaTeX summaries
@@ -377,7 +410,7 @@ jobs:
           expected_instances = int("${{ needs.prepare.outputs.total_instances }}")
 
           rows = []
-          for path in glob.glob("collected_mode_ablation_results/**/batch_results.csv", recursive=True):
+          for path in glob.glob("collected_dr_sa_ablation_results/**/batch_results.csv", recursive=True):
               with open(path, newline="", encoding="utf-8") as csv_file:
                   rows.extend(csv.DictReader(csv_file))
 
@@ -387,13 +420,10 @@ jobs:
           fieldnames = [
               "Instance",
               "Customer group",
+              "Component",
+              "Setting",
+              "Config",
               "Repetition",
-              "Strategy",
-              "Gamma set",
-              "Gamma1",
-              "Gamma2",
-              "Gamma3",
-              "Gamma4",
               "Seed",
               "Solver exit code",
               "Initial cost",
@@ -411,20 +441,38 @@ jobs:
               "Full solution",
           ]
 
-          counts = Counter((row["Instance"], row["Strategy"]) for row in rows)
+          expected_repetitions = {
+              "dr_random_0_1": 10,
+              "dr_random_0_2": 10,
+              "dr_random_0_3": 10,
+              "dr_worst_0_1": 10,
+              "dr_worst_0_2": 10,
+              "dr_worst_0_3": 10,
+              "sa_T100_a0_998": 10,
+              "sa_T100_a0_9998": 10,
+              "sa_T150_a0_998": 10,
+              "sa_T150_a0_9998": 10,
+              "both_worst_0_2_T150_a0_9998": 15,
+          }
+
           instances = sorted({row["Instance"] for row in rows}, key=lambda name: tuple(int(part) for part in name.split(".")))
           if len(instances) != expected_instances:
               raise SystemExit(f"Expected {expected_instances} instances, found {len(instances)}")
 
+          counts = Counter((row["Instance"], row["Config"]) for row in rows)
           for instance in instances:
-              if counts[(instance, "Switching objective")] != 15:
-                  raise SystemExit(f"{instance} has {counts[(instance, 'Switching objective')]} switching rows, expected 15")
-              if counts[(instance, "Extended fixed makespan")] != 10:
-                  raise SystemExit(f"{instance} has {counts[(instance, 'Extended fixed makespan')]} extended-fixed rows, expected 10")
+              for config, expected_count in expected_repetitions.items():
+                  actual = counts[(instance, config)]
+                  if actual != expected_count:
+                      raise SystemExit(f"{instance} / {config} has {actual} rows, expected {expected_count}")
 
-          rows.sort(key=lambda row: (tuple(int(part) for part in row["Instance"].split(".")), row["Strategy"], int(row["Repetition"])))
+          rows.sort(key=lambda row: (
+              tuple(int(part) for part in row["Instance"].split(".")),
+              row["Config"],
+              int(row["Repetition"]),
+          ))
 
-          detailed_path = Path("mode_selection_time_dependent_ablation_results.csv")
+          detailed_path = Path("dr_sa_time_dependent_ablation_results.csv")
           with detailed_path.open("w", newline="", encoding="utf-8") as csv_file:
               writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
               writer.writeheader()
@@ -432,24 +480,30 @@ jobs:
 
           grouped = defaultdict(list)
           for row in rows:
-              grouped[row["Strategy"]].append(row)
+              grouped[row["Config"]].append(row)
 
+          config_order = list(expected_repetitions)
           summary_rows = []
-          for strategy, group in sorted(grouped.items()):
+          for config in config_order:
+              group = grouped[config]
               successful = [row for row in group if row["Solver exit code"] == "0" and row["Improved cost"]]
               if successful:
                   best_values = [float(row["Improved cost"]) for row in successful]
+                  mean_values = [float(row["Mean cost"] or row["Improved cost"]) for row in successful]
                   time_values = [float(row["Elapsed seconds"]) for row in successful if row["Elapsed seconds"]]
                   best_cost = min(best_values)
-                  mean_cost = sum(best_values) / len(best_values)
+                  mean_cost = sum(mean_values) / len(mean_values)
                   worst_cost = max(best_values)
                   mean_elapsed = sum(time_values) / len(time_values) if time_values else ""
               else:
                   best_cost = mean_cost = worst_cost = mean_elapsed = ""
+              representative = group[0]
               feasible_count = sum(1 for row in group if row["Feasibility"].upper() == "FEASIBLE")
               nonzero_exit_count = sum(1 for row in group if row["Solver exit code"] != "0")
               summary_rows.append({
-                  "strategy": strategy,
+                  "component": representative["Component"],
+                  "setting": representative["Setting"],
+                  "config": config,
                   "runs": len(group),
                   "successful_runs": len(successful),
                   "nonzero_exit_count": nonzero_exit_count,
@@ -460,10 +514,12 @@ jobs:
                   "feasible_runs": feasible_count,
               })
 
-          summary_path = Path("mode_selection_time_dependent_ablation_summary.csv")
+          summary_path = Path("dr_sa_time_dependent_ablation_summary.csv")
           with summary_path.open("w", newline="", encoding="utf-8") as csv_file:
-              fieldnames = [
-                  "strategy",
+              summary_fieldnames = [
+                  "component",
+                  "setting",
+                  "config",
                   "runs",
                   "successful_runs",
                   "nonzero_exit_count",
@@ -473,15 +529,15 @@ jobs:
                   "mean_elapsed_sec",
                   "feasible_runs",
               ]
-              writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+              writer = csv.DictWriter(csv_file, fieldnames=summary_fieldnames)
               writer.writeheader()
               writer.writerows(summary_rows)
 
-          tex_path = Path("mode_selection_time_dependent_ablation_summary.tex")
+          tex_path = Path("dr_sa_time_dependent_ablation_summary.tex")
           with tex_path.open("w", encoding="utf-8") as tex_file:
-              tex_file.write("\\begin{tabular}{lrrrrr}\\n")
+              tex_file.write("\\begin{tabular}{llrrrrr}\\n")
               tex_file.write("\\toprule\\n")
-              tex_file.write("Configuration & Runs & Best & Mean & Worst & Mean Time (s) \\\\\\n")
+              tex_file.write("Component & Setting & Runs & Best & Mean & Worst & Mean Time (s) \\\\\\n")
               tex_file.write("\\midrule\\n")
               for row in summary_rows:
                   best_cost = f"{row['best_cost']:.6f}" if row["best_cost"] != "" else ""
@@ -489,9 +545,8 @@ jobs:
                   worst_cost = f"{row['worst_cost']:.6f}" if row["worst_cost"] != "" else ""
                   mean_elapsed = f"{row['mean_elapsed_sec']:.3f}" if row["mean_elapsed_sec"] != "" else ""
                   tex_file.write(
-                      f"{row['strategy']} & {row['runs']} & "
-                      f"{best_cost} & {mean_cost} & "
-                      f"{worst_cost} & {mean_elapsed} \\\\\\n"
+                      f"{row['component']} & {row['setting']} & {row['runs']} & "
+                      f"{best_cost} & {mean_cost} & {worst_cost} & {mean_elapsed} \\\\\\n"
                   )
               tex_file.write("\\bottomrule\\n")
               tex_file.write("\\end{tabular}\\n")
@@ -499,14 +554,14 @@ jobs:
           print(f"Aggregated {len(rows)} runs across {len(instances)} instances")
           PYEOF
 
-      - name: Upload consolidated mode-selection ablation results
+      - name: Upload consolidated DR-SA ablation results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mode-selection-time-dependent-ablation-results
+          name: dr-sa-time-dependent-ablation-results
           path: |
-            mode_selection_time_dependent_ablation_results.csv
-            mode_selection_time_dependent_ablation_summary.csv
-            mode_selection_time_dependent_ablation_summary.tex
+            dr_sa_time_dependent_ablation_results.csv
+            dr_sa_time_dependent_ablation_summary.csv
+            dr_sa_time_dependent_ablation_summary.tex
           if-no-files-found: warn
           retention-days: 30
