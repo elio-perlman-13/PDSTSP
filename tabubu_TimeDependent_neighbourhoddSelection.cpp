@@ -382,8 +382,12 @@ int get_time_segment(double t) {
     // time_segment: [b0, b1, ..., bk] defines k segments [b0,b1), [b1,b2), ... [b{k-1}, b{k}]
     // Return 0-based segment index in [0, k-1].
     // If outside boundaries, loop back to the start segment.
-    t = fmod(t, 12.0);
     if (time_segment.size() < 2) return 0;
+    double period_hr = time_segment.back() - time_segment.front();
+    if (period_hr <= 1e-12) period_hr = 12.0;
+    t = fmod(t - time_segment.front(), period_hr);
+    if (t < 0) t += period_hr;
+    t += time_segment.front();
     // Find first boundary strictly greater than t
     auto it = upper_bound(time_segment.begin(), time_segment.end(), t);
     int idx = static_cast<int>(it - time_segment.begin()) - 1; // index of segment start
@@ -417,11 +421,17 @@ pair<double, double> compute_truck_route_time(const vi& route, double start=0) {
             double t_hr = time / 3600.0;
             int seg = get_time_segment(t_hr); // 0-based index into truck_theta_ijl
             double v = get_truck_edge_speed(from, to, seg); // v_ijl = theta_ijl * vmax_ij
-            // Time left in this custom segment (seconds to next boundary)
-            double next_boundary_hr = (seg + 1 < (int)time_segment.size()) ? time_segment[seg + 1] : std::numeric_limits<double>::infinity();
-            double segment_end_time_sec;
-            if (std::isinf(next_boundary_hr)) segment_end_time_sec = time + 1e18; // effectively no boundary ahead
-            else segment_end_time_sec = next_boundary_hr * 3600.0;
+            // Time left in this cyclic custom segment. If the trip goes beyond
+            // one profile period, boundaries must advance to the current cycle.
+            double period_hr = (time_segment.size() >= 2 && time_segment.back() > time_segment.front())
+                               ? (time_segment.back() - time_segment.front())
+                               : 12.0;
+            double cycle_start_hr = floor((t_hr - time_segment.front()) / period_hr) * period_hr + time_segment.front();
+            double next_boundary_hr = (seg + 1 < (int)time_segment.size())
+                                      ? cycle_start_hr + (time_segment[seg + 1] - time_segment.front())
+                                      : cycle_start_hr + period_hr;
+            if (next_boundary_hr <= t_hr + 1e-12) next_boundary_hr += period_hr;
+            double segment_end_time_sec = next_boundary_hr * 3600.0;
             double t_seg_end = segment_end_time_sec - time; // seconds remaining in this segment
             if (t_seg_end < 1e-8) t_seg_end = 1e-6; // minimal progress to avoid stalling
             double max_dist_this_seg = v * t_seg_end;

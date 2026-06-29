@@ -25,7 +25,7 @@ jobs:
         run: |
           g++ -O2 -std=c++20 tabubu_time_dependent_DR_SA_Ablation.cpp -o tabubu_time_dependent_dr_sa_ablation
 
-      - name: Generate group 2, 3, and 4 tasks across 250 jobs
+      - name: Generate 200-customer group 2, 3, and 4 tasks across 250 jobs
         id: matrix
         run: |
           python3 - <<'PYEOF'
@@ -34,7 +34,7 @@ jobs:
           import os
           from collections import Counter
 
-          prefixes = ("6", "10", "12", "20", "50", "100")
+          prefixes = ("200",)
 
           def instance_sort_key(path):
               name = os.path.basename(path)[:-4]
@@ -50,11 +50,13 @@ jobs:
           instances.sort(key=instance_sort_key)
 
           if not instances:
-              raise SystemExit("No matching instances found for prefixes 6, 10, 12, 20, 50, 100")
+              raise SystemExit("No matching 200-customer instances found")
+          if len(instances) != 16:
+              raise SystemExit(f"Expected 16 200-customer instances, found {len(instances)}")
 
           group2 = [
               ("dr_random_0_1", "Destroy-and-repair", "Random, r_d=0.1", 10),
-              ("dr_random_0_2", "Destroy-and-repair", "Random, r_d=0.2", 10),
+              ("dr_random_0_2", "Destroy-and-repair", "Random, r_d=0.2", 15),
               ("dr_random_0_3", "Destroy-and-repair", "Random, r_d=0.3", 10),
               ("dr_worst_0_1", "Destroy-and-repair", "Worst, r_d=0.1", 10),
               ("dr_worst_0_2", "Destroy-and-repair", "Worst, r_d=0.2", 10),
@@ -64,7 +66,7 @@ jobs:
               ("sa_T100_a0_998", "Simulated-annealing", "(T0,alpha)=(100,0.998)", 10),
               ("sa_T100_a0_9998", "Simulated-annealing", "(T0,alpha)=(100,0.9998)", 10),
               ("sa_T150_a0_998", "Simulated-annealing", "(T0,alpha)=(150,0.998)", 10),
-              ("sa_T150_a0_9998", "Simulated-annealing", "(T0,alpha)=(150,0.9998)", 10),
+              ("sa_T150_a0_9998", "Simulated-annealing", "(T0,alpha)=(150,0.9998)", 15),
           ]
           group4 = [
               ("both_worst_0_2_T150_a0_9998", "Both components", "Worst, r_d=0.2; (T0,alpha)=(150,0.9998)", 15),
@@ -72,12 +74,7 @@ jobs:
           configs = group2 + group3 + group4
 
           group_weight = {
-              "6": 1,
-              "10": 2,
-              "12": 2,
-              "20": 4,
-              "50": 12,
-              "100": 25,
+              "200": 50,
           }
 
           tasks = []
@@ -99,7 +96,7 @@ jobs:
                           "weight": group_weight[customer_group],
                       })
 
-          expected_tasks = len(instances) * (6 * 10 + 4 * 10 + 1 * 15)
+          expected_tasks = len(instances) * sum(repetitions for _, _, _, repetitions in configs)
           if len(tasks) != expected_tasks:
               raise SystemExit(f"Expected {expected_tasks} tasks, found {len(tasks)}")
 
@@ -147,7 +144,7 @@ jobs:
               output.write(f"total_instances={len(instances)}\n")
 
           print(f"Found {len(instances)} instances")
-          print(f"Created {len(tasks)} tasks: 10 runs for groups 2/3 and 15 runs for group 4 per instance")
+          print(f"Created {len(tasks)} tasks: 125 runs per instance")
           print(f"Distributed across 250 jobs: {dict(sorted(distribution.items()))}")
           print(f"Estimated weight range: min={min_weight}, max={max_weight}")
           print(f"Estimated weight distribution: {dict(sorted(weight_distribution.items()))}")
@@ -198,11 +195,11 @@ jobs:
 
           batch_index = int("${{ matrix.batch_index }}")
 
-          prefixes = ("6", "10", "12", "20", "50", "100")
-          group_weight = {"6": 1, "10": 2, "12": 2, "20": 4, "50": 12, "100": 25}
+          prefixes = ("200",)
+          group_weight = {"200": 50}
           configs = [
               ("dr_random_0_1", "Destroy-and-repair", "Random, r_d=0.1", 10),
-              ("dr_random_0_2", "Destroy-and-repair", "Random, r_d=0.2", 10),
+              ("dr_random_0_2", "Destroy-and-repair", "Random, r_d=0.2", 15),
               ("dr_random_0_3", "Destroy-and-repair", "Random, r_d=0.3", 10),
               ("dr_worst_0_1", "Destroy-and-repair", "Worst, r_d=0.1", 10),
               ("dr_worst_0_2", "Destroy-and-repair", "Worst, r_d=0.2", 10),
@@ -210,7 +207,7 @@ jobs:
               ("sa_T100_a0_998", "Simulated-annealing", "(T0,alpha)=(100,0.998)", 10),
               ("sa_T100_a0_9998", "Simulated-annealing", "(T0,alpha)=(100,0.9998)", 10),
               ("sa_T150_a0_998", "Simulated-annealing", "(T0,alpha)=(150,0.998)", 10),
-              ("sa_T150_a0_9998", "Simulated-annealing", "(T0,alpha)=(150,0.9998)", 10),
+              ("sa_T150_a0_9998", "Simulated-annealing", "(T0,alpha)=(150,0.9998)", 15),
               ("both_worst_0_2_T150_a0_9998", "Both components", "Worst, r_d=0.2; (T0,alpha)=(150,0.9998)", 15),
           ]
 
@@ -226,6 +223,8 @@ jobs:
               if name.split(".", 1)[0] in prefixes:
                   instances.append(path)
           instances.sort(key=instance_sort_key)
+          if len(instances) != 16:
+              raise SystemExit(f"Expected 16 200-customer instances, found {len(instances)}")
 
           all_tasks = []
           task_index = 0
@@ -512,7 +511,7 @@ jobs:
 
           expected_repetitions = {
               "dr_random_0_1": 10,
-              "dr_random_0_2": 10,
+              "dr_random_0_2": 15,
               "dr_random_0_3": 10,
               "dr_worst_0_1": 10,
               "dr_worst_0_2": 10,
@@ -520,7 +519,7 @@ jobs:
               "sa_T100_a0_998": 10,
               "sa_T100_a0_9998": 10,
               "sa_T150_a0_998": 10,
-              "sa_T150_a0_9998": 10,
+              "sa_T150_a0_9998": 15,
               "both_worst_0_2_T150_a0_9998": 15,
           }
 
