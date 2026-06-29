@@ -135,7 +135,7 @@ jobs:
           matrix = [
               {
                   "batch_id": f"{index + 1:03d}",
-                  "tasks_json": json.dumps(batch, separators=(",", ":")),
+                  "batch_index": index,
                   "estimated_weight": batch_weights[index],
               }
               for index, batch in enumerate(batches)
@@ -182,21 +182,90 @@ jobs:
         run: |
           chmod +x tabubu_time_dependent_dr_sa_ablation
           mkdir -p dr_sa_ablation_results/raw dr_sa_ablation_results/logs
-          cat > batch_tasks.json <<'JSONEOF'
-          ${{ matrix.tasks_json }}
-          JSONEOF
           python3 - <<'PYEOF'
           import csv
+          import glob
           import json
+          import os
           import subprocess
           from pathlib import Path
 
           solver = Path.cwd() / "tabubu_time_dependent_dr_sa_ablation"
-          tasks = json.loads(Path("batch_tasks.json").read_text(encoding="utf-8"))
           raw_dir = Path("dr_sa_ablation_results/raw")
           log_dir = Path("dr_sa_ablation_results/logs")
           raw_dir.mkdir(parents=True, exist_ok=True)
           log_dir.mkdir(parents=True, exist_ok=True)
+
+          batch_index = int("${{ matrix.batch_index }}")
+
+          prefixes = ("6", "10", "12", "20", "50", "100")
+          group_weight = {"6": 1, "10": 2, "12": 2, "20": 4, "50": 12, "100": 25}
+          configs = [
+              ("dr_random_0_1", "Destroy-and-repair", "Random, r_d=0.1", 10),
+              ("dr_random_0_2", "Destroy-and-repair", "Random, r_d=0.2", 10),
+              ("dr_random_0_3", "Destroy-and-repair", "Random, r_d=0.3", 10),
+              ("dr_worst_0_1", "Destroy-and-repair", "Worst, r_d=0.1", 10),
+              ("dr_worst_0_2", "Destroy-and-repair", "Worst, r_d=0.2", 10),
+              ("dr_worst_0_3", "Destroy-and-repair", "Worst, r_d=0.3", 10),
+              ("sa_T100_a0_998", "Simulated-annealing", "(T0,alpha)=(100,0.998)", 10),
+              ("sa_T100_a0_9998", "Simulated-annealing", "(T0,alpha)=(100,0.9998)", 10),
+              ("sa_T150_a0_998", "Simulated-annealing", "(T0,alpha)=(150,0.998)", 10),
+              ("sa_T150_a0_9998", "Simulated-annealing", "(T0,alpha)=(150,0.9998)", 10),
+              ("both_worst_0_2_T150_a0_9998", "Both components", "Worst, r_d=0.2; (T0,alpha)=(150,0.9998)", 15),
+          ]
+
+          def instance_sort_key(path):
+              name = os.path.basename(path)[:-4]
+              return tuple(int(part) for part in name.split("."))
+
+          instances = []
+          for path in glob.glob("instance_time_dependent/*.txt"):
+              name = os.path.basename(path)
+              if name.endswith((".vmax_ij.txt", ".theta_ijl.txt")):
+                  continue
+              if name.split(".", 1)[0] in prefixes:
+                  instances.append(path)
+          instances.sort(key=instance_sort_key)
+
+          all_tasks = []
+          task_index = 0
+          for instance_path in instances:
+              instance = os.path.basename(instance_path)[:-4]
+              customer_group = instance.split(".", 1)[0]
+              for config_key, component, setting, repetitions in configs:
+                  for repetition in range(1, repetitions + 1):
+                      task_index += 1
+                      all_tasks.append({
+                          "instance": instance,
+                          "customer_group": customer_group,
+                          "component": component,
+                          "setting": setting,
+                          "config": config_key,
+                          "repetition": repetition,
+                          "seed": 530000 + task_index,
+                          "weight": group_weight[customer_group],
+                      })
+
+          batches = [[] for _ in range(250)]
+          batch_weights = [0 for _ in batches]
+          all_tasks.sort(
+              key=lambda task: (
+                  task["weight"],
+                  tuple(int(part) for part in task["instance"].split(".")),
+                  task["config"],
+                  task["repetition"],
+              ),
+              reverse=True,
+          )
+          for task in all_tasks:
+              lightest_index = min(
+                  range(len(batches)),
+                  key=lambda index: (batch_weights[index], len(batches[index]), index),
+              )
+              batches[lightest_index].append(task)
+              batch_weights[lightest_index] += task["weight"]
+          tasks = batches[batch_index]
+          print(f"Batch {batch_index + 1:03d}: {len(tasks)} tasks, estimated weight {batch_weights[batch_index]}")
 
           fieldnames = [
               "Instance",
