@@ -1,0 +1,119 @@
+name: Round 1 parameter grid
+
+on:
+  workflow_dispatch:
+    inputs:
+      num_jobs:
+        description: "Number of solve jobs. Round 1 has 600 runs; default 250 gives 100 jobs x 3 runs and 150 jobs x 2 runs."
+        required: true
+        default: "250"
+      time_limit_sec:
+        description: "Time limit passed to each solver run."
+        required: true
+        default: "1800"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  INSTANCE_PATH: instance_time_dependent/100.10.1.txt
+
+jobs:
+  prepare:
+    name: Prepare Round 1 shards
+    runs-on: ubuntu-latest
+    outputs:
+      experiment_matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Generate Round 1 shard matrix
+        id: matrix
+        shell: bash
+        run: |
+          matrix="$(python3 scripts/round1_make_matrix.py --num-jobs '${{ inputs.num_jobs }}')"
+          export MATRIX_JSON="${matrix}"
+          python3 - <<'PYEOF'
+          import json
+          import os
+          matrix = json.loads(os.environ["MATRIX_JSON"])
+          jobs = len(matrix)
+          runs = sum(item["task_count"] for item in matrix)
+          if jobs > 254:
+              raise SystemExit(f"Matrix has {jobs} solve jobs; keep <=254 to leave room for prepare and aggregate jobs")
+          print(f"Prepared {runs} solver runs across {jobs} jobs")
+          PYEOF
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
+  solve:
+    name: Round 1 shard ${{ matrix.shard_id }} (${{ matrix.task_count }} runs)
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.experiment_matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build solver
+        run: |
+          mkdir -p build
+          g++ -O3 -std=c++20 src_v2/tabubu_TimeDependent_v2.cpp -o build/tabubu_TimeDependent_v2
+
+      - name: Run shard
+        shell: bash
+        run: |
+          mkdir -p round1_shard_${{ matrix.shard_id }}
+          printf '%s' '${{ matrix.tasks_json }}' > tasks.json
+          python3 scripts/round1_run_shard.py \
+            --binary build/tabubu_TimeDependent_v2 \
+            --instance "$INSTANCE_PATH" \
+            --tasks-json tasks.json \
+            --out-dir round1_shard_${{ matrix.shard_id }} \
+            --time-limit-sec '${{ inputs.time_limit_sec }}' \
+            --job-task-timeout-sec "$(( ${{ inputs.time_limit_sec }} + 300 ))"
+
+      - name: Upload shard results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round1-shard-${{ matrix.shard_id }}
+          path: round1_shard_${{ matrix.shard_id }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate:
+    name: Aggregate Round 1 results
+    needs: solve
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: round1-shard-*
+          path: collected_round1
+          merge-multiple: false
+
+      - name: Aggregate and choose best config
+        run: |
+          python3 scripts/round1_aggregate.py collected_round1 \
+            --out-dir round1_aggregate \
+            --instance "$INSTANCE_PATH" \
+            --strict
+
+      - name: Upload Round 1 aggregate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round1-aggregate
+          path: round1_aggregate/
+          if-no-files-found: error
+          retention-days: 30
