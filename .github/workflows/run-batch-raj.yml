@@ -30,7 +30,7 @@ jobs:
           retention-days: 1
 
   run-instance:
-    name: Run ${{ matrix.base }} T${{ matrix.num_truck }} D${{ matrix.num_drone }}
+    name: Run ${{ matrix.base }} T${{ matrix.num_truck }} D${{ matrix.num_drone }} attempt ${{ matrix.attempt }}
     needs: build
     strategy:
       matrix:
@@ -43,6 +43,7 @@ jobs:
           - pr152-80-2-1-1
         num_truck: [2, 3]
         num_drone: [2, 4, 6]
+        attempt: [1, 2, 3, 4, 5]
       max-parallel: 36
     runs-on: ubuntu-latest
     timeout-minutes: 359
@@ -73,23 +74,23 @@ jobs:
           ./tabubu_raj "pdstsp-upload/instances/tsplib/${{ matrix.base }}.txt" \
             --num-truck=${{ matrix.num_truck }} \
             --num-drone=${{ matrix.num_drone }} \
-            > "outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}.log" 2>&1 || true
+            > "outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_run${{ matrix.attempt }}.log" 2>&1 || true
 
       - name: Collect outputs
         if: always()
         run: |
           if [[ -f output_solution_best.txt ]]; then
-            cp output_solution_best.txt "outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_best.txt"
+            cp output_solution_best.txt "outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_run${{ matrix.attempt }}_best.txt"
           fi
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.base }}-T${{ matrix.num_truck }}-D${{ matrix.num_drone }}-raj-results
+          name: ${{ matrix.base }}-T${{ matrix.num_truck }}-D${{ matrix.num_drone }}-run${{ matrix.attempt }}-raj-results
           path: |
-            outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}.log
-            outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_best.txt
+            outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_run${{ matrix.attempt }}.log
+            outputs/${{ matrix.base }}_T${{ matrix.num_truck }}_D${{ matrix.num_drone }}_run${{ matrix.attempt }}_best.txt
           if-no-files-found: warn
 
   collect-all:
@@ -122,87 +123,167 @@ jobs:
       - name: Generate results CSV
         run: |
           python3 - <<'EOF'
-          import os, re, csv, glob
+          import csv
+          import glob
+          import math
+          import os
+          import re
+          import shutil
+          from pathlib import Path
 
-          rows = []
+          number = r'([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)'
+          best_file_re = re.compile(r'^(.+)_T(\d+)_D(\d+)_run(\d+)_best\.txt$')
+          log_file_re = re.compile(r'^(.+)_T(\d+)_D(\d+)_run(\d+)\.log$')
+
+          def find(pattern, content):
+              match = re.search(pattern, content)
+              return match.group(1) if match else ''
+
+          def to_float(value):
+              return float(value) if value not in ('', None) else None
+
+          elapsed_from_log = {}
+          for log_file in sorted(glob.glob('all_artifacts/**/*.log', recursive=True)):
+              fname = os.path.basename(log_file)
+              match = log_file_re.match(fname)
+              if not match:
+                  continue
+              key = (match.group(1), int(match.group(2)), int(match.group(3)), int(match.group(4)))
+              with open(log_file, encoding='utf-8', errors='replace') as f:
+                  content = f.read()
+              elapsed = find(r'Mean Elapsed Time:\s*' + number + r'\s*seconds', content)
+              elapsed_from_log[key] = to_float(elapsed)
+
+          per_run_rows = []
+          best_solutions_dir = Path('summary') / 'best_solutions'
+          best_solutions_dir.mkdir(parents=True, exist_ok=True)
+
           for best_file in sorted(glob.glob('all_artifacts/**/*_best.txt', recursive=True)):
               fname = os.path.basename(best_file)
-              m = re.match(r'^(.+)_T(\d+)_D(\d+)_best\.txt$', fname)
-              if not m:
+              match = best_file_re.match(fname)
+              if not match:
                   continue
-              instance, num_truck, num_drone = m.group(1), m.group(2), m.group(3)
 
-              with open(best_file) as f:
+              instance = match.group(1)
+              num_truck = int(match.group(2))
+              num_drone = int(match.group(3))
+              attempt = int(match.group(4))
+              key = (instance, num_truck, num_drone, attempt)
+
+              with open(best_file, encoding='utf-8', errors='replace') as f:
                   content = f.read()
 
-              def find(pattern):
-                  r = re.search(pattern, content)
-                  return r.group(1) if r else ''
+              improved = to_float(find(r'Improved solution cost:\s*' + number, content))
+              elapsed = to_float(find(r'Mean elapsed time:\s*' + number + r'\s*seconds', content))
+              if elapsed is None:
+                  elapsed = elapsed_from_log.get(key)
 
-              improved  = find(r'Improved solution cost: ([\d.]+)')
-              mean_cost = find(r'Mean solution cost: ([\d.]+)')
-              worst_cost = find(r'Worst solution cost: ([\d.]+)')
-              initial_cost = find(r'Initial solution cost: ([\d.]+)')
-              elapsed   = find(r'Mean elapsed time: ([\d.]+)')
-              feasibility = find(r'Final solution feasibility: (\w+)')
-              makespan  = find(r'Makespan=([\d.]+)')
-              deadline_viol = find(r'Deadline violation=([\d.]+)')
-              energy_viol   = find(r'Energy violation=([\d.]+)')
-              capacity_viol = find(r'Capacity violation=([\d.]+)')
-              truck_dist = find(r'Total truck distance: ([\d.]+)')
-              drone_dist = find(r'Total drone distance: ([\d.]+)')
-
-              truck_matches = re.findall(r'Truck \d+: ([^|]+)\|Truck Time: ([\d.]+)', content)
-              drone_matches = re.findall(r'Drone \d+: ([^|]+)\|Drone Time: ([\d.]+)', content)
-
+              truck_matches = re.findall(r'Truck \d+: ([^|]+)\|Truck Time: ' + number, content)
+              drone_matches = re.findall(r'Drone \d+: ([^|]+)\|Drone Time: ' + number, content)
               truck_paths = [r[0].strip() for r in truck_matches]
               drone_paths = [r[0].strip() for r in drone_matches]
               truck_times = [float(r[1]) for r in truck_matches]
               drone_times = [float(r[1]) for r in drone_matches]
 
-              rows.append({
-                  'Problem':            instance,
-                  'num_truck':          num_truck,
-                  'num_drone':          num_drone,
-                  'initial cost':       initial_cost,
-                  'final cost':         improved,
-                  'mean cost':          mean_cost,
-                  'worst cost':         worst_cost,
-                  'makespan':           makespan,
-                  'elapsed time (s)':   elapsed,
-                  'feasibility':        feasibility,
-                  'deadline violation': deadline_viol,
-                  'energy violation':   energy_viol,
-                  'capacity violation': capacity_viol,
-                  'truck routes':       str(truck_paths),
-                  'drone routes':       str(drone_paths),
-                  'highest truck time': max(truck_times) if truck_times else '',
-                  'highest drone time': max(drone_times) if drone_times else '',
-                  'truck distance':     truck_dist,
-                  'drone distance':     drone_dist,
+              per_run_rows.append({
+                  'Problem': instance,
+                  'num_truck': num_truck,
+                  'num_drone': num_drone,
+                  'attempt': attempt,
+                  'final_cost': improved if improved is not None else '',
+                  'elapsed_time_sec': elapsed if elapsed is not None else '',
+                  'initial_cost': find(r'Initial solution cost:\s*' + number, content),
+                  'mean_cost': find(r'Mean solution cost:\s*' + number, content),
+                  'worst_cost': find(r'Worst solution cost:\s*' + number, content),
+                  'makespan': find(r'Makespan=' + number, content),
+                  'feasibility': find(r'Final solution feasibility:\s*(\w+)', content),
+                  'deadline_violation': find(r'Deadline violation=' + number, content),
+                  'energy_violation': find(r'Energy violation=' + number, content),
+                  'capacity_violation': find(r'Capacity violation=' + number, content),
+                  'truck_routes': str(truck_paths),
+                  'drone_routes': str(drone_paths),
+                  'highest_truck_time': max(truck_times) if truck_times else '',
+                  'highest_drone_time': max(drone_times) if drone_times else '',
+                  'truck_distance': find(r'Total truck distance:\s*' + number, content),
+                  'drone_distance': find(r'Total drone distance:\s*' + number, content),
+                  'solution_file': best_file,
               })
 
-          rows.sort(key=lambda r: (r['Problem'], int(r['num_truck']), int(r['num_drone'])))
+          per_run_rows.sort(key=lambda r: (r['Problem'], int(r['num_truck']), int(r['num_drone']), int(r['attempt'])))
 
-          out = 'results.csv'
-          with open(out, 'w', newline='') as f:
-              if rows:
-                  writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+          per_run_fields = [
+              'Problem', 'num_truck', 'num_drone', 'attempt', 'final_cost', 'elapsed_time_sec',
+              'initial_cost', 'mean_cost', 'worst_cost', 'makespan', 'feasibility',
+              'deadline_violation', 'energy_violation', 'capacity_violation',
+              'truck_routes', 'drone_routes', 'highest_truck_time', 'highest_drone_time',
+              'truck_distance', 'drone_distance', 'solution_file',
+          ]
+          with open('per_run_results.csv', 'w', newline='', encoding='utf-8') as f:
+              writer = csv.DictWriter(f, fieldnames=per_run_fields)
+              writer.writeheader()
+              writer.writerows(per_run_rows)
+
+          grouped = {}
+          for row in per_run_rows:
+              if row['final_cost'] == '':
+                  continue
+              key = (row['Problem'], int(row['num_truck']), int(row['num_drone']))
+              grouped.setdefault(key, []).append(row)
+
+          summary_rows = []
+          for key in sorted(grouped):
+              rows = sorted(grouped[key], key=lambda r: (float(r['final_cost']), int(r['attempt'])))
+              objectives = [float(r['final_cost']) for r in rows]
+              times = [float(r['elapsed_time_sec']) for r in rows if r['elapsed_time_sec'] != '']
+              avg_obj = sum(objectives) / len(objectives)
+              std_obj = math.sqrt(sum((x - avg_obj) ** 2 for x in objectives) / len(objectives)) if len(objectives) > 1 else 0.0
+              avg_time = sum(times) / len(times) if times else ''
+              best = rows[0]
+
+              best_name = f"{key[0]}_T{key[1]}_D{key[2]}_best_run{best['attempt']}.txt"
+              shutil.copy2(best['solution_file'], best_solutions_dir / best_name)
+
+              summary_rows.append({
+                  'Problem': key[0],
+                  'num_truck': key[1],
+                  'num_drone': key[2],
+                  'runs_found': len(rows),
+                  'best_obj': min(objectives),
+                  'std_obj': std_obj,
+                  'mean_elapsed_time_sec': avg_time,
+                  'best_attempt': best['attempt'],
+                  'best_solution_file': f"best_solutions/{best_name}",
+              })
+
+          summary_fields = [
+              'Problem', 'num_truck', 'num_drone', 'runs_found', 'best_obj',
+              'std_obj', 'mean_elapsed_time_sec', 'best_attempt', 'best_solution_file',
+          ]
+          for out in ('summary_by_config.csv', 'results.csv'):
+              with open(out, 'w', newline='', encoding='utf-8') as f:
+                  writer = csv.DictWriter(f, fieldnames=summary_fields)
                   writer.writeheader()
-                  writer.writerows(rows)
-          print(f"Generated {out} with {len(rows)} rows")
+                  writer.writerows(summary_rows)
+
+          print(f"Generated per_run_results.csv with {len(per_run_rows)} rows")
+          print(f"Generated summary_by_config.csv with {len(summary_rows)} rows")
           EOF
 
       - name: Create final compressed summary
         run: |
           cp results.csv summary/ || true
+          cp summary_by_config.csv summary/ || true
+          cp per_run_results.csv summary/ || true
           tar -czf tabubu_raj_all_instances_summary.tar.gz -C summary .
 
       - name: Upload results CSV
         uses: actions/upload-artifact@v4
         with:
           name: tabubu_raj_results_csv
-          path: results.csv
+          path: |
+            results.csv
+            summary_by_config.csv
+            per_run_results.csv
 
       - name: Upload consolidated summary
         uses: actions/upload-artifact@v4

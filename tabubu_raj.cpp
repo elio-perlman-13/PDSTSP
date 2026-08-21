@@ -88,7 +88,6 @@ static int TABU_TENURE_22 = 0; // default tenure for (2,2) moves
 static map<vector<int>, int> tabu_list_ejection; // keyed by sorted customer sequence
 static int TABU_TENURE_EJECTION = 0; // default tenure for ejection chain moves
 const int NUM_NEIGHBORHOODS = 9;
-const int NUM_OF_INITIAL_SOLUTIONS = 200;
 const int MAX_SEGMENT = 500;
 const int MAX_NO_IMPROVE = 1000;
 const int MAX_ITER_PER_SEGMENT = 1000;
@@ -98,7 +97,6 @@ const double gamma3 = 0.1;
 const double gamma4 = 0.3;
 
 // Runtime-configurable search knobs (initialized from compile-time defaults)
-static int CFG_NUM_INITIAL = NUM_OF_INITIAL_SOLUTIONS;
 static int CFG_MAX_SEGMENT = MAX_SEGMENT;
 static int CFG_MAX_NO_IMPROVE = MAX_NO_IMPROVE;
 static int CFG_MAX_ITER_PER_SEGMENT = MAX_ITER_PER_SEGMENT;
@@ -3619,7 +3617,7 @@ int main(int argc, char* argv[]) {
     if (argc < 2) {
         cerr << "Usage: " << argv[0]
              << " input_file [--print-distance-matrix]"
-             << " [--attempts=N] [--segments=N] [--iters=N] [--no-improve=N] [--time-limit=SEC] [--auto-tune]"
+             << " [--segments=N] [--iters=N] [--no-improve=N] [--time-limit=SEC] [--auto-tune]"
              << " [--knn-k=K] [--knn-window=W]"
              << " [--num-truck=N] [--num-drone=N]"
              << "\n";
@@ -3638,7 +3636,6 @@ int main(int argc, char* argv[]) {
         string arg = argv[ai];
         if (arg == "--print-distance-matrix") { print_dist_matrix = true; continue; }
         string v;
-        if (parse_kv_flag(arg, "--attempts", v)) { CFG_NUM_INITIAL = max(1, stoi(v)); continue; }
         if (parse_kv_flag(arg, "--segments", v)) { CFG_MAX_SEGMENT = max(1, stoi(v)); user_set_segments = true; continue; }
         if (parse_kv_flag(arg, "--iters", v)) { CFG_MAX_ITER_PER_SEGMENT = max(1, stoi(v)); user_set_iters = true; continue; }
         if (parse_kv_flag(arg, "--no-improve", v)) { CFG_MAX_NO_IMPROVE = max(1, stoi(v)); user_set_no_improve = true; continue; }
@@ -3674,7 +3671,6 @@ int main(int argc, char* argv[]) {
     if (CFG_TIME_LIMIT_SEC <= 0.0) CFG_TIME_LIMIT_SEC = 10800.0; // 5 minutes default; overridden by --time-limit
     if (auto_tune) {
         int tuned_total_iters = compute_total_iter_budget(n, NUM_NEIGHBORHOODS);
-        CFG_NUM_INITIAL = min(CFG_NUM_INITIAL, 50);
         CFG_KNN_K = min(CFG_KNN_K, int(n));
         if (!user_set_iters) {
             CFG_MAX_ITER_PER_SEGMENT = compute_iters_per_segment(n, NUM_NEIGHBORHOODS);
@@ -3716,7 +3712,7 @@ int main(int argc, char* argv[]) {
     double total_time_limit = CFG_TIME_LIMIT_SEC; // 0 = unlimited
     auto start_time = std::chrono::high_resolution_clock::now();
     int completed_attempts = 0;
-    while (true) {
+    while (completed_attempts < 1) {
         double total_elapsed = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - start_time).count();
         if (total_time_limit > 0.0 && total_elapsed >= total_time_limit) break;
 
