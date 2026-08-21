@@ -7,8 +7,13 @@ on:
     #  - main
     #  - restore-branch
 
+permissions:
+  actions: read
+  contents: read
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  PREVIOUS_RUN_ID: "32441216278"
 
 jobs:
   prepare:
@@ -23,12 +28,14 @@ jobs:
       - name: Build matrix from all instances
         id: set-matrix
         run: |
+          completed=" CMT1 CMT2 CMT3 CMT4 CMT5 E-n51-k5 E-n76-k8 E-n101-k8 "
           items=()
           for f in saleu-2022/saleu-2022/*.vrp; do
             base=$(basename "$f" .vrp)
-            for attempt in 1 2 3 4 5; do
-              items+=("{\"file\":\"$f\",\"base\":\"$base\",\"attempt\":$attempt}")
-            done
+            if [[ "$completed" == *" $base "* ]]; then
+              continue
+            fi
+            items+=("{\"file\":\"$f\",\"base\":\"$base\",\"attempt\":1}")
           done
           matrix_json="$(printf '%s,' "${items[@]}")"
           matrix_json="[${matrix_json%,}]"
@@ -103,15 +110,26 @@ jobs:
     needs: run-instance
     timeout-minutes: 60
     steps:
-      - name: Download all artifacts
+      - name: Download previous completed artifacts
         uses: actions/download-artifact@v4
         with:
-          path: all_artifacts
+          github-token: ${{ github.token }}
+          run-id: ${{ env.PREVIOUS_RUN_ID }}
+          pattern: "*-tabubu-saleu-results"
+          path: previous_artifacts
+
+      - name: Download current run artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-tabubu-saleu-results"
+          path: current_artifacts
 
       - name: List downloaded artifacts
         run: |
-          echo "Downloaded artifact dirs:"
-          ls -la all_artifacts || true
+          echo "Previous artifact dirs:"
+          ls -la previous_artifacts || true
+          echo "Current artifact dirs:"
+          ls -la current_artifacts || true
 
       - name: Consolidate into summary directory
         run: |
@@ -124,7 +142,7 @@ jobs:
           import shutil
           from pathlib import Path
 
-          artifacts_dir = Path("all_artifacts")
+          artifact_roots = [Path("previous_artifacts"), Path("current_artifacts")]
           summary_dir = Path("summary")
           best_dir = summary_dir / "best_solutions"
           all_solutions_dir = summary_dir / "all_solutions"
@@ -132,13 +150,75 @@ jobs:
           all_solutions_dir.mkdir(parents=True, exist_ok=True)
 
           best_file_re = re.compile(r"^(?P<instance>.+)_run(?P<run>\d+)_best\.txt$")
-          improved_re = re.compile(r"^Improved solution cost:\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)")
-          elapsed_re = re.compile(r"^Mean elapsed time:\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*seconds")
+          log_file_re = re.compile(r"^(?P<instance>.+)_run(?P<run>\d+)\.log$")
+          attempt_re = re.compile(r"^=== Attempt\s+(?P<attempt>\d+)\s+===")
+          improved_re = re.compile(r"^Improved Solution Cost:\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)")
+          best_improved_re = re.compile(r"^Improved solution cost:\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)")
+          elapsed_re = re.compile(r"^Mean Elapsed Time:\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*seconds")
+          best_elapsed_re = re.compile(r"^Mean elapsed time:\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*seconds")
 
-          rows = []
+          all_attempts = []
+          all_run_rows = []
           best_by_instance = {}
+          elapsed_by_key = {}
 
-          for best_file in sorted(artifacts_dir.rglob("*_best.txt")):
+          def source_label(path):
+              parts = set(path.parts)
+              if "previous_artifacts" in parts:
+                  return "previous_run_32441216278"
+              if "current_artifacts" in parts:
+                  return "current_run"
+              return "unknown"
+
+          best_files_by_key = {}
+          for root in artifact_roots:
+              for best_file in sorted(root.rglob("*_best.txt")):
+                  match = best_file_re.match(best_file.name)
+                  if match:
+                      best_files_by_key[(match.group("instance"), int(match.group("run")))] = best_file
+
+          for log_file in sorted(p for root in artifact_roots for p in root.rglob("*.log")):
+              match = log_file_re.match(log_file.name)
+              if not match:
+                  continue
+
+              instance = match.group("instance")
+              run = int(match.group("run"))
+              source = source_label(log_file)
+              current_attempt = None
+              parsed = []
+              mean_attempt_time = None
+
+              for line in log_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                  m = attempt_re.match(line)
+                  if m:
+                      current_attempt = int(m.group("attempt"))
+                      continue
+                  if line.startswith("=== Best Across Attempts"):
+                      current_attempt = None
+                      continue
+                  if current_attempt is not None:
+                      m = improved_re.match(line)
+                      if m:
+                          parsed.append({
+                              "instance": instance,
+                              "run": run,
+                              "attempt": current_attempt,
+                              "obj": float(m.group(1)),
+                              "mean_compute_time_sec": None,
+                              "source": source,
+                              "log_file": str(log_file),
+                          })
+                          continue
+                  m = elapsed_re.match(line)
+                  if m:
+                      mean_attempt_time = float(m.group(1))
+
+              for row in parsed:
+                  row["mean_compute_time_sec"] = mean_attempt_time
+              all_attempts.extend(parsed)
+
+          for best_file in sorted(p for root in artifact_roots for p in root.rglob("*_best.txt")):
               match = best_file_re.match(best_file.name)
               if not match:
                   continue
@@ -150,23 +230,25 @@ jobs:
 
               for line in best_file.read_text(encoding="utf-8", errors="replace").splitlines():
                   if improved is None:
-                      m = improved_re.match(line)
+                      m = best_improved_re.match(line)
                       if m:
                           improved = float(m.group(1))
                           continue
                   if elapsed is None:
-                      m = elapsed_re.match(line)
+                      m = best_elapsed_re.match(line)
                       if m:
                           elapsed = float(m.group(1))
 
+              elapsed_by_key[(instance, run)] = elapsed
               row = {
                   "instance": instance,
                   "run": run,
                   "best_obj": improved,
                   "avg_compute_time_sec": elapsed,
                   "solution_file": str(best_file),
+                  "source": source_label(best_file),
               }
-              rows.append(row)
+              all_run_rows.append(row)
 
               if improved is not None:
                   current_best = best_by_instance.get(instance)
@@ -183,39 +265,66 @@ jobs:
               shutil.copy2(best_file, copied_solution_dir / copied_solution_name)
               row["solution_file"] = f"all_solutions/{instance}/{copied_solution_name}"
 
-          rows.sort(key=lambda r: (r["instance"], r["run"]))
+          for row in all_attempts:
+              if row["mean_compute_time_sec"] is None:
+                  row["mean_compute_time_sec"] = elapsed_by_key.get((row["instance"], row["run"]))
+
+          all_attempts.sort(key=lambda r: (r["instance"], r["obj"], r["run"], r["attempt"]))
+          all_run_rows.sort(key=lambda r: (r["instance"], r["run"], r["source"]))
 
           with (summary_dir / "all_runs.csv").open("w", newline="", encoding="utf-8") as f:
               writer = csv.DictWriter(
                   f,
-                  fieldnames=["instance", "run", "best_obj", "avg_compute_time_sec", "solution_file"],
+                  fieldnames=["instance", "run", "source", "best_obj", "avg_compute_time_sec", "solution_file"],
               )
               writer.writeheader()
-              writer.writerows(rows)
+              writer.writerows(all_run_rows)
+
+          with (summary_dir / "all_attempts.csv").open("w", newline="", encoding="utf-8") as f:
+              writer = csv.DictWriter(
+                  f,
+                  fieldnames=["instance", "run", "attempt", "source", "obj", "mean_compute_time_sec", "log_file"],
+              )
+              writer.writeheader()
+              writer.writerows(all_attempts)
 
           grouped = {}
-          for row in rows:
+          for row in all_attempts:
               grouped.setdefault(row["instance"], []).append(row)
 
+          selected_top5 = []
           with (summary_dir / "summary_by_instance.csv").open("w", newline="", encoding="utf-8") as f:
               writer = csv.DictWriter(
                   f,
                   fieldnames=[
                       "instance",
-                      "runs_found",
+                      "attempts_found",
+                      "attempts_used",
                       "best_obj",
-                      "best_run",
                       "avg_obj",
                       "std_obj",
-                      "avg_compute_time_sec",
+                      "mean_compute_time_sec",
                       "best_solution_file",
                   ],
               )
               writer.writeheader()
               for instance in sorted(grouped):
-                  instance_rows = grouped[instance]
-                  objs = [r["best_obj"] for r in instance_rows if r["best_obj"] is not None]
-                  times = [r["avg_compute_time_sec"] for r in instance_rows if r["avg_compute_time_sec"] is not None]
+                  attempts = sorted(grouped[instance], key=lambda r: (r["obj"], r["run"], r["attempt"]))
+                  selected = attempts[:5]
+                  if selected:
+                      fill_idx = 0
+                      while len(selected) < 5:
+                          selected.append(dict(attempts[fill_idx % len(attempts)]))
+                          fill_idx += 1
+
+                  for rank, row in enumerate(selected, start=1):
+                      selected_row = dict(row)
+                      selected_row["rank"] = rank
+                      selected_row["duplicated_to_fill_top5"] = "true" if rank > min(5, len(attempts)) else "false"
+                      selected_top5.append(selected_row)
+
+                  objs = [r["obj"] for r in selected]
+                  times = [r["mean_compute_time_sec"] for r in selected if r["mean_compute_time_sec"] is not None]
                   best = best_by_instance.get(instance)
 
                   avg_obj = sum(objs) / len(objs) if objs else None
@@ -229,14 +338,32 @@ jobs:
 
                   writer.writerow({
                       "instance": instance,
-                      "runs_found": len(instance_rows),
-                      "best_obj": best["best_obj"] if best is not None else "",
-                      "best_run": best["run"] if best is not None else "",
+                      "attempts_found": len(attempts),
+                      "attempts_used": len(selected),
+                      "best_obj": min(objs) if objs else "",
                       "avg_obj": avg_obj if avg_obj is not None else "",
                       "std_obj": std_obj if objs else "",
-                      "avg_compute_time_sec": avg_time if avg_time is not None else "",
+                      "mean_compute_time_sec": avg_time if avg_time is not None else "",
                       "best_solution_file": f"best_solutions/{best_solution_name}" if best_solution_name else "",
                   })
+
+          with (summary_dir / "selected_top5_attempts.csv").open("w", newline="", encoding="utf-8") as f:
+              writer = csv.DictWriter(
+                  f,
+                  fieldnames=[
+                      "instance",
+                      "rank",
+                      "run",
+                      "attempt",
+                      "source",
+                      "obj",
+                      "mean_compute_time_sec",
+                      "duplicated_to_fill_top5",
+                      "log_file",
+                  ],
+              )
+              writer.writeheader()
+              writer.writerows(selected_top5)
           PY
 
       - name: Create final compressed summary
