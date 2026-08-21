@@ -26,7 +26,9 @@ jobs:
           items=()
           for f in saleu-2022/saleu-2022/*.vrp; do
             base=$(basename "$f" .vrp)
-            items+=("{\"file\":\"$f\",\"base\":\"$base\"}")
+            for attempt in 1 2 3 4 5; do
+              items+=("{\"file\":\"$f\",\"base\":\"$base\",\"attempt\":$attempt}")
+            done
           done
           matrix_json="$(printf '%s,' "${items[@]}")"
           matrix_json="[${matrix_json%,}]"
@@ -51,7 +53,7 @@ jobs:
           retention-days: 1
 
   run-instance:
-    name: Run instance ${{ matrix.base }}
+    name: Run instance ${{ matrix.base }} attempt ${{ matrix.attempt }}
     needs: [prepare, build]
     strategy:
       matrix:
@@ -75,23 +77,23 @@ jobs:
         timeout-minutes: 355
         run: |
           mkdir -p outputs
-          ./tabubu_saleu "${{ matrix.file }}" > "outputs/${{ matrix.base }}.log" 2>&1 || true
+          ./tabubu_saleu "${{ matrix.file }}" > "outputs/${{ matrix.base }}_run${{ matrix.attempt }}.log" 2>&1 || true
 
       - name: Prepare outputs
         if: always()
         run: |
           if [[ -f output_solution_best.txt ]]; then
-            cp output_solution_best.txt "outputs/${{ matrix.base }}_best.txt"
+            cp output_solution_best.txt "outputs/${{ matrix.base }}_run${{ matrix.attempt }}_best.txt"
           fi
 
       - name: Upload per-instance artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.base }}-tabubu-saleu-results
+          name: ${{ matrix.base }}-run${{ matrix.attempt }}-tabubu-saleu-results
           path: |
-            outputs/${{ matrix.base }}_best.txt
-            outputs/${{ matrix.base }}.log
+            outputs/${{ matrix.base }}_run${{ matrix.attempt }}_best.txt
+            outputs/${{ matrix.base }}_run${{ matrix.attempt }}.log
           if-no-files-found: warn
 
   collect-all:
@@ -115,11 +117,127 @@ jobs:
         run: |
           rm -rf summary || true
           mkdir -p summary
-          for a in all_artifacts/*; do
-            name=$(basename "$a")
-            mkdir -p "summary/$name"
-            find "$a" -type f -name '*_best.txt' -exec cp {} "summary/$name/" \; || true
-          done
+          python3 - <<'PY'
+          import csv
+          import math
+          import re
+          import shutil
+          from pathlib import Path
+
+          artifacts_dir = Path("all_artifacts")
+          summary_dir = Path("summary")
+          best_dir = summary_dir / "best_solutions"
+          all_solutions_dir = summary_dir / "all_solutions"
+          best_dir.mkdir(parents=True, exist_ok=True)
+          all_solutions_dir.mkdir(parents=True, exist_ok=True)
+
+          best_file_re = re.compile(r"^(?P<instance>.+)_run(?P<run>\d+)_best\.txt$")
+          improved_re = re.compile(r"^Improved solution cost:\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)")
+          elapsed_re = re.compile(r"^Mean elapsed time:\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*seconds")
+
+          rows = []
+          best_by_instance = {}
+
+          for best_file in sorted(artifacts_dir.rglob("*_best.txt")):
+              match = best_file_re.match(best_file.name)
+              if not match:
+                  continue
+
+              instance = match.group("instance")
+              run = int(match.group("run"))
+              improved = None
+              elapsed = None
+
+              for line in best_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                  if improved is None:
+                      m = improved_re.match(line)
+                      if m:
+                          improved = float(m.group(1))
+                          continue
+                  if elapsed is None:
+                      m = elapsed_re.match(line)
+                      if m:
+                          elapsed = float(m.group(1))
+
+              row = {
+                  "instance": instance,
+                  "run": run,
+                  "best_obj": improved,
+                  "avg_compute_time_sec": elapsed,
+                  "solution_file": str(best_file),
+              }
+              rows.append(row)
+
+              if improved is not None:
+                  current_best = best_by_instance.get(instance)
+                  if current_best is None or improved < current_best["best_obj"]:
+                      best_by_instance[instance] = {
+                          "best_obj": improved,
+                          "best_file": best_file,
+                          "run": run,
+                      }
+
+              copied_solution_dir = all_solutions_dir / instance
+              copied_solution_dir.mkdir(parents=True, exist_ok=True)
+              copied_solution_name = f"{instance}_run{run}_best.txt"
+              shutil.copy2(best_file, copied_solution_dir / copied_solution_name)
+              row["solution_file"] = f"all_solutions/{instance}/{copied_solution_name}"
+
+          rows.sort(key=lambda r: (r["instance"], r["run"]))
+
+          with (summary_dir / "all_runs.csv").open("w", newline="", encoding="utf-8") as f:
+              writer = csv.DictWriter(
+                  f,
+                  fieldnames=["instance", "run", "best_obj", "avg_compute_time_sec", "solution_file"],
+              )
+              writer.writeheader()
+              writer.writerows(rows)
+
+          grouped = {}
+          for row in rows:
+              grouped.setdefault(row["instance"], []).append(row)
+
+          with (summary_dir / "summary_by_instance.csv").open("w", newline="", encoding="utf-8") as f:
+              writer = csv.DictWriter(
+                  f,
+                  fieldnames=[
+                      "instance",
+                      "runs_found",
+                      "best_obj",
+                      "best_run",
+                      "avg_obj",
+                      "std_obj",
+                      "avg_compute_time_sec",
+                      "best_solution_file",
+                  ],
+              )
+              writer.writeheader()
+              for instance in sorted(grouped):
+                  instance_rows = grouped[instance]
+                  objs = [r["best_obj"] for r in instance_rows if r["best_obj"] is not None]
+                  times = [r["avg_compute_time_sec"] for r in instance_rows if r["avg_compute_time_sec"] is not None]
+                  best = best_by_instance.get(instance)
+
+                  avg_obj = sum(objs) / len(objs) if objs else None
+                  std_obj = math.sqrt(sum((x - avg_obj) ** 2 for x in objs) / len(objs)) if len(objs) > 1 else 0.0
+                  avg_time = sum(times) / len(times) if times else None
+
+                  best_solution_name = ""
+                  if best is not None:
+                      best_solution_name = f"{instance}_best_run{best['run']}.txt"
+                      shutil.copy2(best["best_file"], best_dir / best_solution_name)
+
+                  writer.writerow({
+                      "instance": instance,
+                      "runs_found": len(instance_rows),
+                      "best_obj": best["best_obj"] if best is not None else "",
+                      "best_run": best["run"] if best is not None else "",
+                      "avg_obj": avg_obj if avg_obj is not None else "",
+                      "std_obj": std_obj if objs else "",
+                      "avg_compute_time_sec": avg_time if avg_time is not None else "",
+                      "best_solution_file": f"best_solutions/{best_solution_name}" if best_solution_name else "",
+                  })
+          PY
 
       - name: Create final compressed summary
         run: |
