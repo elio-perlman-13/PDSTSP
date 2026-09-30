@@ -3,6 +3,18 @@ name: V2 segment length experiment
 on:
   workflow_dispatch:
     inputs:
+      run_scope:
+        description: "Run the complete experiment or rerun only n=200"
+        required: true
+        type: choice
+        options:
+          - all
+          - 200_only
+        default: 200_only
+      baseline_run_id:
+        description: "Completed run containing the n=50 and n=100 artifacts (used by 200_only)"
+        required: true
+        default: "36668851740"
       max_parallel_50_100:
         description: "Maximum parallel jobs for the 50/100-customer matrix"
         required: true
@@ -10,10 +22,15 @@ on:
       max_parallel_200:
         description: "Maximum parallel jobs for the 200-customer matrix"
         required: true
-        default: "20"
+        default: "120"
+      time_limit_200_sec:
+        description: "Solver time limit in seconds for each n=200 process"
+        required: true
+        default: "7200"
 
 permissions:
   contents: read
+  actions: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -31,9 +48,18 @@ jobs:
 
       - name: Generate and validate experiment matrices
         id: matrices
+        env:
+          RUN_SCOPE: ${{ inputs.run_scope }}
+          BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+          TIME_LIMIT_200_SEC: ${{ inputs.time_limit_200_sec }}
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$RUN_SCOPE" == "all" || "$RUN_SCOPE" == "200_only" ]]
+          [[ "$TIME_LIMIT_200_SEC" =~ ^[1-9][0-9]*$ ]]
+          if [[ "$RUN_SCOPE" == "200_only" ]]; then
+            [[ "$BASELINE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          fi
           matrix_50="$(python3 scripts/v2_segment_make_matrix.py --group 50)"
           matrix_100="$(python3 scripts/v2_segment_make_matrix.py --group 100)"
           matrix_200="$(python3 scripts/v2_segment_make_matrix.py --group 200)"
@@ -85,6 +111,7 @@ jobs:
   solve-50:
     name: 50 | ${{ matrix.batch_id }} | ${{ matrix.task_count }} sequential runs
     needs: prepare
+    if: ${{ inputs.run_scope == 'all' }}
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
@@ -125,6 +152,7 @@ jobs:
   solve-100:
     name: 100 | ${{ matrix.batch_id }} | ${{ matrix.task_count }} sequential runs
     needs: prepare
+    if: ${{ inputs.run_scope == 'all' }}
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
@@ -190,7 +218,7 @@ jobs:
             --binary build/v2_segment_experiment/tabubu_TimeDependent_v2 \
             --batch-id '${{ matrix.batch_id }}' \
             --tasks-json "$TASKS_JSON" \
-            --time-limit-sec 1800 \
+            --time-limit-sec '${{ inputs.time_limit_200_sec }}' \
             --result-dir result
 
       - name: Upload run result
@@ -214,16 +242,46 @@ jobs:
       - name: Install Excel dependency
         run: python3 -m pip install --disable-pip-version-check -r scripts/requirements-v2-segment.txt
 
-      - name: Download all individual results
+      - name: Download results from this complete run
+        if: ${{ inputs.run_scope == 'all' }}
         uses: actions/download-artifact@v4
         with:
           pattern: v2-segment-result-*
           path: collected_results
 
+      - name: Download new n=200 results
+        if: ${{ inputs.run_scope == '200_only' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: v2-segment-result-200-*
+          path: collected_results/new_200
+
+      - name: Download baseline n=50 results
+        if: ${{ inputs.run_scope == '200_only' }}
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.baseline_run_id }}
+          pattern: v2-segment-result-50-*
+          path: collected_results/baseline_50
+
+      - name: Download baseline n=100 results
+        if: ${{ inputs.run_scope == '200_only' }}
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.baseline_run_id }}
+          pattern: v2-segment-result-100-*
+          path: collected_results/baseline_100
+
       - name: Aggregate results
         run: |
           python3 scripts/v2_segment_aggregate.py collected_results \
             --out-dir v2_segment_aggregate \
+            --baseline-run-id '${{ inputs.run_scope == '200_only' && inputs.baseline_run_id || github.run_id }}' \
+            --current-run-id '${{ github.run_id }}' \
             --strict
 
       - name: Add summary to workflow page

@@ -290,6 +290,8 @@ def build_workbook(
     solutions: list[dict[str, object]],
     routes: list[dict[str, object]],
     validation_rows: list[dict[str, object]],
+    baseline_run_id: str,
+    current_run_id: str,
 ) -> None:
     workbook = Workbook()
     workbook.remove(workbook.active)
@@ -298,16 +300,32 @@ def build_workbook(
     add_sheet(workbook, "All_Runs", all_runs)
     add_sheet(workbook, "Final_Solutions", solutions)
     add_sheet(workbook, "Routes", routes)
+    limits_by_n: dict[int, set[int]] = defaultdict(set)
+    for row in all_runs:
+        try:
+            limits_by_n[int(row["n"])].add(int(row["time_limit_sec"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    time_limit_summary = "; ".join(
+        f"n={n}:{','.join(str(value) for value in sorted(values))}"
+        for n, values in sorted(limits_by_n.items())
+    )
+    stop_condition_summary = "; ".join(
+        f"n={n}:IT_max or {','.join(str(value) for value in sorted(values))} seconds"
+        for n, values in sorted(limits_by_n.items())
+    )
     config = [
         {"parameter": "instances", "value": "{50,100,200}.{10,20,30,40}.{1,3}"},
+        {"parameter": "baseline_run_id_n50_n100", "value": baseline_run_id},
+        {"parameter": "current_run_id_n200", "value": current_run_id},
         {"parameter": "independent_runs_R", "value": len(SEEDS)},
         {"parameter": "common_seeds", "value": ",".join(map(str, SEEDS))},
         {"parameter": "solver_processes", "value": 360},
         {"parameter": "solver_jobs", "value": 204},
         {"parameter": "sequential_processes_per_job", "value": "n=50:5; n=100:2; n=200:1"},
-        {"parameter": "process_time_limit_sec", "value": 1800},
+        {"parameter": "process_time_limit_sec", "value": time_limit_summary},
         {"parameter": "solver_job_timeout_min", "value": 300},
-        {"parameter": "process_stop_condition", "value": "IT_max reached or 1800 seconds elapsed"},
+        {"parameter": "process_stop_condition", "value": stop_condition_summary},
         {"parameter": "segment_lengths", "value": "n,3n,5n"},
         {"parameter": "iteration_budget", "value": "9*n*ceil(sqrt(n))"},
         {"parameter": "customer_demand_kg", "value": "(0,2]"},
@@ -339,6 +357,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("results_dir", type=Path)
     parser.add_argument("--out-dir", type=Path, default=Path("v2_segment_aggregate"))
+    parser.add_argument("--baseline-run-id", default="")
+    parser.add_argument("--current-run-id", default="")
     parser.add_argument("--strict", action="store_true")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -408,6 +428,8 @@ def main() -> int:
         solutions,
         routes,
         validation_rows,
+        args.baseline_run_id,
+        args.current_run_id,
     )
 
     markdown = [
