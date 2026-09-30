@@ -1,0 +1,151 @@
+name: Hanoi case study - single trip
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_parallel:
+        description: "Maximum parallel jobs; each job runs at most two tasks sequentially"
+        required: true
+        default: "80"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  HANOI_SOURCE_ROOT: instance_hanoi/datasets/hanoi_traffic/Hanoi_15x15_2026/profile_instances
+
+jobs:
+  prepare:
+    name: Build single-trip solver and matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate source data
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dataset in set_01 set_02 set_03; do
+            for profile in weekday thu7 chunhat; do
+              stem="hanoi_15x15_100_${dataset}_${profile}"
+              base="$HANOI_SOURCE_ROOT/$dataset/$profile/$stem"
+              test -s "$base.txt"
+              test -s "$base.truck_distance_m.txt"
+              test -s "$base.drone_distance_m.txt"
+              test -s "$base.v_ijl_kph.txt"
+            done
+          done
+
+      - name: Build V2 Hanoi solver
+        run: |
+          mkdir -p build/hanoi_case_solver
+          g++ -O3 -std=c++20 src_v2/tabubu_HanoiTraffic_v2.cpp \
+            -o build/hanoi_case_solver/tabubu_HanoiTraffic_v2
+
+      - name: Generate 158-job matrix for 315 runs
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$(python3 scripts/hanoi_case_study_cloud.py matrix --experiment single-trip --group-size 2)"
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+          python3 -c 'import json,sys; m=json.loads(sys.argv[1]); assert len(m["include"])==158; assert sum(x["task_count"] for x in m["include"])==315' "$matrix"
+
+      - name: Smoke test single-trip constraint
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PWD"
+          stem="$root/$HANOI_SOURCE_ROOT/set_01/weekday/hanoi_15x15_100_set_01_weekday"
+          work="$(mktemp -d)"
+          cd "$work"
+          "$root/build/hanoi_case_solver/tabubu_HanoiTraffic_v2" "$stem.txt" \
+            --truck-distance-file="$stem.truck_distance_m.txt" \
+            --drone-distance-file="$stem.drone_distance_m.txt" \
+            --truck-vijl-file="$stem.v_ijl_kph.txt" \
+            --start-hour=6 --truck-single-trip \
+            --attempts=1 --iters=2 --segment-iters=1 --time-limit=60 --seed=1
+          test -s output_solution_best.txt
+          python3 -c 'import re; t=open("output_solution_best.txt").read(); lines=[x for x in t.splitlines() if re.match(r"^Truck \d+:",x)]; assert lines; assert all([int(v) for v in x.split(":",1)[1].split("|",1)[0].split()][1:-1].count(0)==0 for x in lines)'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hanoi-case-single-trip-solver
+          path: build/hanoi_case_solver/tabubu_HanoiTraffic_v2
+          if-no-files-found: error
+          retention-days: 2
+
+  solve:
+    name: ${{ matrix.batch_id }} | ${{ matrix.task_count }} sequential
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: hanoi-case-single-trip-solver
+          path: build/hanoi_case_solver
+
+      - name: Run one or two single-trip tasks
+        env:
+          TASKS_JSON: ${{ matrix.tasks_json }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x build/hanoi_case_solver/tabubu_HanoiTraffic_v2
+          python3 scripts/hanoi_case_study_cloud.py run-single-trip \
+            --binary build/hanoi_case_solver/tabubu_HanoiTraffic_v2 \
+            --source-root "$HANOI_SOURCE_ROOT" \
+            --tasks-json "$TASKS_JSON" \
+            --output result
+
+      - name: Upload batch result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hanoi-case-single-trip-${{ matrix.batch_id }}
+          path: result/
+          if-no-files-found: warn
+          retention-days: 90
+
+  aggregate:
+    name: Aggregate all 315 single-trip runs
+    needs: solve
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Excel dependency
+        run: python3 -m pip install --disable-pip-version-check openpyxl
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hanoi-case-single-trip-single-trip-batch*
+          path: collected_results
+
+      - name: Build consolidated workbook
+        run: |
+          python3 scripts/hanoi_case_study_cloud.py aggregate \
+            --experiment single-trip \
+            --input-root collected_results \
+            --output hanoi_case_single_trip/hanoi_case_single_trip_results.xlsx
+
+      - name: Upload consolidated results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hanoi-case-single-trip-results
+          path: hanoi_case_single_trip/
+          if-no-files-found: warn
+          retention-days: 90
