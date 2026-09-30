@@ -57,7 +57,7 @@ vd time_segments_sigma = {0.9, 0.8, 0.4, 0.6,0.9, 0.8, 0.6, 0.8, 0.8, 0.7, 0.5, 
 vvd truck_vmax_ij; // truck_vmax_ij[i][j]: edge-specific base speed vmax_ij (m/s)
 vector<vvd> truck_theta_ijl; // truck_theta_ijl[l][i][j]: edge/time-specific coefficient theta_ijl
 double Dd = 2.27, E = 7200000.0; //drone's weight and energy capacities (for all drones)
-double v_fly_drone = 31.3, v_take_off = 15.6, v_landing = 7.8; // speed of the drone
+double v_fly_drone = 31.2928, v_take_off = 15.6464, v_landing = 7.8232; // 70, 35, and 17.5 mph
 double height = 50; // height of the drone
 //double height = 0; // height of the drone
 //double power_beta = 0, power_gamma = 1.0; //coefficients for drone energy consumption per second
@@ -122,6 +122,7 @@ static int CFG_OVERRIDE_TRUCKS = -1;
 static int CFG_OVERRIDE_DRONES = -1;
 static int CFG_RANDOM_SEED = 42;
 static double CFG_C_TABU = 2.0;
+static int CFG_TABU_BASE_OVERRIDE = -1;
 
 // Adaptive penalty coefficients for constraint violations
 static double PENALTY_LAMBDA_CAPACITY = 1.0;      // λ for capacity violations
@@ -254,7 +255,9 @@ void input(string filepath){
 }
 
 void update_tabu_tenures() {
-    int base = max(1, (int)ceil(CFG_C_TABU * sqrt((double)n))); 
+    int base = CFG_TABU_BASE_OVERRIDE > 0
+             ? CFG_TABU_BASE_OVERRIDE
+             : max(1, (int)ceil(CFG_C_TABU * sqrt((double)n)));
     
     TABU_TENURE_BASE = base;
     TABU_TENURE_10 = base;          // Swap
@@ -6067,7 +6070,7 @@ int main(int argc, char* argv[]) {
 	             << " [--truck-capacity=KG] [--drone-capacity=KG]"
 	             << " [--knn-k=K] [--knn-window=W]"
 	             << " [--seed=N] [--alpha=X] [--T0=X]"
-	             << " [--c-tabu=X] [--h-mode=N] [--h-div=N]"
+	             << " [--c-tabu=X] [--tabu-base=N] [--h-mode=N] [--h-div=N]"
 	             << " [--gamma1=X] [--gamma2=X] [--gamma3=X] [--gamma4=X]"
 	             << " [--kappa=X] [--tau-v=X] [--r-destroy=X]"
 	             << " [--truck-vmax-file=PATH] [--truck-theta-file=PATH]"
@@ -6101,6 +6104,7 @@ int main(int argc, char* argv[]) {
         if (parse_kv_flag(arg, "--alpha", v)) { alpha = min(0.999999, max(0.0, stod(v))); continue; }
         if (parse_kv_flag(arg, "--T0", v)) { T0 = max(0.0, stod(v)); continue; }
         if (parse_kv_flag(arg, "--c-tabu", v)) { CFG_C_TABU = max(1e-9, stod(v)); continue; }
+        if (parse_kv_flag(arg, "--tabu-base", v)) { CFG_TABU_BASE_OVERRIDE = max(1, stoi(v)); continue; }
         if (parse_kv_flag(arg, "--h-mode", v)) { H_MODE = max(0, stoi(v)); continue; }
         if (parse_kv_flag(arg, "--h-div", v)) { H_DIV = max(1, stoi(v)); continue; }
         if (parse_kv_flag(arg, "--gamma1", v)) { gamma1 = max(0.0, stod(v)); continue; }

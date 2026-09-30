@@ -1,0 +1,244 @@
+name: V2 segment length experiment
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_parallel_50_100:
+        description: "Maximum parallel jobs for the 50/100-customer matrix"
+        required: true
+        default: "20"
+      max_parallel_200:
+        description: "Maximum parallel jobs for the 200-customer matrix"
+        required: true
+        default: "20"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  prepare:
+    name: Build V2 and prepare matrices
+    runs-on: ubuntu-latest
+    outputs:
+      matrix_50: ${{ steps.matrices.outputs.matrix_50 }}
+      matrix_100: ${{ steps.matrices.outputs.matrix_100 }}
+      matrix_200: ${{ steps.matrices.outputs.matrix_200 }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Generate and validate experiment matrices
+        id: matrices
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix_50="$(python3 scripts/v2_segment_make_matrix.py --group 50)"
+          matrix_100="$(python3 scripts/v2_segment_make_matrix.py --group 100)"
+          matrix_200="$(python3 scripts/v2_segment_make_matrix.py --group 200)"
+          printf 'matrix_50=%s\n' "$matrix_50" >> "$GITHUB_OUTPUT"
+          printf 'matrix_100=%s\n' "$matrix_100" >> "$GITHUB_OUTPUT"
+          printf 'matrix_200=%s\n' "$matrix_200" >> "$GITHUB_OUTPUT"
+          python3 -c 'import json,sys; assert len(json.loads(sys.argv[1])["include"]) == 24' "$matrix_50"
+          python3 -c 'import json,sys; assert len(json.loads(sys.argv[1])["include"]) == 60' "$matrix_100"
+          python3 -c 'import json,sys; assert len(json.loads(sys.argv[1])["include"]) == 120' "$matrix_200"
+          python3 -c 'import json,sys; assert sum(x["task_count"] for x in json.loads(sys.argv[1])["include"]) == 120' "$matrix_50"
+          python3 -c 'import json,sys; assert sum(x["task_count"] for x in json.loads(sys.argv[1])["include"]) == 120' "$matrix_100"
+          python3 -c 'import json,sys; assert sum(x["task_count"] for x in json.loads(sys.argv[1])["include"]) == 120' "$matrix_200"
+
+      - name: Build V2 solver
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/v2_segment_experiment
+          g++ -O3 -std=c++20 src_v2/tabubu_TimeDependent_v2.cpp \
+            -o build/v2_segment_experiment/tabubu_TimeDependent_v2
+
+      - name: Smoke test solver and data files
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PWD"
+          work_dir="$(mktemp -d)"
+          cd "$work_dir"
+          "$root/build/v2_segment_experiment/tabubu_TimeDependent_v2" \
+            "$root/instance_time_dependent/50.10.1.txt" \
+            --truck-vmax-file="$root/instance_time_dependent/50.10.1.vmax_ij.txt" \
+            --truck-theta-file="$root/instance_time_dependent/50.10.1.theta_ijl.txt" \
+            --attempts=1 --iters=2 --segment-iters=1 --time-limit=60 \
+            --truck-capacity=1000 --drone-capacity=2.27 --seed=1001 \
+            --tabu-base=20 --h-mode=1000000000 --h-div=1000000000 \
+            --gamma1=0.5 --gamma2=0.3 --gamma3=0.1 --gamma4=0.3 \
+            --T0=0 --kappa=0 --r-destroy=0
+          test -s output_solution_best.txt
+          test -s output_mode_0.txt
+
+      - name: Upload V2 solver
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-segment-solver
+          path: build/v2_segment_experiment/tabubu_TimeDependent_v2
+          if-no-files-found: error
+          retention-days: 1
+
+  solve-50:
+    name: 50 | ${{ matrix.batch_id }} | ${{ matrix.task_count }} sequential runs
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel_50_100) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix_50) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: v2-segment-solver
+          path: build/v2_segment_experiment
+
+      - name: Run solver processes sequentially
+        env:
+          TASKS_JSON: ${{ matrix.tasks_json }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x build/v2_segment_experiment/tabubu_TimeDependent_v2
+          python3 scripts/v2_segment_run_batch.py \
+            --binary build/v2_segment_experiment/tabubu_TimeDependent_v2 \
+            --batch-id '${{ matrix.batch_id }}' \
+            --tasks-json "$TASKS_JSON" \
+            --time-limit-sec 1800 \
+            --result-dir result
+
+      - name: Upload run result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-segment-result-50-${{ matrix.batch_id }}
+          path: result/
+          if-no-files-found: warn
+          retention-days: 90
+
+  solve-100:
+    name: 100 | ${{ matrix.batch_id }} | ${{ matrix.task_count }} sequential runs
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel_50_100) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix_100) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: v2-segment-solver
+          path: build/v2_segment_experiment
+
+      - name: Run solver processes sequentially
+        env:
+          TASKS_JSON: ${{ matrix.tasks_json }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x build/v2_segment_experiment/tabubu_TimeDependent_v2
+          python3 scripts/v2_segment_run_batch.py \
+            --binary build/v2_segment_experiment/tabubu_TimeDependent_v2 \
+            --batch-id '${{ matrix.batch_id }}' \
+            --tasks-json "$TASKS_JSON" \
+            --time-limit-sec 1800 \
+            --result-dir result
+
+      - name: Upload run result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-segment-result-100-${{ matrix.batch_id }}
+          path: result/
+          if-no-files-found: warn
+          retention-days: 90
+
+  solve-200:
+    name: 200 | ${{ matrix.batch_id }} | ${{ matrix.task_count }} sequential run
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel_200) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix_200) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: v2-segment-solver
+          path: build/v2_segment_experiment
+
+      - name: Run solver process
+        env:
+          TASKS_JSON: ${{ matrix.tasks_json }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x build/v2_segment_experiment/tabubu_TimeDependent_v2
+          python3 scripts/v2_segment_run_batch.py \
+            --binary build/v2_segment_experiment/tabubu_TimeDependent_v2 \
+            --batch-id '${{ matrix.batch_id }}' \
+            --tasks-json "$TASKS_JSON" \
+            --time-limit-sec 1800 \
+            --result-dir result
+
+      - name: Upload run result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-segment-result-200-${{ matrix.batch_id }}
+          path: result/
+          if-no-files-found: warn
+          retention-days: 90
+
+  aggregate:
+    name: Aggregate and validate all 360 runs
+    needs: [solve-50, solve-100, solve-200]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Excel dependency
+        run: python3 -m pip install --disable-pip-version-check -r scripts/requirements-v2-segment.txt
+
+      - name: Download all individual results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: v2-segment-result-*
+          path: collected_results
+
+      - name: Aggregate results
+        run: |
+          python3 scripts/v2_segment_aggregate.py collected_results \
+            --out-dir v2_segment_aggregate \
+            --strict
+
+      - name: Add summary to workflow page
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f v2_segment_aggregate/v2_segment_summary.md ]]; then
+            cat v2_segment_aggregate/v2_segment_summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload consolidated results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-segment-length-experiment-results
+          path: v2_segment_aggregate/
+          if-no-files-found: warn
+          retention-days: 90
