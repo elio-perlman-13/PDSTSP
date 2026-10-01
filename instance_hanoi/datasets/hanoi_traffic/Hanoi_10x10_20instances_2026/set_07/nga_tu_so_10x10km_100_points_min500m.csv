@@ -1,0 +1,101 @@
+﻿point_id,source_point_id,road_name,district,lat,lon,offset_x_m,offset_y_m,distance_to_center_m,osm_way_id,osm_name,highway,source_file
+1,76,Khương Hạ,Thanh Xuân,20.9927246,105.8144475,-639.398,-999.142,1186.219,37734138,Phố Khương Hạ,tertiary,nga_tu_so_20x20km_1000_real_points.json
+2,65,Nguyễn Công Trứ,Hà Đông,20.9707658,105.7860295,-3592.739,-3443.595,4976.557,220005097,Phố Nguyễn Công Trứ,residential,nga_tu_so_20x20km_1000_real_points.json
+3,239,Trung Thư,Nam Từ Liêm,20.9906516,105.7828595,-3922.181,-1229.908,4110.496,1240344620,Đường Trung Thư,tertiary,nga_tu_so_20x20km_1000_real_points.json
+4,553,Dương Đình Nghệ,Cầu Giấy,21.0202049,105.7856934,-3627.668,2059.965,4171.742,106029720,Phố Dương Đình Nghệ,secondary,nga_tu_so_20x20km_1000_real_points.json
+5,316,Vũ Tông Phan,Hoàng Mai,20.982357,105.8167695,-398.085,-2153.263,2189.752,38182069,Phố Vũ Tông Phan,secondary,nga_tu_so_20x20km_1000_real_points.json
+6,40,Phan Văn Trường mở rộng,Cầu Giấy,21.0381614,105.7860472,-3590.895,4058.881,5419.321,1539507105,Phố Phan Văn Trường mở rộng,proposed,nga_tu_so_20x20km_1000_real_points.json
+7,823,Cổ Mai,Hoàng Mai,20.9762179,105.8585969,3948.827,-2836.667,4862.09,1194238831,Phố Cổ Mai,secondary,nga_tu_so_20x20km_1000_real_points.json
+8,728,Tam Trinh,Hoàng Mai,20.9810935,105.8643494,4546.659,-2293.919,5092.56,706498755,Đường Tam Trinh,secondary,nga_tu_so_20x20km_1000_real_points.json
+9,201,Tưởng Dân Bảo,Thanh Xuân,20.9880436,105.8055507,-1563.998,-1520.23,2181.098,601469251,Phố Tưởng Dân Bảo,residential,nga_tu_so_20x20km_1000_real_points.json
+10,221,Phùng Chí Kiên,Cầu Giấy,21.0433555,105.8025154,-1879.442,4637.09,5003.489,37759600,Phố Phùng Chí Kiên,residential,nga_tu_so_20x20km_1000_real_points.json
+11,234,Trần Tử Bình,Cầu Giấy,21.0452725,105.7916595,-3007.641,4850.491,5707.291,29111634,Phố Trần Tử Bình,residential,nga_tu_so_20x20km_1000_real_points.json
+12,342,Thượng Đình,Thanh Xuân,20.9999241,105.8180206,-268.064,-197.693,333.078,251780514,Phố Thượng Đình,secondary,nga_tu_so_20x20km_1000_real_points.json
+13,77,Tôn Thất Tùng,Thanh Xuân,20.9993361,105.8286447,836.045,-263.149,876.481,11007920,Phố Tôn Thất Tùng,secondary,nga_tu_so_20x20km_1000_real_points.json
+14,320,Nguyễn Xuân Linh,Cầu Giấy,21.0084383,105.7988712,-2258.165,750.108,2379.49,1070490918,Phố Nguyễn Xuân Linh,residential,nga_tu_so_20x20km_1000_real_points.json
+15,891,Vạn Phúc,Hà Đông,20.9790582,105.7728571,-4961.68,-2520.485,5565.17,220005743,Đường Vạn Phúc,primary,nga_tu_so_20x20km_1000_real_points.json
+16,26,Yên Thế,Đống Đa,21.0286643,105.839598,1974.367,3001.666,3592.788,36081191,Phố Yên Thế,residential,nga_tu_so_20x20km_1000_real_points.json
+17,452,Tú Mỡ,Cầu Giấy,21.0110039,105.7948285,-2678.303,1035.71,2871.585,295517245,Phố Tú Mỡ,residential,nga_tu_so_20x20km_1000_real_points.json
+18,784,Nguyễn Hữu Thọ,Hoàng Mai,20.9708118,105.8359224,1592.38,-3438.474,3789.298,954882987,Phố Nguyễn Hữu Thọ,secondary,nga_tu_so_20x20km_1000_real_points.json
+19,427,Hoàng Đạo Thúy,Thanh Xuân,21.0043007,105.8063179,-1484.267,289.51,1512.238,208366141,Phố Hoàng Đạo Thúy,primary,nga_tu_so_20x20km_1000_real_points.json
+20,353,Hoàng Trình Thanh,Hà Đông,20.9618122,105.7827908,-3929.321,-4440.31,5929.242,399866745,Đường Hoàng Trình Thanh,tertiary,nga_tu_so_20x20km_1000_real_points.json
+21,914,Tô Hiệu,Cầu Giấy,21.0448982,105.7966359,-2490.469,4808.824,5415.462,157338935,Phố Tô Hiệu,residential,nga_tu_so_20x20km_1000_real_points.json
+22,923,Mễ Trì Thượng,Nam Từ Liêm,21.003651,105.7794568,-4275.807,217.185,4281.319,1448665697,Phố Mễ Trì Thượng,residential,nga_tu_so_20x20km_1000_real_points.json
+23,54,Ao Sào,Hoàng Mai,20.9744773,105.8528621,3352.838,-3030.431,4519.406,600056168,Đường Ao Sào,residential,nga_tu_so_20x20km_1000_real_points.json
+24,629,Tôn Đức Thắng,Đống Đa,21.0208954,105.830986,1079.365,2136.832,2393.967,599146734,Phố Tôn Đức Thắng,secondary,nga_tu_so_20x20km_1000_real_points.json
+25,675,Nguyễn Tuân,Thanh Xuân,20.9992787,105.802569,-1873.871,-269.539,1893.157,710355022,Đường Nguyễn Tuân,tertiary,nga_tu_so_20x20km_1000_real_points.json
+26,155,Vĩnh Hồ,Đống Đa,21.0067454,105.8205559,-4.583,561.654,561.673,25953656,Phố Vĩnh Hồ,residential,nga_tu_so_20x20km_1000_real_points.json
+27,264,Bùi Quốc Khái,Hoàng Mai,20.9641056,105.8212362,66.117,-4185.009,4185.531,1334176063,Phố Bùi Quốc Khái,residential,nga_tu_so_20x20km_1000_real_points.json
+28,822,Mỹ Đình,Nam Từ Liêm,21.0277418,105.7750259,-4736.288,2898.973,5553.059,1119187735,Đường Mỹ Đình,tertiary,nga_tu_so_20x20km_1000_real_points.json
+29,412,Hà Trì,Hà Đông,20.9618146,105.7748783,-4751.627,-4440.043,6503.225,1130923607,Phố Hà Trì,tertiary,nga_tu_so_20x20km_1000_real_points.json
+30,344,Nguyễn Như Uyên,Cầu Giấy,21.0214245,105.7907735,-3099.719,2195.731,3798.617,601860672,Phố Nguyễn Như Uyên,residential,nga_tu_so_20x20km_1000_real_points.json
+31,60,Văn Hóa,Thanh Xuân,20.9936047,105.8283518,805.606,-901.169,1208.762,1195552559,Văn Hóa,service,nga_tu_so_20x20km_1000_real_points.json
+32,674,Chiến Thắng,Hà Đông,20.9836277,105.7925044,-2919.835,-2011.808,3545.816,1219309820,Đường Chiến Thắng,tertiary,nga_tu_so_20x20km_1000_real_points.json
+33,437,Nguyễn Lương Bằng,Đống Đa,21.0151041,105.8279262,761.375,1492.144,1675.167,808672175,Phố Nguyễn Lương Bằng,primary,nga_tu_so_20x20km_1000_real_points.json
+34,415,Nguyễn Thị Định,Cầu Giấy,21.0129842,105.8032182,-1806.403,1256.157,2200.232,408767266,Phố Nguyễn Thị Định,tertiary,nga_tu_so_20x20km_1000_real_points.json
+35,37,chợ Ngọc Trục,Nam Từ Liêm,20.9898675,105.7732622,-4919.58,-1317.194,5092.864,1482576892,Đường chợ Ngọc Trục,service,nga_tu_so_20x20km_1000_real_points.json
+36,573,xe đạp sông Tô Lịch,Đống Đa,21.0225935,105.7998407,-2157.41,2325.864,3172.39,678873603,Đường xe đạp sông Tô Lịch,cycleway,nga_tu_so_20x20km_1000_real_points.json
+37,888,Quan Hoa,Cầu Giấy,21.0316295,105.8021996,-1912.261,3331.752,3841.525,148202890,Phố Quan Hoa,secondary,nga_tu_so_20x20km_1000_real_points.json
+38,481,Lê Văn Lương,Cầu Giấy,21.0091286,105.80965,-1137.979,826.952,1406.715,885892454,Đường Lê Văn Lương,primary,nga_tu_so_20x20km_1000_real_points.json
+39,383,Nguyễn Phan Chánh,Hoàng Mai,20.9657103,105.8299119,967.739,-4006.373,4121.595,11860117,Phố Nguyễn Phan Chánh,residential,nga_tu_so_20x20km_1000_real_points.json
+40,31,Phan Chu Trinh,Hà Đông,20.9735206,105.7767112,-4561.148,-3136.925,5535.736,399871901,Phố Phan Chu Trinh,residential,nga_tu_so_20x20km_1000_real_points.json
+41,163,Linh Đàm,Hoàng Mai,20.9714594,105.8286506,836.659,-3366.384,3468.795,1482469316,Phố Linh Đàm,residential,nga_tu_so_20x20km_1000_real_points.json
+42,640,Tây Sơn,Đống Đa,21.010282,105.8249361,450.629,955.348,1056.294,164211343,Phố Tây Sơn,primary,nga_tu_so_20x20km_1000_real_points.json
+43,753,Tam Khương,Đống Đa,21.0045093,105.8274418,711.034,312.731,776.769,596721713,Phố Tam Khương,residential,nga_tu_so_20x20km_1000_real_points.json
+44,947,Giải Phóng,Hoàng Mai,20.967956,105.841806,2203.833,-3756.382,4355.145,954882983,Đường Giải Phóng,primary,nga_tu_so_20x20km_1000_real_points.json
+45,944,Đặng Tiến Đông,Đống Đa,21.0160317,105.8196244,-101.389,1595.405,1598.623,180083167,Phố Đặng Tiến Đông,tertiary,nga_tu_so_20x20km_1000_real_points.json
+46,359,Nguyễn Văn Trỗi,Thanh Xuân,20.9869366,105.8384808,1858.262,-1643.462,2480.747,399449409,Phố Nguyễn Văn Trỗi,residential,nga_tu_so_20x20km_1000_real_points.json
+47,830,Hồ Linh Quang,Đống Đa,21.0213044,105.8388894,1900.726,2182.362,2894.039,897914267,Phố Hồ Linh Quang,residential,nga_tu_so_20x20km_1000_real_points.json
+48,655,Đại lộ Thăng Long (Láng - Hoà Lạc),Nam Từ Liêm,21.0043222,105.7735957,-4884.921,291.903,4893.635,449226775,Đại lộ Thăng Long (Láng - Hoà Lạc),motorway,nga_tu_so_20x20km_1000_real_points.json
+49,900,Bằng Liệt,Hoàng Mai,20.9583556,105.8224802,195.4,-4825.099,4829.054,707858003,Phố Bằng Liệt,residential,nga_tu_so_20x20km_1000_real_points.json
+50,200,Đồng Sợi,Nam Từ Liêm,20.9957624,105.7796767,-4252.954,-660.974,4304.01,1340421649,Phố Đồng Sợi,residential,nga_tu_so_20x20km_1000_real_points.json
+51,918,Phạm Tu,Hoàng Mai,20.9701451,105.8069751,-1415.968,-3512.691,3787.343,1494939087,Đường Phạm Tu,secondary,nga_tu_so_20x20km_1000_real_points.json
+52,140,Thịnh Liệt,Hoàng Mai,20.9739682,105.8443929,2472.677,-3087.104,3955.293,675212194,Phố Thịnh Liệt,tertiary,nga_tu_so_20x20km_1000_real_points.json
+53,378,Nguyên Hồng,Đống Đa,21.0216379,105.8119216,-901.903,2219.487,2395.736,161013294,Phố Nguyên Hồng,residential,nga_tu_so_20x20km_1000_real_points.json
+54,874,Dương Đình Nghệ kéo dài,Cầu Giấy,21.0284519,105.7951545,-2644.423,2978.022,3982.661,771909991,Phố Dương Đình Nghệ kéo dài,construction,nga_tu_so_20x20km_1000_real_points.json
+55,743,Dương Lâm,Hà Đông,20.9770156,105.7865341,-3540.298,-2747.867,4481.571,220004617,Phố Dương Lâm,residential,nga_tu_so_20x20km_1000_real_points.json
+56,653,Nguyễn Trãi,Thanh Xuân,20.9955864,105.809529,-1150.554,-680.566,1336.766,1182476807,Đường Nguyễn Trãi,primary,nga_tu_so_20x20km_1000_real_points.json
+57,647,Tân Mai,Hoàng Mai,20.9836133,105.8471147,2755.54,-2013.411,3412.744,599191529,Phố Tân Mai,primary,nga_tu_so_20x20km_1000_real_points.json
+58,30,Tản Đà,Hà Đông,20.9684394,105.7785361,-4371.49,-3702.57,5728.783,399862373,Phố Tản Đà,residential,nga_tu_so_20x20km_1000_real_points.json
+59,365,Nguyễn Chính,Hoàng Mai,20.9786819,105.8482374,2872.217,-2562.375,3849.077,703505858,Phố Nguyễn Chính,residential,nga_tu_so_20x20km_1000_real_points.json
+60,746,Trần Quốc Vượng,Cầu Giấy,21.0344698,105.7817857,-4033.776,3647.934,5438.637,157394815,Phố Trần Quốc Vượng,tertiary,nga_tu_so_20x20km_1000_real_points.json
+61,529,Linh Đường,Hoàng Mai,20.9595927,105.8315357,1136.493,-4687.385,4823.193,251775981,Phố Linh Đường,tertiary,nga_tu_so_20x20km_1000_real_points.json
+62,531,Giảng Võ,Đống Đa,21.0307475,105.8289512,867.898,3233.568,3348.016,28945482,Phố Giảng Võ,secondary,nga_tu_so_20x20km_1000_real_points.json
+63,47,Trần Điền,Thanh Xuân,20.9917028,105.8327454,1262.211,-1112.888,1682.764,37861163,Phố Trần Điền,tertiary,nga_tu_so_20x20km_1000_real_points.json
+64,591,Nguyễn Văn Lộc,Hà Đông,20.9842628,105.7805557,-4161.603,-1941.109,4592.041,1374431415,Phố Nguyễn Văn Lộc,tertiary,nga_tu_so_20x20km_1000_real_points.json
+65,66,Hồng Quang,Hoàng Mai,20.9761179,105.832848,1272.873,-2847.799,3119.321,11857066,Phố Hồng Quang,residential,nga_tu_so_20x20km_1000_real_points.json
+66,124,Phạm Thận Duật,Cầu Giấy,21.0450637,105.7783303,-4392.878,4827.247,6526.844,160565842,Phố Phạm Thận Duật,residential,nga_tu_so_20x20km_1000_real_points.json
+67,800,Phạm Hùng,Nam Từ Liêm,21.0247006,105.7788087,-4343.16,2560.427,5041.709,1458914359,Đường Phạm Hùng,primary,nga_tu_so_20x20km_1000_real_points.json
+68,450,Nguyễn Quý Đức,Thanh Xuân,20.9910878,105.8003385,-2105.676,-1181.35,2414.427,397016446,Phố Nguyễn Quý Đức,residential,nga_tu_so_20x20km_1000_real_points.json
+69,790,Phạm Tu,Hoàng Mai,20.9787401,105.812412,-850.938,-2555.896,2693.826,911435185,Đường Phạm Tu,trunk,nga_tu_so_20x20km_1000_real_points.json
+70,110,Vũ Thạnh,Đống Đa,21.026971,105.825561,515.572,2813.168,2860.022,28191500,Phố Vũ Thạnh,tertiary,nga_tu_so_20x20km_1000_real_points.json
+71,157,Dương Quảng Hàm,Cầu Giấy,21.0368521,105.8018253,-1951.16,3913.132,4372.6,37765328,Phố Dương Quảng Hàm,residential,nga_tu_so_20x20km_1000_real_points.json
+72,244,Lê Duẩn,Đống Đa,21.0086895,105.8412983,2151.071,778.071,2287.466,163843396,Đường Lê Duẩn,primary,nga_tu_so_20x20km_1000_real_points.json
+73,98,Đông Quan,Cầu Giấy,21.0400077,105.8059033,-1527.354,4264.413,4529.683,36207444,Phố Đông Quan,residential,nga_tu_so_20x20km_1000_real_points.json
+74,334,Mai Động,Hoàng Mai,20.9908618,105.8615947,4260.374,-1206.508,4427.917,598694087,Phố Mai Động,residential,nga_tu_so_20x20km_1000_real_points.json
+75,218,Mộc Lan,Nam Từ Liêm,21.0004627,105.7854252,-3655.541,-137.736,3658.135,709264867,Mộc Lan,residential,nga_tu_so_20x20km_1000_real_points.json
+76,721,Cổ Mai,Hoàng Mai,20.968937,105.8492857,2981.161,-3647.177,4710.544,1339736662,Phố Cổ Mai,secondary,nga_tu_so_20x20km_1000_real_points.json
+77,921,Tân Mai,Hoàng Mai,20.9836488,105.8567314,3754.955,-2009.46,4258.828,706783195,Phố Tân Mai,primary,nga_tu_so_20x20km_1000_real_points.json
+78,760,Linh Đường,Hoàng Mai,20.9619982,105.8378164,1789.214,-4419.604,4768.038,251775981,Phố Linh Đường,tertiary,nga_tu_so_20x20km_1000_real_points.json
+79,635,Nghiêm Xuân Yêm,Hoàng Mai,20.9713856,105.8221186,157.82,-3374.599,3378.287,408780568,Đường Nghiêm Xuân Yêm,primary,nga_tu_so_20x20km_1000_real_points.json
+80,273,Đông Tác,Đống Đa,21.005915,105.8327861,1266.44,469.214,1350.567,702927009,Phố Đông Tác,tertiary,nga_tu_so_20x20km_1000_real_points.json
+81,213,Nguyễn Sơn Hà,Hà Đông,20.9705365,105.7922917,-2941.94,-3469.121,4548.605,1242183426,Phố Nguyễn Sơn Hà,residential,nga_tu_so_20x20km_1000_real_points.json
+82,590,Ngọc Hồi,Hoàng Mai,20.9573125,105.8430117,2329.136,-4941.216,5462.645,956129604,Đường Ngọc Hồi,trunk,nga_tu_so_20x20km_1000_real_points.json
+83,601,Kim Giang,Hoàng Mai,20.9751376,105.824818,438.356,-2956.926,2989.242,630090824,Đường Kim Giang,secondary,nga_tu_so_20x20km_1000_real_points.json
+84,82,Nam Đồng,Đống Đa,21.0128212,105.8325533,1242.247,1238.012,1753.811,707157542,Phố Nam Đồng,tertiary,nga_tu_so_20x20km_1000_real_points.json
+85,92,Học Phi,Cầu Giấy,21.0159805,105.7985955,-2286.817,1589.705,2785.084,790331397,Phố Học Phi,residential,nga_tu_so_20x20km_1000_real_points.json
+86,816,Trường Chinh,Đống Đa,20.9992077,105.8359138,1591.487,-277.443,1615.489,704641290,Đường Trường Chinh,primary,nga_tu_so_20x20km_1000_real_points.json
+87,71,Bích Câu,Đống Đa,21.0265264,105.8318917,1173.49,2763.675,3002.495,28924680,Phố Bích Câu,residential,nga_tu_so_20x20km_1000_real_points.json
+88,166,Đông Các,Đống Đa,21.0203262,105.8256188,521.579,2073.469,2138.064,179989574,Phố Đông Các,residential,nga_tu_so_20x20km_1000_real_points.json
+89,249,Mậu Lương,Hà Đông,20.9568358,105.7927402,-2895.335,-4994.283,5772.853,966693603,Phố Mậu Lương,tertiary,nga_tu_so_20x20km_1000_real_points.json
+90,172,Phạm Tuấn Tài,Cầu Giấy,21.0433441,105.7862322,-3571.673,4635.821,5852.152,1008268818,Phố Phạm Tuấn Tài,residential,nga_tu_so_20x20km_1000_real_points.json
+91,382,Đống Kỳ,Hoàng Mai,20.9577135,105.8482523,2873.765,-4896.577,5677.587,597591436,Phố Đống Kỳ,tertiary,nga_tu_so_20x20km_1000_real_points.json
+92,362,Mai Dịch,Cầu Giấy,21.0386444,105.7739814,-4844.838,4112.651,6355.026,37765386,Phố Mai Dịch,residential,nga_tu_so_20x20km_1000_real_points.json
+93,93,Bệnh viện Thận Hà Nội,Đống Đa,21.0190106,105.8060221,-1515.008,1927.016,2451.253,601474760,Bệnh viện Thận Hà Nội,service,nga_tu_so_20x20km_1000_real_points.json
+94,689,Thành Thái,Cầu Giấy,21.0301883,105.7883743,-3349.056,3171.318,4612.313,1131469492,Phố Thành Thái,tertiary,nga_tu_so_20x20km_1000_real_points.json
+95,943,Định Công,Hoàng Mai,20.9820867,105.832462,1232.758,-2183.353,2507.334,25937214,Phố Định Công,tertiary,nga_tu_so_20x20km_1000_real_points.json
+96,930,Nguyễn Chánh,Cầu Giấy,21.0154962,105.7894783,-3234.322,1535.793,3580.433,344953759,Phố Nguyễn Chánh,tertiary,nga_tu_so_20x20km_1000_real_points.json
+97,375,Định Công Hạ,Hoàng Mai,20.9833542,105.8259468,555.666,-2042.254,2116.499,1484467781,Phố Định Công Hạ,tertiary,nga_tu_so_20x20km_1000_real_points.json
+98,828,Tố Hữu,Nam Từ Liêm,20.9934382,105.7883148,-3355.239,-919.704,3479.006,688080591,Phố Tố Hữu,primary,nga_tu_so_20x20km_1000_real_points.json
+99,23,Mạc Thái Tông,Nam Từ Liêm,21.0101926,105.7899485,-3185.457,945.396,3322.786,25953865,Phố Mạc Thái Tông,secondary,nga_tu_so_20x20km_1000_real_points.json
+100,376,Trần Đại Nghĩa,Hoàng Mai,20.9945533,105.8449752,2533.192,-795.571,2655.183,369969171,Phố Trần Đại Nghĩa,tertiary,nga_tu_so_20x20km_1000_real_points.json

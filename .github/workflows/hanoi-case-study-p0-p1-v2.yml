@@ -1,49 +1,42 @@
-name: Hanoi case study - P0 and P1
+name: Hanoi case study - 33 instances - P0 P1 P2
 
 on:
   workflow_dispatch:
     inputs:
       max_parallel:
-        description: "Maximum parallel optimization jobs"
+        description: "Maximum concurrent GitHub jobs (account limit: 40)"
         required: true
-        default: "60"
+        default: "40"
 
 permissions:
   contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  HANOI_SOURCE_ROOT: instance_hanoi/datasets/hanoi_traffic/Hanoi_15x15_2026/profile_instances
+  SPEED_PROFILE_ROOT: instance_hanoi/datasets/hanoi_traffic/experiment_speed_profiles
 
 jobs:
   prepare:
-    name: Build solver, P0/P1 profiles, and matrix
+    name: Validate 33 instances and build solver
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v5
 
-      - name: Validate source data
+      - name: Validate workflow input
+        env:
+          MAX_PARALLEL: ${{ inputs.max_parallel }}
         shell: bash
         run: |
           set -euo pipefail
-          for dataset in set_01 set_02 set_03; do
-            for profile in weekday thu7 chunhat; do
-              stem="hanoi_15x15_100_${dataset}_${profile}"
-              base="$HANOI_SOURCE_ROOT/$dataset/$profile/$stem"
-              test -s "$base.txt"
-              test -s "$base.truck_distance_m.txt"
-              test -s "$base.drone_distance_m.txt"
-              test -s "$base.v_ijl_kph.txt"
-            done
-          done
+          [[ "$MAX_PARALLEL" =~ ^[1-9][0-9]*$ ]]
+          test "$MAX_PARALLEL" -le 40
 
-      - name: Build P0 and P1 traffic profiles
+      - name: Validate source data
         run: |
-          python3 scripts/hanoi_case_study_cloud.py build-profiles \
-            --source-root "$HANOI_SOURCE_ROOT" \
-            --output-root build/hanoi_case_policies
+          python3 scripts/hanoi_case_study_33_cloud.py validate-data \
+            --profile-root "$SPEED_PROFILE_ROOT"
 
       - name: Build V2 Hanoi solver
         run: |
@@ -51,58 +44,62 @@ jobs:
           g++ -O3 -std=c++20 src_v2/tabubu_HanoiTraffic_v2.cpp \
             -o build/hanoi_case_solver/tabubu_HanoiTraffic_v2
 
-      - name: Generate matrix
+      - name: Build balanced 250-job matrix
         id: matrix
         shell: bash
         run: |
           set -euo pipefail
-          matrix="$(python3 scripts/hanoi_case_study_cloud.py matrix --experiment policy --group-size 1)"
+          matrix="$(python3 scripts/hanoi_case_study_33_cloud.py matrix)"
           printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
-          python3 -c 'import json,sys; m=json.loads(sys.argv[1]); assert len(m["include"])==120; assert sum(x["task_count"] for x in m["include"])==120' "$matrix"
+          python3 -c 'import collections,json,sys; m=json.loads(sys.argv[1]); c=collections.Counter(x["task_count"] for x in m["include"]); assert len(m["include"])==250; assert sum(x["task_count"] for x in m["include"])==5610; assert sum(x["replay_count"] for x in m["include"])==7920; assert c=={23:110,22:140}' "$matrix"
 
-      - name: Smoke test optimization and replay
+      - name: Smoke test 12-segment profile and replay
         shell: bash
         run: |
           set -euo pipefail
           root="$PWD"
-          p0="$root/build/hanoi_case_policies/P0/set_01/hanoi_15x15_100_set_01_p0"
-          actual="$root/$HANOI_SOURCE_ROOT/set_01/weekday/hanoi_15x15_100_set_01_weekday"
           work="$(mktemp -d)"
-          cd "$work"
-          "$root/build/hanoi_case_solver/tabubu_HanoiTraffic_v2" "$p0.txt" \
-            --truck-distance-file="$p0.truck_distance_m.txt" \
-            --drone-distance-file="$p0.drone_distance_m.txt" \
-            --truck-vijl-file="$p0.v_ijl_kph.txt" \
-            --start-hour=6 --attempts=1 --iters=2 --segment-iters=1 --time-limit=60 --seed=1
+          python3 scripts/hanoi_case_study_33_cloud.py build-dataset-profiles \
+            --profile-root "$SPEED_PROFILE_ROOT" \
+            --work-root "$work/profiles" \
+            --dataset set_01
+          speed="$work/profiles/set_01/P0.v_ijl_kph.txt"
+          test "$(grep -vc '^#' "$speed")" -eq 122412
+          stem="$root/instance_hanoi/datasets/hanoi_traffic/Hanoi_9_2026/weekday_13segments/hanoi_10x10_100_weekday"
+          mkdir "$work/solve"
+          cd "$work/solve"
+          "$root/build/hanoi_case_solver/tabubu_HanoiTraffic_v2" "$stem.txt" \
+            --truck-distance-file="$stem.truck_distance_m.txt" \
+            --drone-distance-file="$stem.drone_distance_m.txt" \
+            --truck-vijl-file="$speed" \
+            --start-hour=7 --attempts=1 --iters=2 --segment-iters=1 \
+            --time-limit=60 --seed=1 --auto-tune
           test -s output_solution_best.txt
           mkdir replay
           cd replay
           set +e
-          "$root/build/hanoi_case_solver/tabubu_HanoiTraffic_v2" "$actual.txt" \
-            --truck-distance-file="$actual.truck_distance_m.txt" \
-            --drone-distance-file="$actual.drone_distance_m.txt" \
-            --truck-vijl-file="$actual.v_ijl_kph.txt" \
-            --start-hour=8 --evaluate-solution="$work/output_solution_best.txt"
+          "$root/build/hanoi_case_solver/tabubu_HanoiTraffic_v2" "$stem.txt" \
+            --truck-distance-file="$stem.truck_distance_m.txt" \
+            --drone-distance-file="$stem.drone_distance_m.txt" \
+            --truck-vijl-file="$work/profiles/set_01/weekday.v_ijl_kph.txt" \
+            --start-hour=8 --evaluate-solution="$work/solve/output_solution_best.txt"
           status=$?
           set -e
           [[ "$status" == 0 || "$status" == 2 ]]
           test -s output_solution_evaluated.txt
 
-      - name: Upload solver and generated profiles
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: hanoi-case-p0-p1-support
-          path: |
-            build/hanoi_case_solver/tabubu_HanoiTraffic_v2
-            build/hanoi_case_policies/
+          name: hanoi-case-33-solver
+          path: build/hanoi_case_solver/tabubu_HanoiTraffic_v2
           if-no-files-found: error
           retention-days: 2
 
   solve:
-    name: ${{ matrix.batch_id }}
+    name: ${{ matrix.batch_id }} | ${{ matrix.task_count }} optimize | ${{ matrix.replay_count }} replay
     needs: prepare
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       max-parallel: ${{ fromJSON(inputs.max_parallel) }}
@@ -112,39 +109,39 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: hanoi-case-p0-p1-support
-          path: build/support
+          name: hanoi-case-33-solver
+          path: build/hanoi_case_solver
 
-      - name: Run optimization and realized-traffic replay
+      - name: Optimize and immediately replay P0/P1 plans
         env:
           TASKS_JSON: ${{ matrix.tasks_json }}
         shell: bash
         run: |
           set -euo pipefail
-          binary="build/support/hanoi_case_solver/tabubu_HanoiTraffic_v2"
+          binary="build/hanoi_case_solver/tabubu_HanoiTraffic_v2"
           chmod +x "$binary"
-          python3 scripts/hanoi_case_study_cloud.py run-policy \
+          python3 scripts/hanoi_case_study_33_cloud.py run-batch \
             --binary "$binary" \
-            --source-root "$HANOI_SOURCE_ROOT" \
-            --policy-root build/support/hanoi_case_policies \
+            --profile-root "$SPEED_PROFILE_ROOT" \
+            --work-root "$RUNNER_TEMP/hanoi_case_profiles" \
             --tasks-json "$TASKS_JSON" \
             --output result
 
-      - name: Upload batch result
+      - name: Upload batch results and final solutions
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hanoi-case-p0-p1-${{ matrix.batch_id }}
+          name: hanoi-case-33-${{ matrix.batch_id }}
           path: result/
           if-no-files-found: warn
           retention-days: 90
 
   aggregate:
-    name: Aggregate P0/P1 results
+    name: Aggregate 5,610 optimizations and 11,880 evaluations
     needs: solve
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
 
@@ -153,21 +150,20 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: hanoi-case-p0-p1-policy-batch*
+          pattern: hanoi-case-33-policy-batch*
           path: collected_results
 
       - name: Build consolidated workbook
         run: |
-          python3 scripts/hanoi_case_study_cloud.py aggregate \
-            --experiment policy \
+          python3 scripts/hanoi_case_study_33_cloud.py aggregate \
             --input-root collected_results \
-            --output hanoi_case_p0_p1/hanoi_case_p0_p1_results.xlsx
+            --output hanoi_case_33/hanoi_case_33_p0_p1_p2_results.xlsx
 
-      - name: Upload consolidated results
+      - name: Upload consolidated workbook
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hanoi-case-p0-p1-results
-          path: hanoi_case_p0_p1/
+          name: hanoi-case-33-p0-p1-p2-results
+          path: hanoi_case_33/
           if-no-files-found: warn
           retention-days: 90
