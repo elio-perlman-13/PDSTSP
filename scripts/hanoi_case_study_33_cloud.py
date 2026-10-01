@@ -299,6 +299,45 @@ def build_matrix() -> dict[str, list[dict[str, object]]]:
     return {"include": include}
 
 
+def build_single_trip_matrix() -> dict[str, list[dict[str, object]]]:
+    tasks = [
+        [dataset_index(dataset), PROFILES.index(profile), hour, seed]
+        for dataset in DATASETS
+        for profile in PROFILES
+        for hour in START_HOURS
+        for seed in SEEDS
+    ]
+    include = []
+    cursor = 0
+    for job_index in range(JOB_COUNT):
+        task_count = 16 if job_index < 210 else 15
+        batch = tasks[cursor : cursor + task_count]
+        cursor += task_count
+        include.append(
+            {
+                "batch_id": f"single-trip-batch{job_index + 1:03d}",
+                "task_count": task_count,
+                "tasks_json": json.dumps(batch, separators=(",", ":")),
+            }
+        )
+    if cursor != len(tasks):
+        raise AssertionError(f"Assigned {cursor}/{len(tasks)} single-trip tasks")
+    return {"include": include}
+
+
+def expand_single_trip_task(values: list[object]) -> dict[str, object]:
+    index, profile_index, hour, seed = map(int, values)
+    dataset = f"set_{index:02d}"
+    profile = PROFILES[profile_index]
+    return {
+        "task_id": f"ST-{dataset}-{profile}-{hour:02d}h-seed{seed:02d}",
+        "dataset": dataset,
+        "profile": profile,
+        "start_hour": hour,
+        "seed": seed,
+    }
+
+
 def capture(pattern: str, text: str) -> str:
     matches = re.findall(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
     return matches[-1] if matches else ""
@@ -319,6 +358,58 @@ def parse_solution(path: Path) -> dict[str, object]:
         "energy_violation": float(validation.group(3)) if validation else None,
         "capacity_violation": float(validation.group(4)) if validation else None,
         "final_solution_text": text,
+    }
+
+
+def parse_route_metrics(solution_text: str) -> dict[str, object]:
+    trip_counts = []
+    customers_per_trip = []
+    truck_customers = 0
+    truck_time_s = 0.0
+    for line in solution_text.splitlines():
+        match = re.match(r"^Truck \d+:\s*(.*?)\|Truck Time:\s*([-+0-9.eE]+)", line)
+        if not match:
+            continue
+        route = [int(value) for value in match.group(1).split()]
+        trips = []
+        current = []
+        for node in route[1:]:
+            if node == 0:
+                if current:
+                    trips.append(current)
+                    current = []
+            else:
+                current.append(node)
+        if current:
+            trips.append(current)
+        trip_counts.append(len(trips))
+        customers_per_trip.append([len(trip) for trip in trips])
+        truck_customers += sum(len(trip) for trip in trips)
+        truck_time_s += float(match.group(2))
+    drone_customers = 0
+    for line in solution_text.splitlines():
+        match = re.match(r"^Drone \d+:\s*(.*?)\|Drone Time:", line)
+        if match:
+            drone_customers += sum(int(value) != 0 for value in match.group(1).split())
+    used_trip_counts = [count for count in trip_counts if count > 0]
+    later_trip_customers = sum(
+        sum(per_trip[1:]) for per_trip in customers_per_trip if len(per_trip) > 1
+    )
+    return {
+        "truck_trip_counts": json.dumps(trip_counts, separators=(",", ":")),
+        "truck_customers_per_trip": json.dumps(customers_per_trip, separators=(",", ":")),
+        "truck_trips": sum(trip_counts),
+        "used_trucks": len(used_trip_counts),
+        "trips_per_used_truck": (
+            statistics.fmean(used_trip_counts) if used_trip_counts else 0.0
+        ),
+        "intermediate_depot_returns": sum(max(0, count - 1) for count in trip_counts),
+        "later_trip_customers": later_trip_customers,
+        "later_trip_customers_pct": 100.0 * later_trip_customers / 100.0,
+        "truck_customers": truck_customers,
+        "drone_customers": drone_customers,
+        "drone_customers_pct": 100.0 * drone_customers / 100.0,
+        "total_truck_travel_and_service_time_s": truck_time_s,
     }
 
 
@@ -544,6 +635,85 @@ def run_batch(
         raise SystemExit(f"{len(failures)} optimization task(s) failed")
 
 
+def run_single_trip_batch(
+    repo: Path,
+    binary: Path,
+    profile_root: Path,
+    work_root: Path,
+    tasks: list[dict[str, object]],
+    output: Path,
+) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    rows: list[dict[str, object]] = []
+    failures = []
+    for dataset in sorted({str(task["dataset"]) for task in tasks}):
+        build_dataset_profiles(repo, profile_root, work_root, dataset)
+    for position, task in enumerate(tasks, start=1):
+        task_id = str(task["task_id"])
+        dataset = str(task["dataset"])
+        profile = str(task["profile"])
+        hour = int(task["start_hour"])
+        seed = int(task["seed"])
+        task_dir = output / task_id
+        task_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[{position}/{len(tasks)}] optimizing {task_id}", flush=True)
+        try:
+            command = solver_command(
+                binary,
+                source_paths(repo, dataset),
+                speed_path(work_root, dataset, profile),
+                hour,
+                seed,
+            )
+            command.append("--truck-single-trip")
+            _, elapsed, _ = run_command(
+                command,
+                task_dir,
+                task_dir / "solver.log",
+                TIME_LIMIT_SECONDS + 120,
+                (0,),
+            )
+            solution = task_dir / "output_solution_best.txt"
+            saved_solution = task_dir / f"final_solution_{task_id}.txt"
+            shutil.copy2(solution, saved_solution)
+            parsed = parse_solution(saved_solution)
+            metrics = parse_route_metrics(str(parsed["final_solution_text"]))
+            rows.append(
+                {
+                    "task_id": task_id,
+                    "variant": "ST",
+                    "dataset": dataset,
+                    "customers": 100,
+                    "actual_profile": profile,
+                    "start_hour": hour,
+                    "seed": seed,
+                    "feasibility": parsed["feasibility"],
+                    "makespan_s": parsed["makespan_s"],
+                    "makespan_min": (
+                        float(parsed["makespan_s"]) / 60.0
+                        if parsed["makespan_s"] is not None
+                        else None
+                    ),
+                    **metrics,
+                    "total_truck_waiting_time_s": None,
+                    "cpu_wall_time_s": elapsed,
+                    "max_iterations": MAX_ITERATIONS,
+                    "time_limit_s": TIME_LIMIT_SECONDS,
+                    "solution_file": str(saved_solution.relative_to(output)),
+                }
+            )
+            write_csv(output / "single_trip_results.csv", rows)
+        except Exception as error:
+            failures.append({"task_id": task_id, "error": repr(error)})
+            (task_dir / "failure.txt").write_text(repr(error) + "\n", encoding="utf-8")
+            print(f"FAILED {task_id}: {error}", flush=True)
+    (output / "failures.json").write_text(
+        json.dumps(failures, indent=2) + "\n", encoding="utf-8"
+    )
+    if failures:
+        raise SystemExit(f"{len(failures)} single-trip task(s) failed")
+
+
 def add_sheet(workbook, name: str, rows: list[dict[str, object]]) -> None:
     from openpyxl.styles import Font, PatternFill
 
@@ -649,10 +819,67 @@ def aggregate(input_root: Path, output: Path) -> None:
         raise SystemExit("Aggregate is incomplete")
 
 
+def aggregate_single_trip(input_root: Path, output: Path) -> None:
+    from openpyxl import Workbook
+
+    rows = read_unique_rows(input_root, "single_trip_results.csv", "task_id")
+    rows.sort(
+        key=lambda row: (
+            row["dataset"], row["actual_profile"], int(row["start_hour"]), int(row["seed"])
+        )
+    )
+    groups: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        groups[(row["actual_profile"], row["start_hour"])].append(row)
+    summary_rows = []
+    for (profile, hour), group in sorted(groups.items()):
+        feasible_rows = [row for row in group if row["feasibility"] == "FEASIBLE"]
+        makespans = [float(row["makespan_min"]) for row in feasible_rows if row["makespan_min"]]
+        summary_rows.append(
+            {
+                "customers": 100,
+                "day_profile": profile,
+                "start_hour": hour,
+                "runs": len(group),
+                "feasible_runs": len(feasible_rows),
+                "feasible_solution_rate_pct": 100.0 * len(feasible_rows) / len(group),
+                "mean_feasible_makespan_min": statistics.fmean(makespans) if makespans else None,
+                "mean_cpu_wall_time_s": statistics.fmean(float(row["cpu_wall_time_s"]) for row in group),
+                "mean_drone_customers_pct": statistics.fmean(float(row["drone_customers_pct"]) for row in feasible_rows) if feasible_rows else None,
+            }
+        )
+    solution_rows = []
+    for path in sorted(input_root.rglob("final_solution_*.txt")):
+        solution_rows.append(
+            {
+                "solution_file": path.name,
+                "artifact_path": str(path.relative_to(input_root)),
+                "final_solution_text": path.read_text(encoding="utf-8", errors="replace")[:32767],
+            }
+        )
+    validation = [
+        {"item": "single_trip_runs", "found": len(rows), "expected": 3960},
+        {"item": "saved_final_solutions", "found": len(solution_rows), "expected": 3960},
+    ]
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    add_sheet(workbook, "Summary", summary_rows)
+    add_sheet(workbook, "Single_Trip_Runs", rows)
+    add_sheet(workbook, "Final_Solutions", solution_rows)
+    add_sheet(workbook, "Validation", validation)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(output)
+    complete = all(row["found"] == row["expected"] for row in validation)
+    print(json.dumps({"workbook": str(output), "complete": complete, "validation": validation}))
+    if not complete:
+        raise SystemExit("Single-trip aggregate is incomplete")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("matrix")
+    subparsers.add_parser("single-trip-matrix")
     validate = subparsers.add_parser("validate-data")
     validate.add_argument("--repo", type=Path, default=Path.cwd())
     validate.add_argument("--profile-root", type=Path, required=True)
@@ -668,13 +895,25 @@ def main() -> None:
     run.add_argument("--work-root", type=Path, required=True)
     run.add_argument("--tasks-json", required=True)
     run.add_argument("--output", type=Path, required=True)
+    run_st = subparsers.add_parser("run-single-trip-batch")
+    run_st.add_argument("--repo", type=Path, default=Path.cwd())
+    run_st.add_argument("--binary", type=Path, required=True)
+    run_st.add_argument("--profile-root", type=Path, required=True)
+    run_st.add_argument("--work-root", type=Path, required=True)
+    run_st.add_argument("--tasks-json", required=True)
+    run_st.add_argument("--output", type=Path, required=True)
     aggregate_parser = subparsers.add_parser("aggregate")
     aggregate_parser.add_argument("--input-root", type=Path, required=True)
     aggregate_parser.add_argument("--output", type=Path, required=True)
+    aggregate_st = subparsers.add_parser("aggregate-single-trip")
+    aggregate_st.add_argument("--input-root", type=Path, required=True)
+    aggregate_st.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
     if args.command == "matrix":
         print(json.dumps(build_matrix(), separators=(",", ":")))
+    elif args.command == "single-trip-matrix":
+        print(json.dumps(build_single_trip_matrix(), separators=(",", ":")))
     elif args.command == "validate-data":
         validate_data(args.repo.resolve(), args.profile_root.resolve())
     elif args.command == "build-dataset-profiles":
@@ -690,6 +929,17 @@ def main() -> None:
             [expand_task(task) for task in json.loads(args.tasks_json)],
             args.output.resolve(),
         )
+    elif args.command == "run-single-trip-batch":
+        run_single_trip_batch(
+            args.repo.resolve(),
+            args.binary.resolve(),
+            args.profile_root.resolve(),
+            args.work_root.resolve(),
+            [expand_single_trip_task(task) for task in json.loads(args.tasks_json)],
+            args.output.resolve(),
+        )
+    elif args.command == "aggregate-single-trip":
+        aggregate_single_trip(args.input_root.resolve(), args.output.resolve())
     else:
         aggregate(args.input_root.resolve(), args.output.resolve())
 

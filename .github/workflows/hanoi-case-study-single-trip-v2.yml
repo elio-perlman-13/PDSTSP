@@ -1,88 +1,95 @@
-name: Hanoi case study - single trip
+name: Hanoi case study - 33 instances - single trip
 
 on:
   workflow_dispatch:
     inputs:
       max_parallel:
-        description: "Maximum parallel jobs; each job runs at most two tasks sequentially"
+        description: "Maximum concurrent GitHub jobs (account limit: 40)"
         required: true
-        default: "80"
+        default: "40"
 
 permissions:
   contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  HANOI_SOURCE_ROOT: instance_hanoi/datasets/hanoi_traffic/Hanoi_15x15_2026/profile_instances
+  SPEED_PROFILE_ROOT: instance_hanoi/datasets/hanoi_traffic/experiment_speed_profiles
 
 jobs:
   prepare:
-    name: Build single-trip solver and matrix
+    name: Validate 33 instances and build single-trip solver
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v5
 
-      - name: Validate source data
+      - name: Validate workflow input
+        env:
+          MAX_PARALLEL: ${{ inputs.max_parallel }}
         shell: bash
         run: |
           set -euo pipefail
-          for dataset in set_01 set_02 set_03; do
-            for profile in weekday thu7 chunhat; do
-              stem="hanoi_15x15_100_${dataset}_${profile}"
-              base="$HANOI_SOURCE_ROOT/$dataset/$profile/$stem"
-              test -s "$base.txt"
-              test -s "$base.truck_distance_m.txt"
-              test -s "$base.drone_distance_m.txt"
-              test -s "$base.v_ijl_kph.txt"
-            done
-          done
+          [[ "$MAX_PARALLEL" =~ ^[1-9][0-9]*$ ]]
+          test "$MAX_PARALLEL" -le 40
+
+      - name: Validate source data
+        run: |
+          python3 scripts/hanoi_case_study_33_cloud.py validate-data \
+            --profile-root "$SPEED_PROFILE_ROOT"
 
       - name: Build V2 Hanoi solver
         run: |
-          mkdir -p build/hanoi_case_solver
+          mkdir -p build/hanoi_case_single_trip
           g++ -O3 -std=c++20 src_v2/tabubu_HanoiTraffic_v2.cpp \
-            -o build/hanoi_case_solver/tabubu_HanoiTraffic_v2
+            -o build/hanoi_case_single_trip/tabubu_HanoiTraffic_v2
 
-      - name: Generate 158-job matrix for 315 runs
+      - name: Build balanced 250-job matrix for 3960 ST runs
         id: matrix
         shell: bash
         run: |
           set -euo pipefail
-          matrix="$(python3 scripts/hanoi_case_study_cloud.py matrix --experiment single-trip --group-size 2)"
+          matrix="$(python3 scripts/hanoi_case_study_33_cloud.py single-trip-matrix)"
           printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
-          python3 -c 'import json,sys; m=json.loads(sys.argv[1]); assert len(m["include"])==158; assert sum(x["task_count"] for x in m["include"])==315' "$matrix"
+          python3 -c 'import collections,json,sys; m=json.loads(sys.argv[1]); c=collections.Counter(x["task_count"] for x in m["include"]); assert len(m["include"])==250; assert sum(x["task_count"] for x in m["include"])==3960; assert c=={16:210,15:40}' "$matrix"
 
-      - name: Smoke test single-trip constraint
+      - name: Smoke test single-trip constraint with 12 traffic segments
         shell: bash
         run: |
           set -euo pipefail
           root="$PWD"
-          stem="$root/$HANOI_SOURCE_ROOT/set_01/weekday/hanoi_15x15_100_set_01_weekday"
           work="$(mktemp -d)"
-          cd "$work"
-          "$root/build/hanoi_case_solver/tabubu_HanoiTraffic_v2" "$stem.txt" \
+          python3 scripts/hanoi_case_study_33_cloud.py build-dataset-profiles \
+            --profile-root "$SPEED_PROFILE_ROOT" \
+            --work-root "$work/profiles" \
+            --dataset set_01
+          speed="$work/profiles/set_01/weekday.v_ijl_kph.txt"
+          test "$(grep -vc '^#' "$speed")" -eq 122412
+          stem="$root/instance_hanoi/datasets/hanoi_traffic/Hanoi_9_2026/weekday_13segments/hanoi_10x10_100_weekday"
+          mkdir "$work/solve"
+          cd "$work/solve"
+          "$root/build/hanoi_case_single_trip/tabubu_HanoiTraffic_v2" "$stem.txt" \
             --truck-distance-file="$stem.truck_distance_m.txt" \
             --drone-distance-file="$stem.drone_distance_m.txt" \
-            --truck-vijl-file="$stem.v_ijl_kph.txt" \
-            --start-hour=6 --truck-single-trip \
+            --truck-vijl-file="$speed" \
+            --start-hour=7 --truck-single-trip \
             --attempts=1 --iters=2 --segment-iters=1 --time-limit=60 --seed=1
           test -s output_solution_best.txt
+          grep -q "Loaded 12 traffic segments from 6h to 17h" solver.log 2>/dev/null || true
           python3 -c 'import re; t=open("output_solution_best.txt").read(); lines=[x for x in t.splitlines() if re.match(r"^Truck \d+:",x)]; assert lines; assert all([int(v) for v in x.split(":",1)[1].split("|",1)[0].split()][1:-1].count(0)==0 for x in lines)'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hanoi-case-single-trip-solver
-          path: build/hanoi_case_solver/tabubu_HanoiTraffic_v2
+          name: hanoi-case-33-single-trip-solver
+          path: build/hanoi_case_single_trip/tabubu_HanoiTraffic_v2
           if-no-files-found: error
           retention-days: 2
 
   solve:
-    name: ${{ matrix.batch_id }} | ${{ matrix.task_count }} sequential
+    name: ${{ matrix.batch_id }} | ${{ matrix.task_count }} sequential ST runs
     needs: prepare
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       max-parallel: ${{ fromJSON(inputs.max_parallel) }}
@@ -92,37 +99,39 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: hanoi-case-single-trip-solver
-          path: build/hanoi_case_solver
+          name: hanoi-case-33-single-trip-solver
+          path: build/hanoi_case_single_trip
 
-      - name: Run one or two single-trip tasks
+      - name: Run single-trip AMSTS tasks
         env:
           TASKS_JSON: ${{ matrix.tasks_json }}
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x build/hanoi_case_solver/tabubu_HanoiTraffic_v2
-          python3 scripts/hanoi_case_study_cloud.py run-single-trip \
-            --binary build/hanoi_case_solver/tabubu_HanoiTraffic_v2 \
-            --source-root "$HANOI_SOURCE_ROOT" \
+          binary="build/hanoi_case_single_trip/tabubu_HanoiTraffic_v2"
+          chmod +x "$binary"
+          python3 scripts/hanoi_case_study_33_cloud.py run-single-trip-batch \
+            --binary "$binary" \
+            --profile-root "$SPEED_PROFILE_ROOT" \
+            --work-root "$RUNNER_TEMP/hanoi_case_profiles" \
             --tasks-json "$TASKS_JSON" \
             --output result
 
-      - name: Upload batch result
+      - name: Upload ST results and final solutions
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hanoi-case-single-trip-${{ matrix.batch_id }}
+          name: hanoi-case-33-${{ matrix.batch_id }}
           path: result/
           if-no-files-found: warn
           retention-days: 90
 
   aggregate:
-    name: Aggregate all 315 single-trip runs
+    name: Aggregate all 3960 single-trip runs
     needs: solve
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
 
@@ -131,21 +140,20 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: hanoi-case-single-trip-single-trip-batch*
+          pattern: hanoi-case-33-single-trip-batch*
           path: collected_results
 
-      - name: Build consolidated workbook
+      - name: Build consolidated ST workbook
         run: |
-          python3 scripts/hanoi_case_study_cloud.py aggregate \
-            --experiment single-trip \
+          python3 scripts/hanoi_case_study_33_cloud.py aggregate-single-trip \
             --input-root collected_results \
-            --output hanoi_case_single_trip/hanoi_case_single_trip_results.xlsx
+            --output hanoi_case_33_single_trip/hanoi_case_33_single_trip_results.xlsx
 
-      - name: Upload consolidated results
+      - name: Upload consolidated ST results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hanoi-case-single-trip-results
-          path: hanoi_case_single_trip/
+          name: hanoi-case-33-single-trip-results
+          path: hanoi_case_33_single_trip/
           if-no-files-found: warn
           retention-days: 90
