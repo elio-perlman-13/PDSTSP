@@ -1,0 +1,165 @@
+name: Hanoi 33 instances - departure times - 10 seeds
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_parallel:
+        description: "Maximum parallel GitHub jobs"
+        required: true
+        default: "40"
+      time_limit_seconds:
+        description: "Per-run solver limit; each job runs 5 or 6 tasks sequentially"
+        required: true
+        default: "1800"
+      segment_iterations:
+        description: "Iterations per segment (n=100)"
+        required: true
+        default: "100"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  prepare:
+    name: Validate data and build solver
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate workflow inputs
+        env:
+          MAX_PARALLEL: ${{ inputs.max_parallel }}
+          TIME_LIMIT: ${{ inputs.time_limit_seconds }}
+          SEGMENT_ITERS: ${{ inputs.segment_iterations }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MAX_PARALLEL" =~ ^[1-9][0-9]*$ ]]
+          [[ "$TIME_LIMIT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SEGMENT_ITERS" =~ ^[1-9][0-9]*$ ]]
+          test "$MAX_PARALLEL" -le 40
+
+      - name: Validate all 33 source instances
+        run: python3 scripts/hanoi_23_departure_experiment.py validate-data
+
+      - name: Build V2 Hanoi solver
+        run: |
+          mkdir -p build/hanoi_23_departure
+          g++ -O3 -std=c++20 src_v2/tabubu_HanoiTraffic_v2.cpp \
+            -o build/hanoi_23_departure/tabubu_HanoiTraffic_v2
+
+      - name: Build 250-job matrix for 1320 runs
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$(python3 scripts/hanoi_23_departure_experiment.py matrix)"
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+          python3 -c 'import collections,json,sys; m=json.loads(sys.argv[1]); c=collections.Counter(x["task_count"] for x in m["include"]); assert len(m["include"])==250; assert sum(x["task_count"] for x in m["include"])==1320; assert c=={6:70,5:180}' "$matrix"
+
+      - name: Smoke test 12-segment speed profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PWD"
+          work="$(mktemp -d)"
+          mkdir -p "$work/input"
+          awk '!/^#/ && $3 >= 6 && $3 <= 17 {print}' \
+            instance_hanoi/datasets/hanoi_traffic/Hanoi_9_2026/weekday_13segments/hanoi_10x10_100_weekday.v_ijl_kph.txt \
+            > "$work/input/speed.txt"
+          test "$(wc -l < "$work/input/speed.txt")" -eq 122412
+          cd "$work"
+          stem="$root/instance_hanoi/datasets/hanoi_traffic/Hanoi_9_2026/weekday_13segments/hanoi_10x10_100_weekday"
+          "$root/build/hanoi_23_departure/tabubu_HanoiTraffic_v2" "$stem.txt" \
+            --truck-distance-file="$stem.truck_distance_m.txt" \
+            --drone-distance-file="$stem.drone_distance_m.txt" \
+            --truck-vijl-file="$work/input/speed.txt" \
+            --start-hour=7 --attempts=1 --iters=2 --segment-iters=1 \
+            --time-limit=60 --seed=1 --auto-tune
+          grep -q "Loaded 12 traffic segments from 6h to 17h" solver.log 2>/dev/null || \
+            test -s output_solution_best.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hanoi-33-departure-solver
+          path: build/hanoi_23_departure/tabubu_HanoiTraffic_v2
+          if-no-files-found: error
+          retention-days: 2
+
+  solve:
+    name: ${{ matrix.batch_id }} | ${{ matrix.task_count }} sequential runs
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: hanoi-33-departure-solver
+          path: build/hanoi_23_departure
+
+      - name: Run task batch sequentially
+        env:
+          TASKS_JSON: ${{ matrix.tasks_json }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x build/hanoi_23_departure/tabubu_HanoiTraffic_v2
+          python3 scripts/hanoi_23_departure_experiment.py run-batch \
+            --binary build/hanoi_23_departure/tabubu_HanoiTraffic_v2 \
+            --batch-id '${{ matrix.batch_id }}' \
+            --tasks-json "$TASKS_JSON" \
+            --time-limit '${{ inputs.time_limit_seconds }}' \
+            --segment-iters '${{ inputs.segment_iterations }}' \
+            --output result
+
+      - name: Upload job results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hanoi-33-departure-${{ matrix.batch_id }}
+          path: result/
+          if-no-files-found: warn
+          retention-days: 90
+
+  aggregate:
+    name: Aggregate 1320 runs
+    needs: solve
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Excel dependency
+        run: python3 -m pip install --disable-pip-version-check openpyxl
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hanoi-33-departure-batch-*
+          path: collected_results
+
+      - name: Build consolidated workbook
+        run: |
+          python3 scripts/hanoi_23_departure_experiment.py aggregate \
+            --input-root collected_results \
+            --output hanoi_33_departure_results
+
+      - name: Upload consolidated results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hanoi-33-departure-10seeds-results
+          path: hanoi_33_departure_results/
+          if-no-files-found: warn
+          retention-days: 90
